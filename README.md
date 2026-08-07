@@ -1,5 +1,9 @@
 # ego-browser — DSH 插件（dshx external plugin）
 
+> ⚠️ **保密声明**：本项目属于 DeepSeek Harness **内测生态**的一部分，仅限
+> dsh-external 组织内测成员使用。**严禁公开、外发、镜像或分发到任何非授权位置**。
+> 仓库必须保持 PRIVATE；不发布到 npm / 公共 registry；不创建公开 fork 或镜像。
+
 把 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)（给 AI Agent 用的 Chromium 浏览器）接入
 DeepSeek Harness：以 **13 个结构化 `ego_*` 工具**驱动浏览器，与 `zotero-wave-rag`、`dsh-vision`
 等插件同一机制（`~/.dsh/config.yaml` overlay + Cordis 插件入口）。
