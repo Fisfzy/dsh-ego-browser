@@ -1,0 +1,20 @@
+{
+  "name": "@dsh-external/ego-browser",
+  "version": "0.1.0",
+  "description": "ego-browser (ego-lite) integration plugin for DSH: structured browser-automation tools that drive the ego-browser CLI through ctx.subprocess.",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.0.1",
+    "cordis": "^4.0.0-rc.7"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
