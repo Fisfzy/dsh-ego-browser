@@ -100,23 +100,6 @@ dshx list                    # 应显示：[on] ego-browser
   建议等官方 Linux 支持合并后，或使用 macOS App 时用于生产。
 - **输出 schema** 为宽松的 `additionalProperties: true` 结构，客户端渲染以实际返回值为准。
 
-## 验证记录（2026-08，Linux + Chrome 151 + PR #234）
-
-真实浏览器（无头）验证通过：
-
-```
-✅ 基础读写：ego_status / ego_navigate(example.com) / ego_snapshot / ego_js / ego_page_info / ego_space_close
-✅ 交互闭环（受控页面）：ego_fill×2 → ego_click(表单提交) → ego_js 断言
-   "submitted:hello DSH|a@b.c" → ego_wait → ego_click(#锚点) → ego_page_info(#target)
-   → ego_screenshot(PNG 落盘) → ego_cdp(Runtime.evaluate 1+1=2)
-✅ 文献检索（arXiv）：搜索页快照 → 提取 5 篇真实论文标题 → 取首个 URL →
-   ego_click(loc=href:https://arxiv.org/abs/...) → 进入论文摘要页
-✅ 终审补验：ego_cli 自定义 heredoc、ego_click 坐标模式、中文输入、snapshot scope 参数
-   → 13/13 工具全部真浏览器验证通过
-✅ 并发锁：6 个并发调用 → 峰值 1 个活跃 CLI
-✅ 装机验收：tarball → 干净目录 + 系统 Chrome → 零配置直接运行
-```
-
 ## 许可与署名
 
 插件本体为 MIT。内置运行时嵌入 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)
