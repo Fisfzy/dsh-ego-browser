@@ -14,6 +14,36 @@ ego-lite 项目，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）—�
 
 ---
 
+## 为什么需要 Agent 浏览器
+
+AI Agent 想真正"在互联网上干活"——查资料、比价、填表、登录、抢票、刷题、处理需要真人会话的站点——
+**浏览器是绕不开的入口**。但通用浏览器不是为 agent 设计的，于是诞生了一类**Agent 专用浏览器**
+（本项目所基于的 [ego-lite](https://github.com/CitroLabs/ego-lite)、[Browser Use](https://techcrunch.com/2025/03/23/browser-use-the-tool-making-it-easier-for-ai-agents-to-navigate-websites-raises-17m/)、
+Perplexity Composer、Manus 等）。它们的官方解释，共同指向几个铁的理由：
+
+### 1. 浏览器是 Agent 唯一能"落地"的真实世界接口
+人类绝大多数在线行为都发生在浏览器里。正如 [Perplexity CEO 的观点](https://www.digit.in/features/general/why-perplexity-ceo-aravind-srinivas-sees-ai-browsers-as-key-to-ai-agents.html/amp/)——
+**浏览器是 AI 的 killer app，不是对话框也不是 App**：一个能真正操作浏览器的 agent，才等于能在真实互联网上替人办事，而非只停留在文本对话。
+
+### 2. Web 上有纯 API / 纯文本无法绕过的真实交互
+登录态、验证码（CAPTCHA）、动态渲染的页面、弹窗、表单、需要真实会话的站点——这些**只有真浏览器才能面对**。
+Agent 要处理这些，就必须有一个真实的浏览器在背后渲染、执行、保状态。
+
+### 3. LLM 是文本，但世界是"渲染、点击、状态"
+模型本质处理文本，而网页是视觉 + 结构 + 交互状态。需要的正是把网页的**真实画面 / 语义树 / 状态**喂给模型，
+再让模型把意图变成**真实的点击与输入**。Agent 浏览器就是这座桥。
+
+### 4. 不打扰主人的登录态，才是能落地的前提
+ego-lite 的 slogan 说得很直白：**“让 agent 用你已登录的浏览器，而不打扰你”**，
+[官方将其定位为"零成本、零配置"](https://github.com/CitroLabs/ego-lite)、[终结"AI 抢你标签页"问题](https://cloud.tencent.cn/developer/article/2715450?from=15425&frompage=seopage)。
+agent 应在**隔离的任务空间**里干活、复用你的登录态，而不是把你的标签页搅得天翻地覆——
+这正是"Agent 专用"和"通用浏览器硬塞"的本质差别。
+
+---
+
+**这正是 `ego-browser` 立足的地方**：它把 ego-lite 的"Agent 专用浏览器"接进 DeepSeek Harness，
+**并在此基础上解决了通用 Agent 浏览器方案最痛的一点——你看不见它在干什么**。于是有了下方"痛点 → 解法"。
+
 ## 为什么需要它（痛点 → 解法）
 
 Agent 浏览器的本质是一个**后台黑盒**：agent 用 `ego_*` 工具在无界面的浏览器里搜索、点击、填表，
