@@ -1,30 +1,70 @@
-# ego-browser — DSH 插件（dshx external plugin）
+# ego-browser — 看得见的 Agent 浏览器
 
 > ⚠️ **保密声明**：本项目属于 DeepSeek Harness **内测生态**的一部分，仅限
 > dsh-external 组织内测成员使用。**严禁公开、外发、镜像或分发到任何非授权位置**。
 > 仓库必须保持 PRIVATE；不发布到 npm / 公共 registry；不创建公开 fork 或镜像。
 
 把 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)（给 AI Agent 用的 Chromium 浏览器）接入
-DeepSeek Harness：以 **13 个结构化 `ego_*` 工具**驱动浏览器，与 `zotero-wave-rag`、`dsh-vision`
-等插件同一机制（`~/.dsh/config.yaml` overlay + Cordis 插件入口）。
+DeepSeek Harness：以 **13 个结构化 `ego_*` 工具**驱动浏览器，并配一套**实时观察前端口**——
+agent 在后台操作网页时，你能像看直播一样看到它正在浏览的每一个页面。
 
-**Linux + Chrome = 开箱即用。** 插件包 **内置 ego 运行时**（`runtime/`，来自 MIT 许可的
+**Linux + Chrome = 开箱即用。** 插件包**内置 ego 运行时**（`runtime/`，来自 MIT 许可的
 ego-lite 项目，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）——无需克隆官方仓库、
-无需手动构建。在 Chrome/Chromium 之上即可直接使用。
+无需手动构建，连 `--no-sandbox` wrapper 都随包自带，root/Docker/无显示器环境一键跑。
+
+---
+
+## 为什么需要它（痛点 → 解法）
+
+Agent 浏览器的本质是一个**后台黑盒**：agent 用 `ego_*` 工具在无界面的浏览器里搜索、点击、填表，
+跑完了才告诉你结果。如果中途走岔、被验证码卡住、或者你想核对它看到了什么——你毫无办法。
+
+`ego-browser v0.2.0` 的核心优越性，就是把黑盒**打开**：
+
+| 痛点 | ego-browser 给到 |
+|------|------------------|
+| **看不见** agent 在哪、点了什么 | 🌐 **实时观察浮窗**：小球一点，agent 当前每个标签的实况画面实时播放 |
+| 开了太多标签，找不清 | 🟦 **标签页条**：一眼顶上所有打开的标签，点选切换、`×` 一键关闭 |
+| 想知道 agent 之前去过哪 | 🕘 **历史抽屉**：回看浏览轨迹，点某条即可查看那页 |
+| 页面细节看不清 | 🔍 **缩放/拖拽/复位**：滚轮放大、拖动看细节，缩到底或双击即复位 |
+| 画面跟不上操作 | ⚡ **动态刷新**：有操作 2s 快刷、静止 8s 省资源，不空转不卡顿 |
+| 环境杂（root/无头/无 `--no-sandbox`） | 🛡️ **环境自适应**：自动探测并兜底，不要求宿主预置任何东西，也不破坏宿主 |
+| restart 后什么都要重配 | 📦 **零配置**：插件自携带运行时 + wrapper，clone 即用 |
+
+一句话：**别的方案让 agent 用浏览器，它能让你看见 agent 用浏览器。**
+
+---
+
+## ✨ v0.2.0 亮点
+
+- **实时观察前端口** `lib/client.js`：深色 Apple 毛玻璃 UI，右下角🌐小球常驻可见，
+  点开即见 agent 正在浏览的实时画面。
+- **标签管理**：横排标签条 + 每标签 `×` 关闭（走 `/api/ego/close` 真实关掉浏览器标签），
+  根治"标签越开越多"。
+- **缩放/拖拽/复位**：主画面滚轮放大、按住拖动平移、缩到最小或双击复位；
+  操作时网址行就地显示操作提示，2 秒后自动恢复。
+- **动态轮询**：`活跃 2s / 静止 8s` 自适应，既不漏新操作也不浪费截图资源。
+- **导航复用 tab**：`ego_navigate` 在同一任务内复用当前标签，不再每次新开。
+- **worker 重构** `bin/ego-cast-worker.mjs`：attach 到 agent 正在用的浏览器（不另开独立实例），
+  CDP 实时推帧；崩溃自动重启，无需 host 干预。
+- **开箱即用**：`bin/ego-chrome-wrapper.sh` 随包自带，root/无头自动 `--no-sandbox`。
+
+---
 
 ## 前置条件
 
 | 要求 | 说明 |
 |---|---|
 | Node ≥ 22 | harness 环境自带 |
-| **任意 Chrome / Chromium / Brave / Edge** | 自动在 `PATH` 上发现，或通过 `EGO_LINUX_CHROME` 指定。**root 用户需要 `--no-sandbox` 包装脚本**（见下） |
+| **任意 Chrome / Chromium / Brave / Edge** | 自动在 `PATH` 上发现，或通过 `EGO_LINUX_CHROME` 指定；root 下自动用自带 wrapper |
 | DSH + dshx | 插件装载机制 |
+| 带图形界面的 DSH Web（观察窗） | 前端口需要浏览器页面显示；headless 会话仍可用 `ego_*` 工具 |
 
 ## 安装
 
 ```sh
 # 1. 安装（tarball 或 git URL 均可）
-dshx install ego-browser ego-browser-plugin-0.1.0.tgz
+dshx install ego-browser ego-browser-plugin-0.2.0.tgz
 
 # 2. 验证
 dshx list                    # 应显示：[on] ego-browser
@@ -37,15 +77,9 @@ dshx list                    # 应显示：[on] ego-browser
 ```
 
 说明：
-- `egoBin` 默认指向内置的 `runtime/ego-linux/bin/ego-browser.mjs`（已含代理补丁）。
-  使用 **macOS 官方 App** 的用户配置 `egoBin: ego-browser` 即可切回官方宿主。
-- **root / Docker / CI**：Chrome 以 root 运行必须 `--no-sandbox`。创建包装脚本并把
-  `EGO_LINUX_CHROME` 指向它：
-  ```sh
-  #!/bin/sh
-  exec /usr/bin/google-chrome-stable --no-sandbox "$@"
-  ```
-- **无显示服务器**：设置 `EGO_LINUX_HEADLESS=1` 以无头模式运行（不弹窗口）。
+- 无需宿主侧任何配置：`resolveEgoEnv` 自动探测 root（走自带 wrapper + `--no-sandbox`）、
+  无显示器（自动 `headless`）、已设环境变量绝不被覆盖；可用 `EGO_BROWSER_AUTO_ADAPT=0` 关掉自动适配。
+- 观察窗 host 路由自动注册（`/api/ego/spaces`、`/api/ego/close`…），仅在有 HTTP server 时启用，headless 是安全的 no-op。
 
 ## 工具清单（13 个，前缀 ego_）
 
@@ -55,7 +89,7 @@ dshx list                    # 应显示：[on] ego-browser
 | `ego_space_open` | 打开/复用任务空间（隔离浏览上下文，继承登录态），返回空间 id |
 | `ego_space_close` | 完成/关闭任务空间（`keep: true` 保留页面给用户） |
 | `ego_snapshot` | 当前页面语义树文本（带 `[ref=N, loc=...]` 选择器，供 click/fill 定位） |
-| `ego_navigate` | 打开 URL 或切到已有 tab，等待加载，返回页面信息 |
+| `ego_navigate` | 打开 URL 或切到已有 tab，等待加载，返回页面信息（**同任务复用当前 tab**） |
 | `ego_click` | 点击：CSS/xpath/loc/ref 选择器或视口坐标 |
 | `ego_fill` | 向输入框键入文本 |
 | `ego_js` | 在页面内求值 JS 表达式，返回可 JSON 序列化的结果 |
@@ -65,19 +99,30 @@ dshx list                    # 应显示：[on] ego-browser
 | `ego_wait` | 固定毫秒等待 |
 | `ego_cli` | 逃生舱：原样运行任意 `ego-browser nodejs` heredoc 脚本 |
 
+## 观察窗（v0.2.0 前端口）怎么用
+
+右下角 **🌐 常驻小球** → 点开：
+
+- **主画面**（大图）：显示 agent 当前正在浏览的页面实况；滚轮缩放、按住拖动、缩到底或双击复位。
+- **标签页条**（顶部横排）：列出 agent 所有打开的标签，点选切换查看，每标签 `×` 关闭。
+- **历史抽屉**（🕘）：按时间回看浏览轨迹，点某条即在该位置查看。
+- **刷新**（⟳）：手动刷新实时画面（图标转圈表示刷新中）。
+- 操作时，主画面下方的网址行会**就地显示操作提示**，2 秒后恢复。
+
+> 登录态说明：观察窗显示的是 agent 正在操作的浏览器实况；多任务空间之间 Cookie 相互隔离
+> （ego 设计如此），登录请在对应任务空间内进行。重启 DSH 后运行期登录态会被清空
+> （Chrome 运行期 Cookie 仅在优雅关闭时落盘），需重新登录——扫码即可，很快。
+
 ## 工作原理
 
-- 每个工具把参数拼成一段 JS 脚本，通过 `ctx.subprocess` 以 `ego-browser nodejs` 喂给 stdin 运行；
-  内置宿主用 CDP 驱动普通 Chrome。
-- 脚本使用共享 harness 的 facade 表面（`taskSpaces.useOrCreate/.complete`、
-  `browser.openOrReuseTab`、`page.info()`、`page.snapshotRaw()`、`page.evaluate()`、
-  `page.waitForTimeout()`、`page.screenshot()`、`page.locator(...).click()/.fill()`、
-  `page.mouse.click(x, y)`、裸 `cdp()`）——macOS App 与 Linux 宿主完全一致。
-- 结果通过 `console.log('@@DSH_RESULT@@' + JSON.stringify(payload))` 输出，插件解析哨兵行；
-  `ego_snapshot` 的文本直接透出渲染。
-- 所有 `ego_*` 执行经过**进程内互斥锁串行化**（每个调用共享同一个常驻浏览器）；
-  插件卸载时 best-effort 停止浏览器（`ctx.effect`）。
-- 非零退出、缺少 CLI、被中止都会转为明确错误信息。
+- **工具层**：每个工具把参数拼成一段 JS 脚本，通过 `ctx.subprocess` 以 `ego-browser nodejs` 喂给
+  stdin 运行；内置宿主用 CDP 驱动普通 Chrome。结果经 `console.log('@@DSH_RESULT@@' + JSON.stringify(payload))`
+  哨兵行解析。所有 `ego_*` 经**进程内互斥锁串行化**（共享同一常驻浏览器），错误统一归一化为明确信息。
+- **观察窗**（三层，各自职责）：
+  - `client.js`（前端）：GitHub 浮球 + 标签条 + 历史抽屉，轮询 `/api/ego/spaces`。
+  - `cast-server.js`（host）：把前端路由转发到本地 worker，懒启动、崩溃自动重启。
+  - `ego-cast-worker.mjs`（worker）：attach 到 **agent 正在用**的浏览器（读其 CDP 端点），
+    对每个页面推实时截图帧；提供关闭标签 `/api/close`。worker 只读/见控，绝不动宿主环境。
 
 ## 开发
 
@@ -94,14 +139,15 @@ dshx list                    # 应显示：[on] ego-browser
 `node_modules/` 只含指向 DSH checkout 的符号链接（编译期类型解析用）；
 运行时由 harness 装载器解析 `@deepseek-ai/dsh-tools`。
 
-## 已知限制
+## 已知限制（诚实说明）
 
 - **快照质量**：Linux 宿主用 CDP `DOMSnapshot.captureSnapshot` 重建语义树（refs 忠实、内容可读），
   但非 macOS 内核级快照，复杂 iframe/画布场景可能降级。
 - **官方支持状态**：Linux 是未合并的社区 PR（#234）；macOS 仍是官方唯一支持平台。
 - **宿主可靠性（Linux）**：未合并的宿主在跨 CLI 调用间可能丢失 tab/空间状态（空白 tab、偶发 EPIPE）。
   插件已内置防御（`ensureRealTab`、快照重试、EPIPE 容错）；简单流程稳定，复杂多步流程可能需要重试。
-  建议等官方 Linux 支持合并后，或使用 macOS App 时用于生产。
+- **登录态持久化**：Chrome 运行期 Cookie 仅在优雅关闭时落盘，DSH 强杀重启会导致运行期登录丢失
+  （需重登）。这是 Chrome 内核行为，插件无法在运行期强制落盘。
 - **输出 schema** 为宽松的 `additionalProperties: true` 结构，客户端渲染以实际返回值为准。
 
 ## 许可与署名
