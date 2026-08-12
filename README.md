@@ -1,5 +1,7 @@
 # ego-browser — 看得见的 Agent 浏览器
 
+> **仓库**：`github.com/dsh-external/ego-browser`（私有 · 内测）
+
 > ⚠️ **保密声明**：本项目属于 DeepSeek Harness **内测生态**的一部分，仅限
 > dsh-external 组织内测成员使用。**严禁公开、外发、镜像或分发到任何非授权位置**。
 > 仓库必须保持 PRIVATE；不发布到 npm / 公共 registry；不创建公开 fork 或镜像。
