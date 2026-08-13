@@ -67,6 +67,21 @@ Agent 浏览器的本质是一个**后台黑盒**：agent 用 `ego_*` 工具在�
 
 ---
 
+## ✨ v0.4.0 跨平台（Windows 适配落地）
+
+- **Windows 原生支持**：`lib/index.js` 新增 `IS_WIN` + `windowsChromeCandidates()`，自动探测
+  Chrome / Edge / Brave 的常见安装目录，并在 Windows `PATH` + `%PATHEXT%` 下查找浏览器；不再依赖
+  POSIX 专用路径。
+- **观察窗服务双兼容**：注入服务从固定的 `httpServer` 调整为 `webServer` / `httpServer` 二选一
+  （Web 壳宿主是 `webServer`，其余 Web 宿主是 `httpServer`），`lib/cast-server.js` 内部自动取用
+  实际存在的那一个，Windows 上也能挂载实时观察窗。
+- **状态路径跨平台**：`cast-server.js` 与 `ego-cast-worker.mjs` 的关键状态目录（`ego-cast.json`、
+  `browser.json`）在 Windows 用 `%LOCALAPPDATA%\ego-lite-linux`，POSIX 仍用
+  `$XDG_STATE_HOME/ego-lite-linux`，与 ego-lite 运行时保持一致。
+- 版本 `0.3.0 → 0.4.0`；对应 `webServer`/`httpServer` 宿主均验证。
+
+---
+
 ## ✨ v0.3.0 修复与增强
 
 - **冷启动自动重试**：本插件的每个 `ego_*` 动作都是新起一个 `ego-browser` 子进程去驱动同一个
@@ -182,6 +197,10 @@ dshx list                    # 应显示：[on] ego-browser
 运行时由 harness 装载器解析 `@deepseek-ai/dsh-tools`。
 
 ## 已知限制（诚实说明）
+
+- **Windows**：插件层面（Chrome 探测、状态路径、观察窗服务）已做 v0.4.0 跨平台适配。底层
+  ego-lite 宿主仍是非 Windows 官方支持的社区移植，Windows 下复杂多步流程的宿主稳定性可能略
+  弱于 macOS。
 
 - **快照质量**：Linux 宿主用 CDP `DOMSnapshot.captureSnapshot` 重建语义树（refs 忠实、内容可读），
   但非 macOS 内核级快照，复杂 iframe/画布场景可能降级。

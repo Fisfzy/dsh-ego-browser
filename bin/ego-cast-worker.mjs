@@ -26,15 +26,19 @@
  */
 import { createServer } from "node:http";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
 const SENTINEL = "@@DSH_RESULT@@";
 // Paths must mirror ego-linux/src/paths.mjs so we attach to the SAME browser.
-const HOME = process.env.HOME || "/root";
-const STATE_DIR = process.env.XDG_STATE_HOME || join(HOME, ".local", "state");
-const EGO_LITE_STATE_DIR = join(
-  process.env.EGO_LINUX_STATE_DIR || join(STATE_DIR, "ego-lite-linux"),
-);
+// Windows stores everything under %LOCALAPPDATA%\ego-lite-linux; POSIX uses
+// $XDG_STATE_HOME (default ~/.local/state)/ego-lite-linux.
+const HOME = homedir() || process.env.HOME || process.env.USERPROFILE || "/root";
+const IS_WIN = platform() === "win32";
+const STATE_HOME = IS_WIN
+  ? process.env.LOCALAPPDATA || join(HOME, "AppData", "Local")
+  : process.env.XDG_STATE_HOME || join(HOME, ".local", "state");
+const EGO_LITE_STATE_DIR = process.env.EGO_LINUX_STATE_DIR || join(STATE_HOME, "ego-lite-linux");
 const BROWSER_STATE_FILE = join(EGO_LITE_STATE_DIR, "browser.json");
 const CAST_STATE_FILE = join(EGO_LITE_STATE_DIR, "ego-cast.json");
 
