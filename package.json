@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/ego-browser",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "ego-browser (ego-lite) integration plugin for DSH: structured browser-automation tools that drive the ego-browser CLI through ctx.subprocess, plus a realtime watch bubble (live tab bar + history drawer + zoom/pan) for the agent's live browser.",
   "private": true,
   "type": "module",
