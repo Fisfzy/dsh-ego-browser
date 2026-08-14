@@ -216,10 +216,53 @@ function sseBroadcast(event, payload) {
 /** Rebuild the current snapshot ({targetId,url,title,lastActive}) for a client. */
 const probeCache = new Map(); // targetId -> { at, human }
 const PROBE_INTERVAL_MS = 5000;
+
+// ── active-tab tracking ─────────────────────────────────────────────────────
+// Which page the agent is CURRENTLY on is the single most important fact for the
+// watch panel's auto-follow. It is NOT "the page that last repainted" — Chrome
+// runs each page's screencast stream independently, so an animated/video tab in
+// the background repaints (and bumps lastActive) as fast as the operated one and
+// can steal the view. The authoritative signal is the DevTools HTTP endpoint
+// `/json/list`, which returns targets in most-recently-used order — it reflects
+// both the user's manual tab switches and the runtime's programmatic
+// `Target.activateTarget` (switchTab / openOrReuseTab). The first page entry is
+// the one the agent is looking at right now. (tabs.mjs in the runtime trusts the
+// same source for exactly this reason.)
+let activeTabCache = null; // { at, id } — id of the MRU-active page target
+const ACTIVE_TAB_TTL_MS = 1500;
+/** The id of the browser's most-recently-used (currently-active) page, or null. */
+async function activeTabId() {
+  const port = active?.port;
+  if (!port) return null;
+  if (activeTabCache && Date.now() - activeTabCache.at < ACTIVE_TAB_TTL_MS) {
+    return activeTabCache.id;
+  }
+  let id = null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      const list = await res.json();
+      const first = (Array.isArray(list) ? list : []).find((e) => e.type === "page");
+      id = first?.id ?? null;
+    }
+  } catch {
+    id = null;
+  }
+  activeTabCache = { at: Date.now(), id };
+  return id;
+}
+
+/** Clear the MRU cache when the browser (re)connects so we never follow a stale tab. */
+function resetActiveTabCache() {
+  activeTabCache = null;
+}
 async function snapshotSpaces() {
   if (!active) return [];
   try {
     const targets = await listPageTargets(active.cdp);
+    // Authoritative active page: the browser's MRU-active tab. Never fall back
+    // to "highest lastActive" here — background repaints must not win.
+    const activeId = await activeTabId();
     // Read only already-cached frames — never call startScreencast here. That
     // keeps the initial "spaces" push instant and, crucially, does not steal
     // the one screencast stream Chrome allows per target away from the live
@@ -228,6 +271,7 @@ async function snapshotSpaces() {
     const spaces = [];
     for (const t of targets.slice(0, 30)) {
       const meta = frames.get(t.targetId);
+      const isActive = activeId !== null && t.targetId === activeId;
       // Human-check probe: cached, throttled (5s), fire-and-forget so it never
       // blocks the snapshot. Each page's value is refreshed lazily; the panel
       // reads the last known one.
@@ -242,6 +286,7 @@ async function snapshotSpaces() {
         targetId: t.targetId,
         url: t.url,
         title: t.title,
+        active: isActive,
         thumbnail: meta?.frame ? `data:image/jpeg;base64,${meta.frame}` : null,
         lastActive: meta?.lastActive ?? 0,
         viewportW: meta?.viewportW ?? undefined,
@@ -249,7 +294,12 @@ async function snapshotSpaces() {
         humanCheck: (cached && cached.human) ?? null,
       });
     }
-    spaces.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
+    // Active page always first; the rest by recency of activity.
+    spaces.sort((a, b) => {
+      const ad = a.active ? 1 : 0, bd = b.active ? 1 : 0;
+      if (ad !== bd) return bd - ad;
+      return (b.lastActive ?? 0) - (a.lastActive ?? 0);
+    });
     return spaces;
   } catch {
     return [];
@@ -512,7 +562,7 @@ function stopSiblingWorkers() {
     // Graceful first (lets the old worker flush its cast state and exit),
     // then force if it lingers.
     try { process.kill(p, "SIGTERM"); } catch {}
-    try { execFileSync("taskkill", ["/PID", String(p), "/T", "/F"], { timeout: 8000, stdio: "ignore", shell: IS_WIN }); } catch {}
+    try { execFileSync("taskkill", ["/PID", String(p), "/T", "/F"], { timeout: 8000, stdio: "ignore" }); } catch {}
   }
 }
 
@@ -549,7 +599,7 @@ const RETRY_AFTER_DROP_MS = 2000;  // CDP socket closed or errored
 const BACKSTOP_STALE_MS = 5000;
 let active = null; // { cdp, pool } for the live browser attachment
 
-async function openBrowserSession(wsUrl) {
+async function openBrowserSession(wsUrl, browserPort = null) {
   const ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => {
     ws.addEventListener("open", res, { once: true });
@@ -561,7 +611,7 @@ async function openBrowserSession(wsUrl) {
     ws.addEventListener("close", () => resolve("close"), { once: true });
     ws.addEventListener("error", () => resolve("error"), { once: true });
   });
-  return { ws, cdp, pool, dropped };
+  return { ws, cdp, pool, dropped, port: browserPort };
 }
 
 async function runConnectLoop() {
@@ -573,8 +623,9 @@ async function runConnectLoop() {
       continue;
     }
     try {
-      const session = await openBrowserSession(browser.wsUrl);
+      const session = await openBrowserSession(browser.wsUrl, browser.port || null);
       active = session;
+      resetActiveTabCache();
       console.error(`ego-cast-worker: attached to browser (${browser.port ?? "override"})`);
       keepCastsAlive(session);
       await session.dropped;
@@ -742,6 +793,7 @@ async function main() {
       if (!sess) return sendJson(res, 200, { ok: true, spaces: [] });
       try {
         const targets = await listPageTargets(sess.cdp);
+        const activeId = await activeTabId();
         const spaces = [];
         for (const t of targets.slice(0, 30)) {
           try {
@@ -759,6 +811,7 @@ async function main() {
               targetId: t.targetId,
               url: t.url,
               title: t.title,
+              active: activeId !== null && t.targetId === activeId,
               thumbnail: cast?.frame ? `data:image/jpeg;base64,${cast.frame}` : null,
               // Most-recently-active first: the page the agent is currently
               // looking at (or just touched) gets the newest lastActive.
@@ -771,8 +824,12 @@ async function main() {
             /* skip broken target */
           }
         }
-        // Newest active on top — the panel's default ("latest step on top" view).
-        spaces.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
+        // The agent's browser-MRU-active tab always on top; the rest by activity.
+        spaces.sort((a, b) => {
+          const ad = a.active ? 1 : 0, bd = b.active ? 1 : 0;
+          if (ad !== bd) return bd - ad;
+          return (b.lastActive ?? 0) - (a.lastActive ?? 0);
+        });
         return sendJson(res, 200, { ok: true, spaces });
       } catch {
         return sendJson(res, 200, { ok: true, spaces: [] });
