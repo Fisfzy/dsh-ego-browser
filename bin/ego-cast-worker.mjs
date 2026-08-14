@@ -137,6 +137,48 @@ class Cdp {
 // ---------------------------------------------------------------------------
 const sseClients = new Set();
 
+// Lightweight DOM probe for human-verification (CAPTCHA) challenges. Runs via
+// Runtime.evaluate on a page session during snapshotting, so the watch panel can
+// flash a reminder when the agent is being asked to verify.
+const HUMAN_PROBE_JS = `(() => {
+  const sel = [
+    'iframe[src*="recaptcha"]', '.g-recaptcha',
+    '.h-captcha', 'iframe[src*="hcaptcha"]',
+    '.cf-turnstile', 'iframe[src*="turnstile"]',
+    'iframe[src*="cloudflare"]', '#challenge-form', '.challenge-form',
+    '#captcha', '.captcha'
+  ].join(',');
+  const el = document.querySelector(sel);
+  if (el) {
+    const s = el.outerHTML || '';
+    if (/recaptcha|g-recaptcha/i.test(s)) return { detected: true, kind: 'recaptcha' };
+    if (/hcaptcha|h-captcha/i.test(s)) return { detected: true, kind: 'hcaptcha' };
+    if (/turnstile/i.test(s)) return { detected: true, kind: 'turnstile' };
+    if (/cloudflare/i.test(s)) return { detected: true, kind: 'cloudflare' };
+    return { detected: true, kind: 'captcha' };
+  }
+  const t = ((document.body && document.body.innerText) || '').slice(0, 120000).toLowerCase();
+  if (/verify you are human|your activity looks unusual|captcha|i.?m not a robot|人机验证|安全验证|我是人类|验证码|滑块验证/.test(t)) return { detected: true, kind: 'captcha' };
+  return { detected: false, kind: null };
+})()`;
+
+/** Best-effort runtime of the human-check probe on a page session. */
+async function probeHuman(cdp, sessionId) {
+  if (!sessionId) return null;
+  try {
+    const r = await cdp.call(
+      "Runtime.evaluate",
+      { expression: HUMAN_PROBE_JS, returnByValue: true, awaitPromise: false },
+      sessionId,
+      3000
+    );
+    const v = r?.result?.result?.value;
+    return v && typeof v === "object" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 function sseBracket(res, status = 200) {
   res.writeHead(status, {
     "content-type": "text/event-stream",
@@ -160,6 +202,8 @@ function sseBroadcast(event, payload) {
   }
 }
 /** Rebuild the current snapshot ({targetId,url,title,lastActive}) for a client. */
+const probeCache = new Map(); // targetId -> { at, human }
+const PROBE_INTERVAL_MS = 5000;
 async function snapshotSpaces() {
   if (!active) return [];
   try {
@@ -172,6 +216,16 @@ async function snapshotSpaces() {
     const spaces = [];
     for (const t of targets.slice(0, 30)) {
       const meta = frames.get(t.targetId);
+      // Human-check probe: cached, throttled (5s), fire-and-forget so it never
+      // blocks the snapshot. Each page's value is refreshed lazily; the panel
+      // reads the last known one.
+      const cached = probeCache.get(t.targetId);
+      if (!cached || Date.now() - cached.at > PROBE_INTERVAL_MS) {
+        const sess = active.pool.sessionFor ? active.pool.sessionFor(t.targetId) : null;
+        probeHuman(active.cdp, sess).then((human) => {
+          probeCache.set(t.targetId, { at: Date.now(), human });
+        }).catch(() => {});
+      }
       spaces.push({
         targetId: t.targetId,
         url: t.url,
@@ -180,6 +234,7 @@ async function snapshotSpaces() {
         lastActive: meta?.lastActive ?? 0,
         viewportW: meta?.viewportW ?? undefined,
         viewportH: meta?.viewportH ?? undefined,
+        humanCheck: (cached && cached.human) ?? null,
       });
     }
     spaces.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
@@ -350,7 +405,12 @@ function createCastPool(cdp) {
     return { ok: true };
   }
 
-  return { frameFor, refreshFrame, removeCast, cachedFrames, sendInput };
+  /** The screencast session id for a target (used to run in-page probes). */
+  function sessionFor(targetId) {
+    return casts.get(targetId)?.sessionId ?? null;
+  }
+
+  return { frameFor, refreshFrame, removeCast, cachedFrames, sendInput, sessionFor };
 }
 
 async function listPageTargets(cdp) {
@@ -592,6 +652,12 @@ async function main() {
             // the CURRENT picture of each page (screencast alone can freeze on
             // pages that change without repainting, e.g. a playing video).
             const cast = await sess.pool.refreshFrame(t.targetId);
+            const cached = probeCache.get(t.targetId);
+            if (!cached || Date.now() - cached.at > PROBE_INTERVAL_MS) {
+              probeHuman(sess.cdp, sess.pool.sessionFor ? sess.pool.sessionFor(t.targetId) : null)
+                .then((human) => probeCache.set(t.targetId, { at: Date.now(), human }))
+                .catch(() => {});
+            }
             spaces.push({
               targetId: t.targetId,
               url: t.url,
@@ -602,6 +668,7 @@ async function main() {
               lastActive: cast?.lastActive ?? 0,
               viewportW: cast?.viewportW ?? undefined,
               viewportH: cast?.viewportH ?? undefined,
+              humanCheck: (cached && cached.human) ?? null,
             });
           } catch {
             /* skip broken target */
