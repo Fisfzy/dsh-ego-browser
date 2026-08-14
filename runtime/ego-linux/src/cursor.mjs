@@ -26,7 +26,7 @@ import { createSessionResolver } from "./session.mjs";
  *
  * Env: EGO_LINUX_CURSOR=0 turns it off (it is drawn into screenshots, which is
  * usually wanted and occasionally not); EGO_LINUX_CURSOR_NAME renames it from
- * the default "Claude".
+ * the default "DeepSeek".
  */
 
 const HOST_ID = "ego-agent-cursor-overlay";
@@ -46,7 +46,7 @@ const TYPING_IDLE_MS = 700;
 
 export function createCursorApi(cdp, { listTabs }) {
   const enabled = process.env.EGO_LINUX_CURSOR !== "0";
-  const name = process.env.EGO_LINUX_CURSOR_NAME || "Claude";
+  const name = process.env.EGO_LINUX_CURSOR_NAME || "DeepSeek";
   const sessionForActiveTab = createSessionResolver(cdp, {
     listTabs,
     op: "cursor",
@@ -285,7 +285,7 @@ export function createCursorApi(cdp, { listTabs }) {
      *
      * A snapshot completes in milliseconds, so clearing the label when the read
      * returned made "reading" flash for less than a frame — the badge just read
-     * "Claude". Leaving it up means the window always says what the agent last
+     * "DeepSeek". Leaving it up means the window always says what the agent last
      * did, which is what makes an idle-looking window legible. moveTo and
      * pulseAt take it down again when real input arrives.
      */
@@ -881,7 +881,7 @@ function renderOverlay(payload) {
       // Falling back to whatever is under the cursor is useful for a paragraph
       // or an image. It is not for <html> or <body>: their textContent is the
       // entire document, stylesheet text and all, so the badge would read
-      // "Claude · Example Domainbody{background:#…". Resting the cursor in a
+      // "DeepSeek · Example Domainbody{background:#…". Resting the cursor in a
       // corner after a navigation lands on exactly those, so describing them
       // has to mean describing nothing — the stale label is the better answer.
       (under.tagName === "HTML" || under.tagName === "BODY" ? null : under)
