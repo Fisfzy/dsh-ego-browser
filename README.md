@@ -89,6 +89,16 @@ Agent 浏览器的本质是一个**后台黑盒**：agent 用 `ego_*` 工具在�
 
 ---
 
+## ✨ v0.6.0 代码健康治理（工程收敛）
+
+- **消除构建覆盖炸弹**：删除过时的 `src/`（561 行旧版）与 `tsconfig.json`，确立 **`lib/` 为唯一权威源**。
+  `npm run build` 由「tsc 编译 src→lib（会导致旧版覆盖、工具全丢）」改为「对 `lib/` 做语法校验（`node --check`）」，杜绝"一构建全回归"。
+- **统一工具注册**：`ego_captcha` 改为与其他工具一致的 `withEgoLock` + 冷启动重试路径（并发安全），消除"部分工具走锁、部分不走"的不一致。
+- **不再分叉**：此前新增的能力（下载捕获、人机验证检测、30+ 工具）以 `lib/` 为准，`src/` 旧版已移除。
+- 版本 `0.5.0 → 0.6.0`。
+
+---
+
 ## ✨ v0.4.0 跨平台（Windows 适配落地）
 
 - **Windows 原生支持**：`lib/index.js` 新增 `IS_WIN` + `windowsChromeCandidates()`，自动探测
@@ -206,14 +216,18 @@ dshx list                    # 应显示：[on] ego-browser
 ## 开发
 
 ```sh
-# 构建（lib/）
-<dsh-checkout>/node_modules/.bin/tsc -p tsconfig.json
+# 校验（lib/ 为唯一权威源，不复编译覆盖）
+npm run build          # node --check lib/*.js，防止语法错误/一次性全量回归
 
 # 核心测试：
 #   smoke        — 插件注册 + 错误路径（假 CLI，必过）
 #   real-test    — 真浏览器基础流（example.com）
 #   verify-real  — 交互闭环 + arXiv 文献检索（宿主偶发不稳定，可重试）
 ```
+
+> **改代码直接改 `lib/`**（`lib/index.js` 工具层、`lib/client.js` 前端、`bin/ego-cast-worker.mjs` 观察窗 worker）。
+> 不要再用 `tsc src→lib` 构建——旧 `src/` 已删除并确立了 `lib/` 单一事实源，避免一构建就回归。
+> 新增工具在 `lib/index.js` 的 `registerActionTools` 里按 `t({...})` 风格加即可，记得配套在 `ego_help` 索引里补一条。
 
 `node_modules/` 只含指向 DSH checkout 的符号链接（编译期类型解析用）；
 运行时由 harness 装载器解析 `@deepseek-ai/dsh-tools`。
