@@ -23,6 +23,17 @@
  * navigates, never writes, never opens a window, never touches the host env.
  * If no agent browser is up yet it reports an empty spaces list and waits; the
  * plugin's host route surfaces that as "no live browser right now".
+ *
+ * == 文件内部结构（维护前先看 docs/ARCH.md）==
+ *   顶部常量   : 状态路径 / 哨兵 / HUMAN_PROBE_JS(人机探针) / probeCache
+ *   Cdp 类     : CDP 连接封装（call/on）
+ *   createCastPool : screencast 池 + viewport + 实时帧广播
+ *   sseBroadcast   : SSE 客户端扇出（frame / spaces 事件）
+ *   probeHuman     : 每页 humanCheck 检测（节流5s, fire-and-forget）
+ *   runConnectLoop : 浏览器连接/重连
+ *   keepCastsAlive : 兜底截图 + humanCheck 刷新
+ *   main           : loopback HTTP 路由（/api/spaces /api/stream /api/input /api/flush /api/close）
+ * 注意：humanCheck 探针与 lib/index.js 各有一份，改特征要两处同步。
  */
 import { createServer } from "node:http";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";

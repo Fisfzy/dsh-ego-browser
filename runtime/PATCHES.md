@@ -1,0 +1,21 @@
+# runtime/ — vendored 运行时本地改动记录
+
+本目录来自 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)（MIT，含 Linux 移植 PR #234
+与本地代理补丁），在首次 vendoring 提交 `a77dee4` 时整体引入。**只读参照**为主。
+
+> 排查/跟进上游前先看这里：如果一项改动只在下面列出，说明它相对上游是我们或本仓库维护引入的；
+> 没列出的文件 = 与 vendored 时一致（它们可能本就是这个 Linux 移植自带的本地化）。
+
+## 明确的本地改动（相对 vendored 基线）
+
+| 文件 | 改动 | 原因 / 提交 |
+|---|---|---|
+| `runtime/ego-linux/src/cursor.mjs` | 光标覆盖层默认名 `Claude` → `DeepSeek`（4 处：默认值 + 注释） | 品牌统一，`dacbd47` |
+| （其余 runtime 文件）| 与 vendoring 时一致 | 无后续本地改动 |
+
+## 说明
+- `chrome.mjs` 里的代理支持（`EGO_LINUX_PROXY`）在首次 vendoring 时已包含（本 Linux 移植特性），
+  非后续本地改动；如需调整走它。
+- **同步提醒**：`lib/index.js` 与 `bin/ego-cast-worker.mjs` 各有一份 humanCheck 探针（逻辑相似）——
+  若改探针特征，两处都要同步。
+- 若要跟进 ego-lite 上游，重点 diff 上表的 cursor.mjs；其余文件可直接与上游对齐。
