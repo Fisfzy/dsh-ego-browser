@@ -4,29 +4,41 @@
 
 > ⚠️ **保密声明**：属于 DeepSeek Harness **内测生态**的一部分，仅限 dsh-external 内测成员使用。**严禁公开、外发、镜像或分发到任何非授权位置**；仓库必须保持 PRIVATE，不发布到 npm / 公共 registry，不创建公开 fork 或镜像。
 
-把 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)（给 AI Agent 用的 Chromium）接入 DeepSeek Harness：以 **30+ 个结构化 `ego_*` 工具**驱动浏览器，并配一套**实时观察前端口**——agent 后台操作网页时，你能像看直播一样看到它正在浏览的每个页面，还能直接操作它。
+把 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)（给 AI Agent 用的 Chromium）接入 DeepSeek Harness：以 **32 个结构化 `ego_*` 工具**驱动浏览器，并配一套**实时观察前端口**——agent 后台操作网页时，你能像看直播一样看到它正在浏览的每个页面，还能直接操作它。
 
 **开箱即用**：插件包内置 ego 运行时（`runtime/`，MIT，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）——无需克隆官方仓库、无需手动构建，`--no-sandbox` wrapper 随包自带，root / Docker / 无显示器一键跑。
 
 ---
 
-## 为什么需要它
+## 我们的真正优势（不是口号，是能对照代码和竞品核实的能力）
 
-通用浏览器不是为 agent 设计的，而 Web 上大量交互（登录态、验证码、动态渲染、表单、需真人会话的站点）只有真浏览器能面对。ego 系的定位是 **“让 agent 用你已登录的浏览器，而不打扰你”**（[官网](https://github.com/CitroLabs/ego-lite)）。
+同样把 ego-lite 接进 DSH，市面上已有同类插件用它**只做了 3 个工具**——一个 `run` 脚本、一个 `help` 指南、一个 `status` 体检，浏览器仍是**后台黑盒**。`ego-browser` 走的是另一条路：**把黑盒打开，并且一上来就把"看"和"控"的能力做到位**。
 
-`ego-browser` 在此基础上解决最痛的一点——**你看不见它在干什么**：
+| 能力 | ego-browser（本仓库） | 同类插件（Da1dr1em/dsh-ego-browser） |
+|---|---|---|
+| 结构化工具数 | **32 个**，职责单一、可确定性调用 | **3 个**（`run`/`help`/`status`） |
+| 实时观察窗（SSE screencast 推流 + 标签条 + 历史抽屉） | ✅ 有 | ❌ 无 |
+| 监控窗鼠标**直接操作**真实浏览器（点击/拖拽/滚动回传 CDP） | ✅ 有 | ❌ 无 |
+| worker 单实例守卫 + 崩溃/重复自愈 | ✅ 有 | ❌ 无 |
+| 下载捕获 `ego_download` / 人机验证检测 `ego_captcha`/`ego_page_info` | ✅ 有 | ❌ 无 |
+| 平台自适应（Linux/macOS/Windows 自动探测 + root/无头/`--no-sandbox` 兜底） | ✅ 全平台 | 仅 Windows 预览宿主，需手动配 |
+| 登录态落盘持久化 `ego_auth_flush` | ✅ 有 | ⚠️ 仅文档级说明 |
 
-| 痛点 | ego-browser 给到 |
-|------|------------------|
-| 看不见 agent 在哪、点了什么 | 🌐 **实时观察浮窗**：小球一点，各标签实时画面直播 |
-| 标签太多找不清 | 🟦 **标签页条**：点选切换、`×` 一键关闭 |
-| 想知道 agent 去过哪 | 🕘 **历史抽屉**：回看浏览轨迹 |
-| 页面细节看不清 | 🔍 **缩放/拖拽/复位** |
-| 画面跟不上操作 | ⚡ 活跃 2s 快刷、静止 8s 省资源 |
-| 想直接接管 | 🖱️ **监控窗直操浏览器**：点击/拖动/滚动真实页面（v0.5.0） |
-| 环境杂（root/无头/无 sandbox） | 🛡️ 自动探测根目录、无显示器、自动兜底 |
+**关键差异两条：**
+- **看得到**：别家是"跑完告诉你结果"的黑盒；我们实时推流，你**看着 agent 操作**，卡在验证码/走岔立刻发现。
+- **控得住**：别家只读；我们监控窗**直接驱动**同一个 agent 浏览器，需要时你亲手接管（缩放/拖拽/点击），不必打断 agent 重来。
 
-**一句话：别的方案让 agent 用浏览器，它能让你看见并接管 agent 用的浏览器。**
+> 以上对比基于公开可见的可核实事实：本仓库代码（`bin/ego-cast-worker.mjs` 实时推流 + CDP 输入回传、`lib/index.js` 32 个注册工具、`lib/cast-server.js` host 桥接）与同类插件的源码/README。此文档不含对任何他人的贬低——我们只陈述自己多实现并验证了哪些能力。
+
+---
+
+## 它解决什么问题
+
+通用浏览器不是为 agent 设计的，而 Web 上大量交互（登录态、验证码、动态渲染、表单、需真人会话的站点）只有真浏览器能面对——这正是 ego 系 **"让 agent 用你已登录的浏览器，而不打扰你"**（[官网](https://github.com/CitroLabs/ego-lite)）的由来。
+
+`ego-browser` 把它接进 DSH，并把最痛的一点——**你看不见 agent 在干什么、也插不上手**——用一套观察窗解决：
+
+> 🌐 小球一点看直播；🟦 标签条切换/关闭；🕘 历史抽屉回看；🔍 缩放拖拽；🖱️ 监控窗直接接管真实浏览器。**一句话：让 agent 在浏览器里干活，你在旁边既看得见、又随时能接手。**
 
 ---
 
@@ -60,7 +72,7 @@ dshx list                                                # 应显示：[on] ego-
 
 无需宿主侧任何配置：`resolveEgoEnv` 自动探测 root / 无显示器并兜底。观察窗 host 路由（`/api/ego/spaces` 等）仅在有 HTTP server 时注册，headless 是安全 no-op。
 
-## 工具清单（30+ 个，前缀 `ego_`，完整索引见 `ego_help`）
+## 工具清单（32 个，前缀 `ego_`，完整索引见 `ego_help`）
 
 | 类别 | 工具 |
 |---|---|
