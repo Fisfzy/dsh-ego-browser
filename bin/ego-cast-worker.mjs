@@ -39,6 +39,7 @@ import { createServer } from "node:http";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 const SENTINEL = "@@DSH_RESULT@@";
 // Paths must mirror ego-linux/src/paths.mjs so we attach to the SAME browser.
@@ -454,6 +455,86 @@ function readBody(req, maxBytes = 8192) {
 }
 
 // ---------------------------------------------------------------------------
+// Single-instance guard: ensure only ONE ego-cast-worker is ever alive.
+//
+// Background: a worker can be launched both from the plugin install
+// (C:\Users\...\.external-plugins\ego-browser) and from a dev clone
+// (D:\AGENT LEARING\...), and `ensureWorker` respawns one whenever the last
+// known pid in ego-cast.json looks dead. That can leave a stale file pointing
+// at a dead pid while an older-but-alive worker keeps running on another port —
+// exactly the "watch panel lost the stream" state. Fix: on startup this worker
+// enumerates other node processes running the same ego-cast-worker.mjs and
+// stops them, then REMOVES any stale ego-cast.json so the fresh process's own
+// {port,pid} becomes authoritative.
+// ---------------------------------------------------------------------------
+
+// On Windows enumerate sibling node processes with a QUOTED commandline filter.
+// We avoid cmd.exe / nested-quote mess by shipping the PowerShell script to
+// powershell.exe -EncodedCommand as UTF-16LE base64 — immune to quote mangling.
+function listSiblingWorkerPids() {
+  const self = String(process.pid);
+  const pids = [];
+  if (IS_WIN) {
+    // The script outputs one integer PID per line for every node.exe whose
+    // command line contains our worker script, excluding our own pid.
+    const ps = [
+      "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\"",
+      "| Where-Object { $_.CommandLine -like '*ego-cast-worker.mjs*' -and $_.ProcessId -ne $PID }",
+      "| Select-Object -ExpandProperty ProcessId",
+    ].join(" ");
+    try {
+      const enc = Buffer.from(ps, "utf16le").toString("base64");
+      const out = execFileSync("powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
+        { encoding: "utf8", timeout: 8000 });
+      for (const l of out.split(/\r?\n/)) {
+        const t = l.trim();
+        if (/^\d+$/.test(t) && t !== self) pids.push(Number(t));
+      }
+    } catch { /* enumeration failed → no-op */ }
+    return pids;
+  }
+  // POSIX: ps -eo pid=,args= and filter lines by our script name.
+  try {
+    const out = execFileSync("ps", ["-eo", "pid=,args="], { encoding: "utf8", timeout: 8000 });
+    for (const l of out.split(/\n/)) {
+      const m = l.match(/^\s*(\d+)\s+(.+)$/);
+      if (m && m[2].includes("ego-cast-worker.mjs") && m[1] !== self) pids.push(Number(m[1]));
+    }
+  } catch {}
+  return pids;
+}
+
+/** Stop (graceful SIGTERM, then force) node processes running ego-cast-worker.mjs other than ourselves. */
+function stopSiblingWorkers() {
+  const others = listSiblingWorkerPids();
+  for (const p of others) {
+    // Graceful first (lets the old worker flush its cast state and exit),
+    // then force if it lingers.
+    try { process.kill(p, "SIGTERM"); } catch {}
+    try { execFileSync("taskkill", ["/PID", String(p), "/T", "/F"], { timeout: 8000, stdio: "ignore", shell: IS_WIN }); } catch {}
+  }
+}
+
+/** Remove any stale ego-cast.json (dead pid, or a pid that will now be killed). */
+async function cleanStaleCastState() {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    let pid = null;
+    try {
+      pid = JSON.parse(await readFile(CAST_STATE_FILE, "utf8"))?.pid ?? null;
+    } catch {
+      pid = null; // unparsable/absent → nothing to preserve
+    }
+    // If a live worker owns the file and it is NOT a stale duplicate we'd be
+    // killing, leaving it would confuse ensureWorker. We always own the file in
+    // the end, so just remove it; the fresh worker writes its own right after.
+    rmSync(CAST_STATE_FILE, { force: true });
+    console.error?.(`ego-cast-worker: stale cast state cleared (had pid=${pid ?? "-"})`);
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
 // main — resilient version: loopback HTTP stays up; the browser attachment is
 // re-established automatically whenever the agent browser appears, restarts,
 // or its CDP socket drops. This replaces the old "exit(2) if no browser" and
@@ -554,6 +635,11 @@ function sleep(ms) {
 
 
 async function main() {
+  // Single-instance: kill duplicate workers first, then own the state file, so
+  // the port/pid we write below is the ONLY live worker's.
+  try { stopSiblingWorkers(); } catch {}
+  await cleanStaleCastState();
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, { ok: !!active });
@@ -703,7 +789,15 @@ async function main() {
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
   async function shutdown() {
-    try { rmSync(CAST_STATE_FILE, { force: true }); } catch {}
+    // Only remove the state file if it still identifies THIS worker. During the
+    // single-instance guard a newer worker kills us right after writing its own
+    // ego-cast.json; blindly deleting here would erase the successor's truthful
+    // state and leave ensureWorker with a stale/missing file again.
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const rec = JSON.parse(await readFile(CAST_STATE_FILE, "utf8"));
+      if (rec.pid === process.pid) rmSync(CAST_STATE_FILE, { force: true });
+    } catch { /* absent/unparsable — nothing to clean */ }
     server.close();
     try { active?.ws?.close(); } catch {}
     process.exit(0);
