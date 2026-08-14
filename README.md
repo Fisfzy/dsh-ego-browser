@@ -67,6 +67,28 @@ Agent 浏览器的本质是一个**后台黑盒**：agent 用 `ego_*` 工具在�
 
 ---
 
+## ✨ v0.5.0 实时推流 + 监控窗直接操作浏览器
+
+- **修复实时推流关键 bug（重要）**：`ego-cast-worker.mjs` 的 `screencastFrame` 事件匹配用了错误的
+  `params.sessionId` 字段，导致**实时帧从未真正通过 SSE 推送**，全程靠慢速兜底截图降级。已改为匹配
+  事件级 `sessionId`，动态页面现在以浏览器重绘速率实时推帧（接近 10~30fps）。
+- **cast-server 流式转发改用 `http.request`**：原先用 `fetch` 消费 worker 的 SSE 流，Node undici 对
+  chunked 响应的缓冲会延迟/错乱首帧；改用 `node:http` 流式转发，实时帧即时到达前端。
+- **监控窗鼠标直接操作 agent 浏览器（核心交互）**：在右下角实况图上
+  - 普通滚轮 = 滚动 agent 页面；普通点按/拖动 = 点击/拖拽真实浏览器（经 `/api/ego/input` →
+    CDP `Input.dispatchMouseEvent` 回传）；
+  - Ctrl+滚轮 = 视图缩放（放大镜），Ctrl+拖动 = 视图平移，双击 = 复位；
+  - 坐标按 agent 页面真实视口（`Page.getLayoutMetrics` 逐页读取）逆映射，click/drag 落点精准，
+    含 letterbox 黑边校正。
+- **观察窗新增 `/api/ego/stream`（SSE）**：实时帧 + 页面列表流式推送，替代原 2~8s 轮询截图。
+- **坐标映射基准**：worker 在每个截图/推帧附带页面 CSS 视口（`vw/vh`），前端据此把监控窗坐标
+  精确映射到浏览器像素。
+- **登录引导**：观察窗新增登录引导条 +「已登录，保存」按钮（触发 `/api/ego/flush` 落盘持久化）；
+  并修复 `ego_auth_flush` 在 Windows 上找不到 worker 的状态目录路径 bug（`%LOCALAPPDATA%`）。
+- 版本 `0.4.0 → 0.5.0`。
+
+---
+
 ## ✨ v0.4.0 跨平台（Windows 适配落地）
 
 - **Windows 原生支持**：`lib/index.js` 新增 `IS_WIN` + `windowsChromeCandidates()`，自动探测

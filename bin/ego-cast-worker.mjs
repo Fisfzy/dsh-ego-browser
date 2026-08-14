@@ -130,16 +130,94 @@ class Cdp {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Real-time SSE fan-out. The watch panel runs on an EventSource; every new
+// screencast frame is pushed immediately (browser repaint cadence), so the UI
+// stops waiting on a per-request captureScreenshot (which measured ~700ms).
+// ---------------------------------------------------------------------------
+const sseClients = new Set();
+
+function sseBracket(res, status = 200) {
+  res.writeHead(status, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  res.flushHeaders?.();
+  res.write(":ok\n\n");
+}
+/** Write one SSE event to every connected client. `payload` must be JSON-safe. */
+function sseBroadcast(event, payload) {
+  const data = typeof payload === "string" ? payload : JSON.stringify(payload);
+  const frame = `event: ${event}\ndata: ${data}\n\n`;
+  for (const res of sseClients) {
+    try {
+      res.write(frame);
+    } catch {
+      sseClients.delete(res);
+    }
+  }
+}
+/** Rebuild the current snapshot ({targetId,url,title,lastActive}) for a client. */
+async function snapshotSpaces() {
+  if (!active) return [];
+  try {
+    const targets = await listPageTargets(active.cdp);
+    // Read only already-cached frames — never call startScreencast here. That
+    // keeps the initial "spaces" push instant and, crucially, does not steal
+    // the one screencast stream Chrome allows per target away from the live
+    // fan-out below.
+    const frames = active.pool.cachedFrames ? active.pool.cachedFrames() : new Map();
+    const spaces = [];
+    for (const t of targets.slice(0, 30)) {
+      const meta = frames.get(t.targetId);
+      spaces.push({
+        targetId: t.targetId,
+        url: t.url,
+        title: t.title,
+        thumbnail: meta?.frame ? `data:image/jpeg;base64,${meta.frame}` : null,
+        lastActive: meta?.lastActive ?? 0,
+        viewportW: meta?.viewportW ?? undefined,
+        viewportH: meta?.viewportH ?? undefined,
+      });
+    }
+    spaces.sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
+    return spaces;
+  } catch {
+    return [];
+  }
+}
+
 /** Screencast pool: one live stream per page target, newest JPEG cached. */
 function createCastPool(cdp) {
   const casts = new Map();
-  cdp.on("Page.screencastFrame", (params) => {
-    cdp.call("Page.screencastFrameAck", { sessionId: params.sessionId }, params.sessionId).catch(() => {});
+  cdp.on("Page.screencastFrame", (params, sessionId) => {
+    cdp.call("Page.screencastFrameAck", { sessionId }, sessionId).catch(() => {});
     for (const cast of casts.values()) {
-      if (cast.sessionId !== params.sessionId) continue;
+      if (cast.sessionId !== sessionId) continue;
       cast.frame = params.data || null;
       cast.seq += 1;
       cast.lastActive = Date.now();
+      // Capture the page's CSS viewport + page scale so the panel can map its
+      // pointer coordinates back to real browser pixels. screencastFrame carries
+      // these in metadata; frameFor's snapshot has no repaint event, so we only
+      // learn them here (and refresh them from /api/input-able targets lazily).
+      const md = params.metadata || {};
+      if (Number.isFinite(md.visibleViewportWidth)) cast.viewportW = md.visibleViewportWidth;
+      if (Number.isFinite(md.visibleViewportHeight)) cast.viewportH = md.visibleViewportHeight;
+      // Real-time push: forward every fresh frame to the watch panel as soon as
+      // it arrives, instead of waiting for the next /api/spaces poll. The panel
+      // dataURL-caches per target so reconnecting clients catch up cheaply.
+      if (cast.frame && sseClients.size > 0) {
+        sseBroadcast("frame", {
+          targetId: cast.targetId,
+          data: cast.frame,
+          ts: Date.now(),
+          vw: cast.viewportW || null,
+          vh: cast.viewportH || null,
+        });
+      }
       break;
     }
   });
@@ -167,10 +245,28 @@ function createCastPool(cdp) {
     } catch (err) {
       return null; // attach/screencast failed — caller reports no thumbnail
     }
-    const cast = { targetId, sessionId, frame: null, seq: 0, lastActive: Date.now() };
+    const cast = { targetId, sessionId, frame: null, seq: 0, lastActive: Date.now(), viewportW: null, viewportH: null };
     casts.set(targetId, cast);
+    // Pull the CSS viewport once so the panel can map coordinates even before
+    // the first repaint (screencast metadata only arrives on a pushed frame).
+    updateViewport(cast).catch(() => {});
     await refreshFrame(targetId);
     return cast;
+  }
+  /** Best-effort: fill cast.viewportW/H from the page's layout metrics. */
+  async function updateViewport(cast) {
+    try {
+      if (!cast.sessionId) return;
+      const shot = await cdp.call("Page.getLayoutMetrics", {}, cast.sessionId);
+      const r = shot?.result || shot || {};
+      const css = r.cssLayoutViewport || r.cssViewport || {};
+      const w = css.clientWidth ?? css.width;
+      const h = css.clientHeight ?? css.height;
+      if (Number.isFinite(w) && w > 0) cast.viewportW = w;
+      if (Number.isFinite(h) && h > 0) cast.viewportH = h;
+    } catch {
+      /* leave existing values */
+    }
   }
   /**
    * Force a fresh screenshot for a target, updating its cached frame.
@@ -199,6 +295,9 @@ function createCastPool(cdp) {
           cast.frame = data;
           cast.lastActive = Date.now();
         }
+        // The screenshot itself implies the page is rendered — line up the viewport
+        // there too (cheap; only when we still don't know it).
+        if (!cast.viewportW || !cast.viewportH) await updateViewport(cast);
       } catch {
         /* transient — keep last frame */
       } finally {
@@ -213,7 +312,45 @@ function createCastPool(cdp) {
   async function removeCast(targetId) {
     await drop(targetId);
   }
-  return { frameFor, refreshFrame, removeCast };
+  /** Map of targetId -> { frame } for targets that already have a cast. */
+  function cachedFrames() {
+    const out = new Map();
+    for (const [targetId, cast] of casts) {
+      if (cast.frame) out.set(targetId, { frame: cast.frame, lastActive: cast.lastActive, viewportW: cast.viewportW, viewportH: cast.viewportH });
+    }
+    return out;
+  }
+  /**
+   * Dispatch a raw browser-input event to a live page via its screencast session.
+   *
+   * The watch panel sends pointer/wheel intentions with coordinates already
+   * mapped to browser CSS pixels (it knows the page viewport from the frame
+   * metadata we attach). Here we turn them into CDP `Input.dispatchMouseEvent`
+   * calls on the same session that drives the screencast for that target, so a
+   * click/drag/scroll lands on the real page the user is looking at.
+   *
+   * `payload.type` is one of:  mouseMoved | mousePressed | mouseReleased |
+   * mouseWheel. Fields mirror CDP's params where sensible.
+   */
+  async function sendInput(targetId, payload) {
+    const cast = casts.get(targetId);
+    if (!cast || !cast.sessionId) return { ok: false, error: "no live session for target" };
+    const { type, x, y, button = "left", buttons = 0, deltaX = 0, deltaY = 0, clickCount = 0, modifiers = 0 } = payload || {};
+    const base = { button, buttons, clickCount, modifiers };
+    if (type === "mouseMoved") {
+      // during a drag Chrome expects buttons to stay held; aim for smoothness.
+      await cdp.call("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons }, cast.sessionId);
+    } else if (type === "mousePressed" || type === "mouseReleased") {
+      await cdp.call("Input.dispatchMouseEvent", { type, x, y, ...base }, cast.sessionId);
+    } else if (type === "mouseWheel") {
+      await cdp.call("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX, deltaY }, cast.sessionId);
+    } else {
+      return { ok: false, error: `unsupported input type: ${type}` };
+    }
+    return { ok: true };
+  }
+
+  return { frameFor, refreshFrame, removeCast, cachedFrames, sendInput };
 }
 
 async function listPageTargets(cdp) {
@@ -253,6 +390,11 @@ function readBody(req, maxBytes = 8192) {
 // ---------------------------------------------------------------------------
 const RETRY_NO_BROWSER_MS = 3000;  // no browser.json / unreachable
 const RETRY_AFTER_DROP_MS = 2000;  // CDP socket closed or errored
+// How long a page may go without a pushed screencast frame before the periodic
+// backstop issues a forced screenshot for it. Longer than the keepalive interval
+// so a live page (fed by screencast each repaint) is never needlessly captured,
+// while a quiet/backgrounded page still gets rescued within a visible window.
+const BACKSTOP_STALE_MS = 5000;
 let active = null; // { cdp, pool } for the live browser attachment
 
 async function openBrowserSession(wsUrl) {
@@ -282,6 +424,7 @@ async function runConnectLoop() {
       const session = await openBrowserSession(browser.wsUrl);
       active = session;
       console.error(`ego-cast-worker: attached to browser (${browser.port ?? "override"})`);
+      keepCastsAlive(session);
       await session.dropped;
     } catch {
       console.error("ego-cast-worker: browser connect failed, retrying");
@@ -292,9 +435,52 @@ async function runConnectLoop() {
   }
 }
 
+/**
+ * Keep a screencast stream on every live page target AND force a fresh frame
+ * periodically as a backstop.
+ *
+ * Two complementary sources feed the watch panel:
+ *   1. `Page.screencastFrame` — real time, but only fires while the page is
+ *      actually repainting (a backgrounded or static page goes quiet), and only
+ *      for targets with an open `Page.startScreencast` stream.
+ *   2. a periodic `Page.captureScreenshot` — always renders, so a quiet page
+ *      still gets a fresh frame. This is the backstop that keeps the panel from
+ *      freezing on a page that stops repainting (e.g. a static layout while a
+ *      <video> inside it keeps playing without a repaint would otherwise starve
+ *      the screencast stream).
+ *
+ * Runs until `session` stops being current (its socket dropped). frameFor is
+ * idempotent for existing casts, so calling it often is cheap; the screenshot
+ * backstop is throttled per target by refreshFrame's own 500ms floor.
+ */
+async function keepCastsAlive(session, intervalMs = 3000) {
+  while (active === session) {
+    try {
+      const targets = await listPageTargets(session.cdp);
+      const cached = session.pool.cachedFrames?.() ?? new Map();
+      const now = Date.now();
+      for (const t of targets.slice(0, 30)) {
+        if (!session.pool.frameFor) continue;
+        await session.pool.frameFor(t.targetId).catch(() => {});
+        const meta = cached.get(t.targetId);
+        const stale = !meta || (now - (meta.lastActive || 0)) > BACKSTOP_STALE_MS;
+        if (!stale) continue;
+        const cast = await session.pool.refreshFrame(t.targetId).catch(() => null);
+        if (cast?.frame && sseClients.size > 0) {
+          sseBroadcast("frame", { targetId: t.targetId, data: cast.frame, ts: Date.now() });
+        }
+      }
+    } catch {
+      // browser call failed; keep trying on the next tick
+    }
+    await sleep(intervalMs);
+  }
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
 
 async function main() {
   const server = createServer(async (req, res) => {
@@ -356,6 +542,44 @@ async function main() {
         return sendJson(res, 500, { ok: false, error: String(err?.message || err) });
       }
     }
+    if (req.method === "POST" && url.pathname === "/api/input") {
+      // Forward a watch-panel pointer intention to the real agent page. Body:
+      //   { targetId, type, x, y, button, buttons, deltaX, deltaY, clickCount, modifiers }
+      // `x`/`y` are already in browser CSS pixels (the panel mapped them).
+      const sess = active;
+      if (!sess) return sendJson(res, 400, { ok: false, error: "no live browser" });
+      let body;
+      try { body = JSON.parse((await readBody(req)) || "{}"); }
+      catch { return sendJson(res, 400, { ok: false, error: "bad body" }); }
+      const { targetId, type, x, y } = body;
+      if (!targetId || typeof type !== "string" || !Number.isFinite(x) || !Number.isFinite(y)) {
+        return sendJson(res, 400, { ok: false, error: "targetId, type, x, y required" });
+      }
+      try {
+        const result = await sess.pool.sendInput(targetId, body);
+        return sendJson(res, 200, result);
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: String(err?.message || err) });
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/api/stream") {
+      // SSE: the live watch panel. On connect we send the current snapshot for
+      // every live page, then push each new screencast frame in real time. The
+      // browser-level 'spaces' event lets the panel keep its tab list in sync.
+      sseBracket(res);
+      sseClients.add(res);
+      const onClose = () => { sseClients.delete(res); };
+      req.on("close", onClose);
+      res.on("close", onClose);
+      // Non-blocking initial snapshot: never let the first event wait on a CDP
+      // call. Push the current pages in the background; live screencast frames
+      // follow on their own cadence in the screencastFrame handler.
+      snapshotSpaces().then((snap) => {
+        if (!sseClients.has(res)) return;
+        sseBroadcast("spaces", snap);
+      }).catch(() => {});
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/spaces") {
       const sess = active;
       if (!sess) return sendJson(res, 200, { ok: true, spaces: [] });
@@ -376,6 +600,8 @@ async function main() {
               // Most-recently-active first: the page the agent is currently
               // looking at (or just touched) gets the newest lastActive.
               lastActive: cast?.lastActive ?? 0,
+              viewportW: cast?.viewportW ?? undefined,
+              viewportH: cast?.viewportH ?? undefined,
             });
           } catch {
             /* skip broken target */
