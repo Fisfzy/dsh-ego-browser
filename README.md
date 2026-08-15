@@ -1,8 +1,13 @@
 # ego-browser — 看得见的 Agent 浏览器
 
-> **仓库**：`github.com/dsh-external/ego-browser`（私有 · 内测）｜版本历史见 [CHANGELOG.md](CHANGELOG.md)
+<p align="center">
+  <a href="https://dshfind.com/zh/plugins/Fisfzy/ego-browser?ref=badge"><img src="https://dshfind.com/api/badge/Fisfzy/ego-browser?lang=zh" alt="dshfind - ego-browser"></a>
+  <a href="https://dshfind.com/zh/plugins/Fisfzy/ego-browser"><img src="https://dshfind.com/api/card/Fisfzy/ego-browser?lang=zh" alt="ego-browser card"></a>
+</p>
 
-> ⚠️ **保密声明**：属于 DeepSeek Harness **内测生态**的一部分，仅限 dsh-external 内测成员使用。**严禁公开、外发、镜像或分发到任何非授权位置**；仓库必须保持 PRIVATE，不发布到 npm / 公共 registry，不创建公开 fork 或镜像。
+> **仓库**：`github.com/Fisfzy/ego-browser`（私有 · 内测）｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
+
+> ⚠️ **发布说明**：本插件用于 DeepSeek Harness 生态，已在 [dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser) 公开展示。仓库保持维护状态，不发布到 npm / 公共 registry；如需转载本仓库内容请注明出处，不要创建用于分发的公开 fork / 镜像。
 
 把 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)（给 AI Agent 用的 Chromium）接入 DeepSeek Harness：以 **32 个结构化 `ego_*` 工具**驱动浏览器，并配一套**实时观察前端口**——agent 后台操作网页时，你能像看直播一样看到它正在浏览的每个页面，还能直接操作它。
 
@@ -122,3 +127,14 @@ npm run build   # node --check lib/*.js（lib/ 为唯一权威源，不复编译
 ## 许可与署名
 
 插件本体 MIT。内置运行时嵌入 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite) 的 MIT 代码（含 [PR #234](https://github.com/citrolabs/ego-lite/pull/234) 的 Linux 移植）及一处本地代理补丁——详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+---
+
+## 友链
+
+同为 DeepSeek Harness 插件生态的作品，互相安利：
+
+<p align="center">
+  <a href="https://dshfind.com/zh/plugins/Nagi-ovo/dsh-ads?ref=badge"><img src="https://dshfind.com/api/badge/Nagi-ovo/dsh-ads?lang=zh" alt="dshfind - dsh-ads"></a>
+  <a href="https://dshfind.com/zh/plugins/Nagi-ovo/dsh-ads"><img src="https://dshfind.com/api/card/Nagi-ovo/dsh-ads?lang=zh" alt="dsh-ads card"></a>
+</p>
