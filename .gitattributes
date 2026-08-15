@@ -1,0 +1,12 @@
+# Normalize every file to LF. This project is developed from WSL/Linux and
+# occasionally checked out on Windows; autocrlf must not flip line endings.
+* text=auto eol=lf
+
+# Binary assets must never be touched by line-ending normalization.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.tgz binary
+*.tar.gz binary
