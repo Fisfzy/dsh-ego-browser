@@ -216,6 +216,14 @@ function sseBroadcast(event, payload) {
 /** Rebuild the current snapshot ({targetId,url,title,lastActive}) for a client. */
 const probeCache = new Map(); // targetId -> { at, human }
 const PROBE_INTERVAL_MS = 5000;
+// Optional cap on live-frame fan-out. 0 / unset = uncapped (full speed, requires
+// --disable-frame-rate-limit in the wrapper to actually exceed the default
+// compositor ceiling). >0 = at most N frames/sec sent to clients; the watched
+// (active) tab is never throttled so the user always sees the page being
+// operated at full rate, only background repainting tabs are capped. This keeps
+// panel bandwidth/CPU bounded on dynamic pages without degrading the one you're
+// looking at.
+const CAST_FPS_CAP = Number(process.env.EGO_CAST_FPS_CAP || 0);
 
 // ── active-tab tracking ─────────────────────────────────────────────────────
 // Which page the agent is CURRENTLY on is the single most important fact for the
@@ -250,6 +258,14 @@ async function activeTabId() {
   }
   activeTabCache = { at: Date.now(), id };
   return id;
+}
+
+/** Synchronous peek of the most-recently-known active tab (may be a moment stale).
+ *  Used on the hot screencast path so a frame is never gated behind an await. */
+function peekActiveTabId() {
+  return (activeTabCache && Date.now() - activeTabCache.at < ACTIVE_TAB_TTL_MS)
+    ? activeTabCache.id
+    : null;
 }
 
 /** Clear the MRU cache when the browser (re)connects so we never follow a stale tab. */
@@ -327,13 +343,36 @@ function createCastPool(cdp) {
       // it arrives, instead of waiting for the next /api/spaces poll. The panel
       // dataURL-caches per target so reconnecting clients catch up cheaply.
       if (cast.frame && sseClients.size > 0) {
-        sseBroadcast("frame", {
-          targetId: cast.targetId,
-          data: cast.frame,
-          ts: Date.now(),
-          vw: cast.viewportW || null,
-          vh: cast.viewportH || null,
-        });
+        // Optional fan-out cap. Uncapped (0) → always send. Capped → the
+        // watched (active) tab always passes; only background repainting tabs
+        // are rate-limited to free bandwidth/CPU on dynamic pages.
+        let pass = CAST_FPS_CAP <= 0;
+        if (!pass) {
+          // Sync path: use the cached active id so a frame is never gated
+          // behind an await. The cap is opt-in; the default (0) short-circuits
+          // above and stays fully synchronous.
+          const activeId = peekActiveTabId();
+          const isWatched = !activeId || cast.targetId === activeId;
+          if (isWatched) {
+            pass = true;
+          } else {
+            const minGapMs = 1000 / CAST_FPS_CAP;
+            const now = Date.now();
+            if (!cast.lastCastAt || now - cast.lastCastAt >= minGapMs) {
+              cast.lastCastAt = now;
+              pass = true;
+            }
+          }
+        }
+        if (pass) {
+          sseBroadcast("frame", {
+            targetId: cast.targetId,
+            data: cast.frame,
+            ts: Date.now(),
+            vw: cast.viewportW || null,
+            vh: cast.viewportH || null,
+          });
+        }
       }
       break;
     }
