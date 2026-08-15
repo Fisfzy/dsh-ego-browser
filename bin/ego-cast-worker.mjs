@@ -885,6 +885,20 @@ async function main() {
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
   async function shutdown() {
+    // Persist login state. Chrome flushes cookies to the on-disk profile on a
+    // graceful Browser.close; SIGTERM/kill leaves the journal unmerged and the
+    // newest logins are lost on restart. So before we detach, if we are attached
+    // to a live browser, ask it to close itself gracefully over the browser-level
+    // CDP channel — the exact graceful path the vendored runtime uses, matching
+    // upstream ego-lite's "the browser persists, not the driver".
+    if (active?.cdp) {
+      try {
+        await active.cdp.call("Browser.close", {}, undefined, 5000);
+      } catch { /* best-effort: browser may already be gone */ }
+    }
+    // Wait a beat for the close to settle so Chrome merges its cookie journal
+    // into the Cookies db before we tear down our own socket.
+    await new Promise((r) => setTimeout(r, 400));
     // Only remove the state file if it still identifies THIS worker. During the
     // single-instance guard a newer worker kills us right after writing its own
     // ego-cast.json; blindly deleting here would erase the successor's truthful
