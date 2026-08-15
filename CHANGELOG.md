@@ -13,6 +13,9 @@
 ### 权衡说明（诚实）
 - **`--disable-frame-rate-limit` 已改为可选项 `EGO_FRAME_RATE_UNCAP=1`（默认关）**：实测该旗标（尤其配 `--disable-gpu-vsync`）会让 Chromium 合成器在静态页面也空转，约 **250% CPU**——为换动态页帧率烧静态页整机，得不偿失。已保留为显式开关，需要更高帧率且接受耗电时可开启。
 
+### 修复
+- **登录态跨 DSH 重启保持（复刻原版 ego-lite 哲学）**：此前手动重启 / 强杀 DSH 后需重新登录——worker 收到 SIGTERM/SIGINT 时只 detach 不落盘，且插件卸载的 `--stop` 宽限 4s 不够、常落到 SIGTERM crash 兜底。现在 worker 退场前先对浏览器发 CDP `Browser.close`（优雅关闭，Cookie journal 合并进磁盘 profile），插件 teardown 宽限提到 8s 足够优雅关完。**实测**：优雅重启登录完全保留；强杀（SIGKILL）长期登录态也已落盘、重启能读回。
+
 ## [v0.7.0] - 2026-08
 
 小版本更新：观察窗状态灯呼吸效果 + 前端内存治理 + 工具超时/跨平台修正。
