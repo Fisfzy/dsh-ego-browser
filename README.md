@@ -24,7 +24,7 @@
 | 能力 | ego-browser（本仓库） | 同类插件（Da1dr1em/dsh-ego-browser） |
 |---|---|---|
 | 结构化工具数 | **32 个**，职责单一、可确定性调用 | **3 个**（`run`/`help`/`status`） |
-| 实时观察窗（SSE screencast 推流 + 标签条 + 历史抽屉） | ✅ 有 | ❌ 无 |
+| 实时观察窗（CDP JPEG / FFmpeg H.264 双后端 + 标签条 + 历史抽屉） | ✅ 有 | ❌ 无 |
 | 监控窗鼠标**直接操作**真实浏览器（点击/拖拽/滚动回传 CDP） | ✅ 有 | ❌ 无 |
 | worker 单实例守卫 + 崩溃/重复自愈 | ✅ 有 | ❌ 无 |
 | 下载捕获 `ego_download` / 人机验证检测 `ego_captcha`/`ego_page_info` | ✅ 有 | ❌ 无 |
@@ -95,7 +95,7 @@ dshx install ego-browser <ego-browser.tgz>                             # tarball
 dshx list                                                # 应显示：[on] ego-browser
 ```
 
-可选配置（`~/.dsh/config.yaml` 该插件条目下）：`egoBin`、`defaultSpace`、`maxOutputBytes`、`graceMs`。
+观察窗设置中可选 `captureBackend=auto|cdp|ffmpeg`（默认 `auto`，当前解析为 CDP）、画质档位、CDP FPS/JPEG 质量/最大宽度，以及 FFmpeg FPS/最大宽度/编码器/自定义路径。旧的 `castFpsCap`、`screencastQuality`、`screencastMaxWidth`、`backstopIntervalMs` 会读取迁移一个版本周期，保存时只写新字段。
 
 无需宿主侧任何配置：`resolveEgoEnv` 自动探测 root / 无显示器并兜底。观察窗 host 路由（`/api/ego/spaces` 等）仅在有 HTTP server 时注册，headless 是安全 no-op。
 
@@ -120,13 +120,21 @@ dshx list                                                # 应显示：[on] ego-
 - **标签页条**：顶部横排，点选切换，`×` 关闭。
 - **历史抽屉**（🕘）：按时间回看访问轨迹。
 - 操作时下方网址行就地显示提示，2 秒后恢复。
+- 面板关闭、sidebar Tab 隐藏或页面进入后台后，1.5 秒宽限结束即停止昂贵的画面生产；异常关闭由 worker lease 超时兜底。
+
+### 画面后端
+
+- `cdp`：`Page.startScreencast` JPEG，默认 20 FPS。每个源帧立即按 Chrome 提供的帧 ID ACK，只保留最新待发帧；仅捕获当前观看标签，静态页恢复截图默认 3 秒一次。
+- `ffmpeg`：系统窗口/显示 crop → H.264 fragmented MP4 → HTTP 二进制 chunk → MediaSource `<video>`。不经过 Base64/SSE，generation 变化时播放器完整重建。
+- `auto`：默认选择 CDP。显式选择 FFmpeg 后若二进制、编码器、窗口来源或权限不可用，会展示明确失败，不静默伪装成 FFmpeg 成功。
+- FFmpeg 捕获属于系统屏幕捕获：Windows 桌面 crop 会受遮挡/最小化影响；macOS 首次使用需要“屏幕录制”权限；X11 需要 Chromium 与 FFmpeg 共享 `DISPLAY`；随包 FFmpeg 在 Wayland 不保证 Portal/PipeWire 输入，缺失时会提示切回 CDP。
 
 > 登录态说明：多任务空间 Cookie 相互隔离，请在对应空间内登录。重启 DSH 后运行期登录态被清空（Chrome 运行期 Cookie 仅优雅关闭时落盘），需重登——扫码很快。
 
 ## 工作原理
 
 - **工具层**：每个工具把参数拼成 JS 脚本，经 `ctx.subprocess` 用 `ego-browser nodejs` 喂给 stdin 运行，宿主经 CDP 驱动共享 Chromium。结果以 `@@DSH_RESULT@@` 哨兵行解析。所有 `ego_*` 经进程内互斥锁串行化，错误统一归一。
-- **观察窗**（三层）：`lib/client.js`（前端）+ `lib/cast-server.js`（host 路由转发，懒启动、崩溃自动重启）+ `bin/ego-cast-worker.mjs`（attach 到 agent 正在用的浏览器，推实时帧）。worker 只读/见控，绝不动宿主环境。
+- **观察窗**：`lib/client.js` 管理 watcher lease、JPEG `<img>` 与 MSE `<video>`；`lib/cast-server.js` 代理元数据 SSE、watch API 和带背压的二进制视频；worker 中 `CaptureManager` 保证同时只有一个活动后端和一个当前 target。CDP 控制面（标签、viewport、输入、验证码）独立于画面后端。
 
 ## 开发
 
@@ -141,6 +149,8 @@ npm run build   # node --check lib/*.js（lib/ 为唯一权威源，不复编译
 ## 已知限制（诚实说明）
 
 - **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。
+- **FFmpeg 平台捕获**：首版 Windows 使用 `gdigrab`、Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop。遮挡时仍正确的单窗口捕获、Windows `ddagrab`/HWND、macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
+- **安装环境**：本仓库的 DSH peer 包不全在公共 npm registry。普通 `pnpm install` 可能在解析 `@deepseek-ai/*` peer 时失败；DSH profile 安装应提供这些 peer。`ffmpeg-static` 延迟加载，缺失不会影响 CDP 后端。
 - **快照质量**：Linux 用 CDP `DOMSnapshot` 重建语义树，非 macOS 内核级，复杂 iframe/画布场景可能降级。
 - **宿主可靠性（Linux）**：未合并的社区 PR，跨 CLI 调用间可能丢 tab/空间状态；插件已内置防御，简单流程稳定，复杂流程可能需重试。
 - **登录态持久化**：Chrome 运行期 Cookie 仅优雅关闭时落盘，强杀重启需重登。
@@ -148,7 +158,7 @@ npm run build   # node --check lib/*.js（lib/ 为唯一权威源，不复编译
 
 ## 许可与署名
 
-插件本体 MIT。内置运行时嵌入 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite) 的 MIT 代码（含 [PR #234](https://github.com/citrolabs/ego-lite/pull/234) 的 Linux 移植）及一处本地代理补丁——详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+插件本体 MIT。内置运行时嵌入 ego-lite 的 MIT 代码；FFmpeg 后端依赖 `ffmpeg-static`，其 npm 包与分发二进制涉及 GPL-3.0-or-later 义务。分发前必须保留对应许可证与源码获取信息，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ---
 

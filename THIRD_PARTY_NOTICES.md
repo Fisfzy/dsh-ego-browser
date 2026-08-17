@@ -10,6 +10,25 @@ including the Linux port work in [PR #234](https://github.com/citrolabs/ego-lite
 | `runtime/ego-browser/dist/out/index.js` | shared ego-browser harness build (`package/ego-browser`) | MIT |
 | `runtime/ego-linux/*` | Linux CDP host (`package/ego-linux`, PR #234) + local proxy patch | MIT |
 | `runtime/skills/ego-browser/*` | agent skill package (`skills/ego-browser`) | MIT |
+| `ffmpeg-static` | https://github.com/eugeneware/ffmpeg-static | GPL-3.0-or-later |
+| FFmpeg static executable distributed by `ffmpeg-static` | https://ffmpeg.org/ | GPL-3.0-or-later for the selected static build; see the package's bundled license/build metadata |
+
+## FFmpeg distribution notice
+
+The optional FFmpeg capture backend resolves the executable from the
+`ffmpeg-static` npm dependency unless the user supplies `ffmpegPath`. The binary
+is not copied into this repository, but package/profile distribution may install
+and redistribute it. Distributors must comply with the GPL terms that accompany
+the actual `ffmpeg-static` package and binary, preserve copyright/license
+notices, and provide the corresponding source or a valid written/source offer as
+required by that license. The upstream source locations are:
+
+- `ffmpeg-static`: https://github.com/eugeneware/ffmpeg-static
+- FFmpeg: https://git.ffmpeg.org/ffmpeg.git
+- GPL v3 text: https://www.gnu.org/licenses/gpl-3.0.html
+
+Using a user-supplied FFmpeg binary may carry different licensing obligations;
+the user/distributor is responsible for the selected build.
 
 Additional local modifications on top of upstream (see `runtime/ego-linux/src/chrome.mjs`):
 - `EGO_LINUX_PROXY` support: injects `--proxy-server` / `--proxy-bypass-list` into the

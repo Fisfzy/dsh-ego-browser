@@ -4,14 +4,18 @@
 
 ## [Unreleased]
 
-性能与稳定性：观察窗推流做了低开销优化。**不做**激进改动（见下），避免为了帧率牺牲整机 CPU。
+观察窗落地双画面管线：修复 CDP 协议根因，并加入可选 FFmpeg H.264/fMP4 后端。
 
 ### 新增 / 优化
-- **可选的观察窗推流帧率上限 `EGO_CAST_FPS_CAP`**（默认 0 = 关闭，即原行为）：设为 N 时，后台重绘标签最多以 N 帧/秒推流，**正在看的那一页永不节流**，仅对后台动画/视频标签限流，降低高动态页面的带宽与 CPU；默认路径完全同步、零额外开销。
-- **前端合帧 `requestAnimationFrame`**：高帧率突发时只解最新的帧（一个演示帧一次解码，而非逐源帧解码），降低 CPU 并让跳帧更顺。
+- `CaptureManager` + watcher lease：同时只有一个活动后端和一个观看 target；面板隐藏后停止 capture。
+- CDP 后端正确区分 frame ACK ID 与 flattened target session，协议错误可见；默认 20 FPS、latest-frame 限流、单 target backstop，删除透明动画强制重绘。
+- FFmpeg 后端：`ffmpeg-static` 延迟解析，系统窗口 crop 编码 H.264 fragmented MP4，经二进制 HTTP 与 MediaSource 播放；generation 隔离旧进程数据。
+- 新设置：`captureBackend`、画质档位、CDP/FFmpeg FPS、最大宽度和编码器；旧字段集中迁移。
+- 新增 MP4 parser、CDP ACK、CaptureManager、配置迁移和平台 argv 单元测试。
 
-### 权衡说明（诚实）
-- **`--disable-frame-rate-limit` 已改为可选项 `EGO_FRAME_RATE_UNCAP=1`（默认关）**：实测该旗标（尤其配 `--disable-gpu-vsync`）会让 Chromium 合成器在静态页面也空转，约 **250% CPU**——为换动态页帧率烧静态页整机，得不偿失。已保留为显式开关，需要更高帧率且接受耗电时可开启。
+### 平台限制
+- Windows 首版 `gdigrab`、Linux X11 `x11grab`、macOS `avfoundation` display crop；遮挡/最小化和系统权限会影响结果。
+- Wayland 随包 FFmpeg 无可用 Portal/PipeWire 输入时明确报 `unsupported-ffmpeg-pipewire`，不使用 root `kmsgrab`，不静默切换整个桌面或伪装成功。
 
 ### 修复
 - **登录态跨 DSH 重启保持（复刻原版 ego-lite 哲学）**：此前手动重启 / 强杀 DSH 后需重新登录——worker 收到 SIGTERM/SIGINT 时只 detach 不落盘，且插件卸载的 `--stop` 宽限 4s 不够、常落到 SIGTERM crash 兜底。现在 worker 退场前先对浏览器发 CDP `Browser.close`（优雅关闭，Cookie journal 合并进磁盘 profile），插件 teardown 宽限提到 8s 足够优雅关完。**实测**：优雅重启登录完全保留；强杀（SIGKILL）长期登录态也已落盘、重启能读回。
@@ -106,5 +110,4 @@ sidebar Tab 集成：当 `dsh-better-sidebar` 可用时，实时查看窗注册�
 - 缩放/拖拽/复位、动态轮询（活跃 2s / 静止 8s）、导航复用 tab。
 - `bin/ego-cast-worker.mjs`：attach 到 agent 正在用的浏览器，CDP 实时推帧，崩溃自动重启。
 - 开箱即用：`bin/ego-chrome-wrapper.sh` 随包自带，root/无头自动 `--no-sandbox`。
-
 

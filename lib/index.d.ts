@@ -24,7 +24,7 @@
  *     the ego-lite roadmap, PR #202).
  */
 export declare const name = "ego-browser";
-export declare const inject: readonly ["tools", "subprocess"];
+export declare const inject: readonly ["tools", "subprocess", "webServer"];
 interface LoggerLike {
     info(message: string): void;
     warn(message: string): void;
@@ -92,22 +92,35 @@ export interface Config {
      * (ego-browser card) or the composition layer (cordis.patch.yml).
      */
     chromePath?: string;
+    captureBackend?: "auto" | "cdp" | "ffmpeg";
+    streamProfile?: "low" | "balanced" | "high";
+    cdpFps?: number;
+    cdpQuality?: number;
+    cdpMaxWidth?: number;
+    cdpBackstopIntervalMs?: number;
+    ffmpegFps?: number;
+    ffmpegMaxWidth?: number;
+    ffmpegEncoder?: "auto" | "software" | "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_videotoolbox" | "h264_vaapi";
+    ffmpegPath?: string;
     /**
      * Cap on live-frame fan-out (frames/sec) from the cast worker to the
      * watch panel. 0 = uncapped (full browser repaint cadence). >0 = at
      * most N frames/sec; the watched (active) tab is never throttled, only
      * background repainting tabs. Range 0–60; default 0.
      */
+    /** @deprecated Use cdpFps. */
     castFpsCap?: number;
     /**
      * JPEG quality (1–100) for screencast frames and screenshot backstop.
      * Range 1–100; default 55.
      */
+    /** @deprecated Use cdpQuality. */
     screencastQuality?: number;
     /**
      * Max width (CSS px) of each pushed screencast frame. Range 320–1920;
      * default 960.
      */
+    /** @deprecated Use cdpMaxWidth. */
     screencastMaxWidth?: number;
     /**
      * How long (ms) a page may go without a pushed screencast frame before
@@ -115,6 +128,7 @@ export interface Config {
      * as the minimum interval between forced captures for the same target.
      * Range 200–10000; default 5000.
      */
+    /** @deprecated Use cdpBackstopIntervalMs. */
     backstopIntervalMs?: number;
     /**
      * Path or command name of the ego-browser CLI.
