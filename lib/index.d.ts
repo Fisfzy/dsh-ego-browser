@@ -110,6 +110,13 @@ export interface Config {
      */
     screencastMaxWidth?: number;
     /**
+     * How long (ms) a page may go without a pushed screencast frame before
+     * the periodic backstop issues a forced captureScreenshot. Also serves
+     * as the minimum interval between forced captures for the same target.
+     * Range 200–10000; default 5000.
+     */
+    backstopIntervalMs?: number;
+    /**
      * Path or command name of the ego-browser CLI.
      * Default: the vendored CLI bundled inside this plugin
      * (`runtime/ego-linux/bin/ego-browser.mjs`), so the plugin works with just

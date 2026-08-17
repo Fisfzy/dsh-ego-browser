@@ -230,7 +230,7 @@ const PROBE_INTERVAL_MS = 5000;
 //   screencastQuality : JPEG quality (1-100) for startScreencast + backstop
 //                       captureScreenshot.
 //   screencastMaxWidth: max CSS px width of each pushed frame.
-let castConfig = { castFpsCap: 0, screencastQuality: 55, screencastMaxWidth: 960 };
+let castConfig = { castFpsCap: 0, screencastQuality: 55, screencastMaxWidth: 960, backstopIntervalMs: 5000 };
 try {
   const arg = process.argv[2];
   if (arg) {
@@ -239,6 +239,7 @@ try {
       if (typeof parsed.castFpsCap === "number") castConfig.castFpsCap = parsed.castFpsCap;
       if (typeof parsed.screencastQuality === "number") castConfig.screencastQuality = parsed.screencastQuality;
       if (typeof parsed.screencastMaxWidth === "number") castConfig.screencastMaxWidth = parsed.screencastMaxWidth;
+      if (typeof parsed.backstopIntervalMs === "number") castConfig.backstopIntervalMs = parsed.backstopIntervalMs;
     }
   }
 } catch { /* malformed argv — keep defaults */ }
@@ -512,8 +513,13 @@ function createCastPool(cdp) {
   function refreshFrame(targetId) {
     const cast = casts.get(targetId);
     if (!cast) return frameFor(targetId);
+    // The minimum interval between forced captures for the same target is
+    // derived from castConfig.backstopIntervalMs so lowering the backstop
+    // setting actually increases the forced-capture rate (the previous
+    // hardcoded 500ms floor could silently cap a user-set 200ms backstop).
+    const floorMs = Math.max(100, Math.min(castConfig.backstopIntervalMs, 2000));
     const since = Date.now() - (lastShot.get(targetId) || 0);
-    if (since < 500) return cast;
+    if (since < floorMs) return cast;
     if (pending.has(targetId)) return pending.get(targetId);
     const p = (async () => {
       try {
@@ -725,11 +731,10 @@ async function cleanStaleCastState() {
 // ---------------------------------------------------------------------------
 const RETRY_NO_BROWSER_MS = 3000;  // no browser.json / unreachable
 const RETRY_AFTER_DROP_MS = 2000;  // CDP socket closed or errored
-// How long a page may go without a pushed screencast frame before the periodic
-// backstop issues a forced screenshot for it. Longer than the keepalive interval
-// so a live page (fed by screencast each repaint) is never needlessly captured,
-// while a quiet/backgrounded page still gets rescued within a visible window.
-const BACKSTOP_STALE_MS = 5000;
+// Backstop stale threshold is now configurable via castConfig.backstopIntervalMs
+// (see castConfig above). The default (5000ms) is applied when no config is
+// provided. The value is read live from castConfig in keepCastsAlive so a
+// hot-update via POST /api/config takes effect on the next tick.
 let active = null; // { cdp, pool } for the live browser attachment
 
 async function openBrowserSession(wsUrl, browserPort = null) {
@@ -828,7 +833,7 @@ async function keepCastsAlive(session, intervalMs = 500) {
         if (!session.pool.frameFor) continue;
         await session.pool.frameFor(t.targetId).catch(() => {});
         const meta = cached.get(t.targetId);
-        const stale = !meta || (now - (meta.lastActive || 0)) > BACKSTOP_STALE_MS;
+        const stale = !meta || (now - (meta.lastActive || 0)) > castConfig.backstopIntervalMs;
         if (!stale) continue;
         const cast = await session.pool.refreshFrame(t.targetId).catch(() => null);
         if (cast?.frame && sseClients.size > 0) {
@@ -876,6 +881,9 @@ async function main() {
         }
         if (typeof body.screencastMaxWidth === "number" && body.screencastMaxWidth >= 320 && body.screencastMaxWidth <= 1920) {
           castConfig.screencastMaxWidth = body.screencastMaxWidth;
+        }
+        if (typeof body.backstopIntervalMs === "number" && body.backstopIntervalMs >= 200 && body.backstopIntervalMs <= 10000) {
+          castConfig.backstopIntervalMs = body.backstopIntervalMs;
         }
         // If quality or width changed, restart the running screencast streams
         // so the new params take effect immediately. fpsCap needs no restart.
