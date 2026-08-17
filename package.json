@@ -40,13 +40,7 @@
     "@deepseek-ai/dsh-client-locale": "^0.0.1",
     "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.0.1",
     "react": "^18.2.0",
-    "schemastery": "^3.18.0",
-    "dsh-better-sidebar": "*"
-  },
-  "peerDependenciesMeta": {
-    "dsh-better-sidebar": {
-      "optional": true
-    }
+    "schemastery": "^3.18.0"
   },
   "engines": {
     "node": ">=22"
