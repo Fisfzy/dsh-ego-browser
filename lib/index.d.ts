@@ -93,12 +93,29 @@ export interface Config {
      */
     chromePath?: string;
     /**
-     * Base refresh interval (ms) for the realtime watch panel: how often the
-     * client polls /api/ego/spaces while the agent is actively driving the
-     * browser. Idle cadence is 4× this value. Range 500–30000; default 2000.
-     * Set via the DSH settings UI (ego-browser card) or composition layer.
+     * Cap on live-frame fan-out (frames/sec) from the cast worker to the
+     * watch panel. 0 = uncapped (full browser repaint cadence). >0 = at
+     * most N frames/sec; the watched (active) tab is never throttled, only
+     * background repainting tabs. Range 0–60; default 0.
      */
-    refreshInterval?: number;
+    castFpsCap?: number;
+    /**
+     * JPEG quality (1–100) for screencast frames and screenshot backstop.
+     * Range 1–100; default 55.
+     */
+    screencastQuality?: number;
+    /**
+     * Max width (CSS px) of each pushed screencast frame. Range 320–1920;
+     * default 960.
+     */
+    screencastMaxWidth?: number;
+    /**
+     * How long (ms) a page may go without a pushed screencast frame before
+     * the periodic backstop issues a forced captureScreenshot. Also serves
+     * as the minimum interval between forced captures for the same target.
+     * Range 200–10000; default 5000.
+     */
+    backstopIntervalMs?: number;
     /**
      * Path or command name of the ego-browser CLI.
      * Default: the vendored CLI bundled inside this plugin

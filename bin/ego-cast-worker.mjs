@@ -216,14 +216,33 @@ function sseBroadcast(event, payload) {
 /** Rebuild the current snapshot ({targetId,url,title,lastActive}) for a client. */
 const probeCache = new Map(); // targetId -> { at, human }
 const PROBE_INTERVAL_MS = 5000;
-// Optional cap on live-frame fan-out. 0 / unset = uncapped (full speed, requires
-// --disable-frame-rate-limit in the wrapper to actually exceed the default
-// compositor ceiling). >0 = at most N frames/sec sent to clients; the watched
-// (active) tab is never throttled so the user always sees the page being
-// operated at full rate, only background repainting tabs are capped. This keeps
-// panel bandwidth/CPU bounded on dynamic pages without degrading the one you're
-// looking at.
-const CAST_FPS_CAP = Number(process.env.EGO_CAST_FPS_CAP || 0);
+// ── Cast config (live-hot-swappable) ────────────────────────────────────────
+// The host spawns this worker with the current cast settings as a JSON argv
+// arg (process.argv[2]); subsequent settings edits are hot-pushed via
+// POST /api/config. All three values are mutable so the watch panel's
+// screencast parameters can be tuned at runtime without restarting the
+// worker or the browser attachment.
+//
+//   castFpsCap        : 0 = uncapped (full repaint cadence); >0 = at most N
+//                       frames/sec pushed to clients. The watched (active)
+//                       tab is never throttled; only background repainting
+//                       tabs are rate-limited.
+//   screencastQuality : JPEG quality (1-100) for startScreencast + backstop
+//                       captureScreenshot.
+//   screencastMaxWidth: max CSS px width of each pushed frame.
+let castConfig = { castFpsCap: 0, screencastQuality: 55, screencastMaxWidth: 960, backstopIntervalMs: 5000 };
+try {
+  const arg = process.argv[2];
+  if (arg) {
+    const parsed = JSON.parse(arg);
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.castFpsCap === "number") castConfig.castFpsCap = parsed.castFpsCap;
+      if (typeof parsed.screencastQuality === "number") castConfig.screencastQuality = parsed.screencastQuality;
+      if (typeof parsed.screencastMaxWidth === "number") castConfig.screencastMaxWidth = parsed.screencastMaxWidth;
+      if (typeof parsed.backstopIntervalMs === "number") castConfig.backstopIntervalMs = parsed.backstopIntervalMs;
+    }
+  }
+} catch { /* malformed argv — keep defaults */ }
 
 // ── active-tab tracking ─────────────────────────────────────────────────────
 // Which page the agent is CURRENTLY on is the single most important fact for the
@@ -282,7 +301,10 @@ async function snapshotSpaces() {
     // Read only already-cached frames — never call startScreencast here. That
     // keeps the initial "spaces" push instant and, crucially, does not steal
     // the one screencast stream Chrome allows per target away from the live
-    // fan-out below.
+    // fan-out below. We also do NOT include the frame bytes in the snapshot
+    // anymore — the live JPEGs stream over SSE `frame` events; the snapshot
+    // is pure metadata so the panel can render its tab list without waiting
+    // on a captureScreenshot per target.
     const frames = active.pool.cachedFrames ? active.pool.cachedFrames() : new Map();
     const spaces = [];
     for (const t of targets.slice(0, 30)) {
@@ -303,7 +325,6 @@ async function snapshotSpaces() {
         url: t.url,
         title: t.title,
         active: isActive,
-        thumbnail: meta?.frame ? `data:image/jpeg;base64,${meta.frame}` : null,
         lastActive: meta?.lastActive ?? 0,
         viewportW: meta?.viewportW ?? undefined,
         viewportH: meta?.viewportH ?? undefined,
@@ -321,6 +342,40 @@ async function snapshotSpaces() {
     return [];
   }
 }
+
+/**
+ * Script injected into every page target to force the compositor to keep
+ * producing frames. Without this, pages that don't visibly repaint — video
+ * players with hardware-accelerated <video>, canvas animations rendered in
+ * a separate compositor layer, or simply static pages — never trigger
+ * Page.screencastFrame events, so the watch panel freezes until the 5-second
+ * captureScreenshot backstop fires.
+ *
+ * The element is a 1px fully-transparent div with an infinite opacity
+ * animation. The animation forces the compositor to recomposite every frame
+ * (opacity is a compositor-layer property), which in turn causes Chrome to
+ * emit Page.screencastFrame events at the browser's native cadence. The
+ * element is invisible (opacity:0 + pointer-events:none + z-index:-1) and
+ * costs negligible CPU/GPU on modern hardware.
+ *
+ * Idempotent: the guard variable prevents double-injection on
+ * addScriptToEvaluateOnNewDocument + Runtime.evaluate overlap.
+ */
+const FORCE_REPAINT_SCRIPT = `(function(){
+  if(window.__egoForceRepaint__)return;
+  window.__egoForceRepaint__=true;
+  var s=document.createElement('style');
+  s.textContent='@keyframes __ego_fr__{0%,100%{opacity:0}50%{opacity:0.001}}';
+  (document.head||document.documentElement).appendChild(s);
+  function add(){
+    var el=document.createElement('div');
+    el.setAttribute('data-ego-fr','');
+    el.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;pointer-events:none;z-index:-1;opacity:0;animation:__ego_fr__ 0.5s infinite';
+    (document.body||document.documentElement).appendChild(el);
+  }
+  if(document.body)add();
+  else document.addEventListener('DOMContentLoaded',add);
+})();`;
 
 /** Screencast pool: one live stream per page target, newest JPEG cached. */
 function createCastPool(cdp) {
@@ -346,7 +401,7 @@ function createCastPool(cdp) {
         // Optional fan-out cap. Uncapped (0) → always send. Capped → the
         // watched (active) tab always passes; only background repainting tabs
         // are rate-limited to free bandwidth/CPU on dynamic pages.
-        let pass = CAST_FPS_CAP <= 0;
+        let pass = castConfig.castFpsCap <= 0;
         if (!pass) {
           // Sync path: use the cached active id so a frame is never gated
           // behind an await. The cap is opt-in; the default (0) short-circuits
@@ -356,7 +411,7 @@ function createCastPool(cdp) {
           if (isWatched) {
             pass = true;
           } else {
-            const minGapMs = 1000 / CAST_FPS_CAP;
+            const minGapMs = 1000 / castConfig.castFpsCap;
             const now = Date.now();
             if (!cast.lastCastAt || now - cast.lastCastAt >= minGapMs) {
               cast.lastCastAt = now;
@@ -397,7 +452,25 @@ function createCastPool(cdp) {
     try {
       const { result } = await cdp.call("Target.attachToTarget", { targetId, flatten: true });
       sessionId = result.sessionId;
-      await cdp.call("Page.startScreencast", { format: "jpeg", quality: 55, maxWidth: 960, everyNthFrame: 1 }, sessionId);
+      // Enable Page domain explicitly so screencastFrame events are delivered.
+      // startScreencast implicitly enables it in most Chrome builds, but being
+      // explicit avoids relying on undocumented behavior.
+      await cdp.call("Page.enable", {}, sessionId).catch(() => {});
+      await cdp.call("Page.startScreencast", { format: "jpeg", quality: castConfig.screencastQuality, maxWidth: castConfig.screencastMaxWidth, everyNthFrame: 1 }, sessionId);
+      // Inject a force-repaint animation so the compositor keeps producing
+      // frames even on pages that don't repaint on their own — video players,
+      // canvas animations, and static pages with hardware-accelerated content
+      // all freeze the screencast stream because Chrome's compositor only
+      // emits a new frame when something visible changes. The injected element
+      // is a 1px transparent div with an infinite opacity animation; this
+      // forces the compositor to recomposite every frame, which triggers
+      // Page.screencastFrame events at the browser's native cadence.
+      // addScriptToEvaluateOnNewDocument survives navigation; Runtime.evaluate
+      // covers the current page immediately.
+      try {
+        await cdp.call("Page.addScriptToEvaluateOnNewDocument", { source: FORCE_REPAINT_SCRIPT }, sessionId);
+        await cdp.call("Runtime.evaluate", { expression: FORCE_REPAINT_SCRIPT, silent: true }, sessionId);
+      } catch { /* best-effort — screencast still works, just may be slow on static pages */ }
     } catch (err) {
       return null; // attach/screencast failed — caller reports no thumbnail
     }
@@ -440,12 +513,17 @@ function createCastPool(cdp) {
   function refreshFrame(targetId) {
     const cast = casts.get(targetId);
     if (!cast) return frameFor(targetId);
+    // The minimum interval between forced captures for the same target is
+    // derived from castConfig.backstopIntervalMs so lowering the backstop
+    // setting actually increases the forced-capture rate (the previous
+    // hardcoded 500ms floor could silently cap a user-set 200ms backstop).
+    const floorMs = Math.max(100, Math.min(castConfig.backstopIntervalMs, 2000));
     const since = Date.now() - (lastShot.get(targetId) || 0);
-    if (since < 500) return cast;
+    if (since < floorMs) return cast;
     if (pending.has(targetId)) return pending.get(targetId);
     const p = (async () => {
       try {
-        const shot = await cdp.call("Page.captureScreenshot", { format: "jpeg", quality: 55 }, cast.sessionId);
+        const shot = await cdp.call("Page.captureScreenshot", { format: "jpeg", quality: castConfig.screencastQuality }, cast.sessionId);
         const data = shot?.result?.data || shot?.data || null;
         if (data && data.length > 0) {
           cast.frame = data;
@@ -511,7 +589,29 @@ function createCastPool(cdp) {
     return casts.get(targetId)?.sessionId ?? null;
   }
 
-  return { frameFor, refreshFrame, removeCast, cachedFrames, sendInput, sessionFor };
+  /**
+   * Restart every active screencast stream with the given parameters. Used
+   * when the user changes screencastQuality / screencastMaxWidth in the
+   * settings card — Chrome only honors new params on a fresh
+   * startScreencast call (the running stream keeps its original params).
+   * Best-effort: a target whose restart fails is left with its old stream.
+   */
+  async function restartScreencasts({ quality, maxWidth }) {
+    const tasks = [];
+    for (const [tid, cast] of casts) {
+      tasks.push((async () => {
+        try {
+          await cdp.call("Page.stopScreencast", {}, cast.sessionId);
+        } catch { /* may already be stopped */ }
+        try {
+          await cdp.call("Page.startScreencast", { format: "jpeg", quality, maxWidth, everyNthFrame: 1 }, cast.sessionId);
+        } catch { /* target may have died — drop will follow on targetDestroyed */ }
+      })());
+    }
+    await Promise.all(tasks);
+  }
+
+  return { frameFor, refreshFrame, removeCast, cachedFrames, sendInput, sessionFor, restartScreencasts };
 }
 
 async function listPageTargets(cdp) {
@@ -631,11 +731,10 @@ async function cleanStaleCastState() {
 // ---------------------------------------------------------------------------
 const RETRY_NO_BROWSER_MS = 3000;  // no browser.json / unreachable
 const RETRY_AFTER_DROP_MS = 2000;  // CDP socket closed or errored
-// How long a page may go without a pushed screencast frame before the periodic
-// backstop issues a forced screenshot for it. Longer than the keepalive interval
-// so a live page (fed by screencast each repaint) is never needlessly captured,
-// while a quiet/backgrounded page still gets rescued within a visible window.
-const BACKSTOP_STALE_MS = 5000;
+// Backstop stale threshold is now configurable via castConfig.backstopIntervalMs
+// (see castConfig above). The default (5000ms) is applied when no config is
+// provided. The value is read live from castConfig in keepCastsAlive so a
+// hot-update via POST /api/config takes effect on the next tick.
 let active = null; // { cdp, pool } for the live browser attachment
 
 async function openBrowserSession(wsUrl, browserPort = null) {
@@ -694,8 +793,37 @@ async function runConnectLoop() {
  * Runs until `session` stops being current (its socket dropped). frameFor is
  * idempotent for existing casts, so calling it often is cheap; the screenshot
  * backstop is throttled per target by refreshFrame's own 500ms floor.
+ *
+ * This loop ALSO broadcasts a `spaces` event on every tick (URL/title/active
+ * changes), so the watch panel no longer needs to poll /api/spaces. The tick
+ * cadence is the panel's metadata freshness bound — every 500ms by default.
  */
-async function keepCastsAlive(session, intervalMs = 3000) {
+
+// Metadata broadcast throttle. `spaces` events are cheap (no JPEG bytes), but
+// we still don't want to flood the SSE pipe on a busy tab churn — coalesce
+// back-to-back triggers into a single push within this window.
+let spacesBroadcastPending = false;
+let spacesBroadcastTimer = null;
+const SPACES_BROADCAST_THROTTLE_MS = 250;
+/**
+ * Schedule a `spaces` event broadcast on the next microtask, coalesced so a
+ * flurry of target changes / url updates collapses into a single push.
+ * Safe to call from any path (CDP event handler, keepalive tick, etc).
+ */
+function scheduleSpacesBroadcast() {
+  if (spacesBroadcastPending) return;
+  spacesBroadcastPending = true;
+  spacesBroadcastTimer = setTimeout(() => {
+    spacesBroadcastPending = false;
+    spacesBroadcastTimer = null;
+    if (sseClients.size === 0) return;
+    snapshotSpaces().then((snap) => {
+      if (sseClients.size > 0) sseBroadcast("spaces", snap);
+    }).catch(() => {});
+  }, SPACES_BROADCAST_THROTTLE_MS);
+}
+
+async function keepCastsAlive(session, intervalMs = 500) {
   while (active === session) {
     try {
       const targets = await listPageTargets(session.cdp);
@@ -705,13 +833,16 @@ async function keepCastsAlive(session, intervalMs = 3000) {
         if (!session.pool.frameFor) continue;
         await session.pool.frameFor(t.targetId).catch(() => {});
         const meta = cached.get(t.targetId);
-        const stale = !meta || (now - (meta.lastActive || 0)) > BACKSTOP_STALE_MS;
+        const stale = !meta || (now - (meta.lastActive || 0)) > castConfig.backstopIntervalMs;
         if (!stale) continue;
         const cast = await session.pool.refreshFrame(t.targetId).catch(() => null);
         if (cast?.frame && sseClients.size > 0) {
           sseBroadcast("frame", { targetId: t.targetId, data: cast.frame, ts: Date.now() });
         }
       }
+      // Push the current tab list (url/title/active/viewport/humanCheck) so
+      // the panel can render its tab bar without polling /api/spaces.
+      scheduleSpacesBroadcast();
     } catch {
       // browser call failed; keep trying on the next tick
     }
@@ -733,6 +864,42 @@ async function main() {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, { ok: !!active });
+    if (req.method === "POST" && url.pathname === "/api/config") {
+      // Hot-update cast parameters. castFpsCap takes effect immediately (the
+      // screencastFrame handler reads castConfig on every frame);
+      // screencastQuality / screencastMaxWidth require restarting the running
+      // screencast streams (Chrome only honors new params on a fresh
+      // startScreencast call).
+      try {
+        const body = JSON.parse((await readBody(req)) || "{}");
+        const prev = { ...castConfig };
+        if (typeof body.castFpsCap === "number" && body.castFpsCap >= 0 && body.castFpsCap <= 60) {
+          castConfig.castFpsCap = body.castFpsCap;
+        }
+        if (typeof body.screencastQuality === "number" && body.screencastQuality >= 1 && body.screencastQuality <= 100) {
+          castConfig.screencastQuality = body.screencastQuality;
+        }
+        if (typeof body.screencastMaxWidth === "number" && body.screencastMaxWidth >= 320 && body.screencastMaxWidth <= 1920) {
+          castConfig.screencastMaxWidth = body.screencastMaxWidth;
+        }
+        if (typeof body.backstopIntervalMs === "number" && body.backstopIntervalMs >= 200 && body.backstopIntervalMs <= 10000) {
+          castConfig.backstopIntervalMs = body.backstopIntervalMs;
+        }
+        // If quality or width changed, restart the running screencast streams
+        // so the new params take effect immediately. fpsCap needs no restart.
+        const needsRestart = castConfig.screencastQuality !== prev.screencastQuality
+          || castConfig.screencastMaxWidth !== prev.screencastMaxWidth;
+        if (needsRestart && active?.pool?.restartScreencasts) {
+          active.pool.restartScreencasts({
+            quality: castConfig.screencastQuality,
+            maxWidth: castConfig.screencastMaxWidth,
+          }).catch(() => {});
+        }
+        return sendJson(res, 200, { ok: true, config: castConfig });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: String(err?.message || err) });
+      }
+    }
     if (req.method === "POST" && url.pathname === "/api/close") {
       const sess = active;
       if (!sess) return sendJson(res, 400, { ok: false, error: "no live browser" });
@@ -828,48 +995,17 @@ async function main() {
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/spaces") {
+      // Lightweight metadata endpoint. Used as the initial snapshot when a
+      // watch panel's SSE connection comes up, and as a reconnect fallback.
+      // Returns ONLY metadata (url/title/active/viewport/humanCheck) — no
+      // thumbnail bytes — because the live frames already stream over SSE.
+      // This drops a 30-tab response from ~30 × 700ms captureScreenshot calls
+      // down to a single Target.getTargets + cachedFrames() map lookup (<50ms).
       const sess = active;
       if (!sess) return sendJson(res, 200, { ok: true, spaces: [] });
       try {
-        const targets = await listPageTargets(sess.cdp);
-        const activeId = await activeTabId();
-        const spaces = [];
-        for (const t of targets.slice(0, 30)) {
-          try {
-            // refreshFrame forces a fresh screenshot so the watch panel shows
-            // the CURRENT picture of each page (screencast alone can freeze on
-            // pages that change without repainting, e.g. a playing video).
-            const cast = await sess.pool.refreshFrame(t.targetId);
-            const cached = probeCache.get(t.targetId);
-            if (!cached || Date.now() - cached.at > PROBE_INTERVAL_MS) {
-              probeHuman(sess.cdp, sess.pool.sessionFor ? sess.pool.sessionFor(t.targetId) : null)
-                .then((human) => probeCache.set(t.targetId, { at: Date.now(), human }))
-                .catch(() => {});
-            }
-            spaces.push({
-              targetId: t.targetId,
-              url: t.url,
-              title: t.title,
-              active: activeId !== null && t.targetId === activeId,
-              thumbnail: cast?.frame ? `data:image/jpeg;base64,${cast.frame}` : null,
-              // Most-recently-active first: the page the agent is currently
-              // looking at (or just touched) gets the newest lastActive.
-              lastActive: cast?.lastActive ?? 0,
-              viewportW: cast?.viewportW ?? undefined,
-              viewportH: cast?.viewportH ?? undefined,
-              humanCheck: (cached && cached.human) ?? null,
-            });
-          } catch {
-            /* skip broken target */
-          }
-        }
-        // The agent's browser-MRU-active tab always on top; the rest by activity.
-        spaces.sort((a, b) => {
-          const ad = a.active ? 1 : 0, bd = b.active ? 1 : 0;
-          if (ad !== bd) return bd - ad;
-          return (b.lastActive ?? 0) - (a.lastActive ?? 0);
-        });
-        return sendJson(res, 200, { ok: true, spaces });
+        const snap = await snapshotSpaces();
+        return sendJson(res, 200, { ok: true, spaces: snap });
       } catch {
         return sendJson(res, 200, { ok: true, spaces: [] });
       }
