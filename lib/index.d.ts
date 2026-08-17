@@ -87,6 +87,12 @@ interface CtxLike {
 }
 export interface Config {
     /**
+     * Path to the Chrome/Chromium binary. Empty string = auto-detect
+     * (scan PATH + common fixed locations). Set via the DSH settings UI
+     * (ego-browser card) or the composition layer (cordis.patch.yml).
+     */
+    chromePath?: string;
+    /**
      * Path or command name of the ego-browser CLI.
      * Default: the vendored CLI bundled inside this plugin
      * (`runtime/ego-linux/bin/ego-browser.mjs`), so the plugin works with just
@@ -102,5 +108,12 @@ export interface Config {
     graceMs?: number;
 }
 export declare const Config: {};
+/** Find a usable Chrome/Edge/Brave binary by scanning PATH + common fixed locations. */
+export declare function findChromeBinary(): string | undefined;
+/** Build the env handed to `ego-browser nodejs` spawns (platform-injectable for testing). */
+export declare function resolveEgoEnv(cfg: Partial<Config>, opts?: {
+    platform?: string;
+    baseEnv?: Record<string, string | undefined>;
+}): Record<string, string | undefined>;
 export declare function apply(ctx: CtxLike, config?: Partial<Config>): void;
 export {};

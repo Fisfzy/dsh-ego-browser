@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { access, mkdir, readdir, readFile, readlink, writeFile, rm } from "node:fs/promises";
 import { constants } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { BROWSER_STATE_FILE, PROFILE_DIR, STATE_DIR } from "./paths.mjs";
 
@@ -88,7 +88,7 @@ async function exists(path) {
 
 async function resolveBinary() {
   for (const candidate of BINARY_CANDIDATES) {
-    if (candidate.includes("/")) {
+    if (isAbsolute(candidate)) {
       if (await exists(candidate)) return candidate;
       continue;
     }
@@ -103,13 +103,20 @@ async function resolveBinary() {
 
 function which(name) {
   return new Promise((resolve) => {
-    const child = spawn("which", [name], { stdio: ["ignore", "pipe", "ignore"] });
+    // Windows has no `which`; `where` is its equivalent and prints one path
+    // per line (may return several — take the first).
+    const cmd = process.platform === "win32" ? "where" : "which";
+    const child = spawn(cmd, [name], { stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
     child.stdout.on("data", (chunk) => {
       out += chunk;
     });
     child.on("error", () => resolve(null));
-    child.on("close", (code) => resolve(code === 0 ? out.trim() : null));
+    child.on("close", (code) => {
+      if (code !== 0) return resolve(null);
+      const first = out.trim().split(/\r?\n/)[0];
+      resolve(first || null);
+    });
   });
 }
 
