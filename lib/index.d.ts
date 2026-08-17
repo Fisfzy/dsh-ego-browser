@@ -100,10 +100,13 @@ export interface Config {
      */
     refreshInterval?: number;
     /**
-     * Multiplier applied to `refreshInterval` to derive the idle poll cadence
-     * (when no page has been touched recently). 1 = no slowdown; 4 = idle polls
-     * every 4× the active interval. Range 1–20; default 4. Set via the DSH
-     * settings UI (ego-browser card) or composition layer.
+     * Probe interval (ms) for the sidebar-tab auto-open detector. The watch
+     * panel itself is pure SSE-driven (real-time `frame` + `spaces` events
+     * from /api/ego/stream), so this setting does NOT affect the panel's
+     * live-update speed — only the standalone probe's polling rate while
+     * waiting for the first ego_* tool call (before the Tab auto-opens).
+     * Range 100–30000; default 2000. Set via the DSH settings UI
+     * (ego-browser card) or composition layer.
      */
     idleMultiplier?: number;
     /**

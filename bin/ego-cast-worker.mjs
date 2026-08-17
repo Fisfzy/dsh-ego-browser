@@ -282,7 +282,10 @@ async function snapshotSpaces() {
     // Read only already-cached frames — never call startScreencast here. That
     // keeps the initial "spaces" push instant and, crucially, does not steal
     // the one screencast stream Chrome allows per target away from the live
-    // fan-out below.
+    // fan-out below. We also do NOT include the frame bytes in the snapshot
+    // anymore — the live JPEGs stream over SSE `frame` events; the snapshot
+    // is pure metadata so the panel can render its tab list without waiting
+    // on a captureScreenshot per target.
     const frames = active.pool.cachedFrames ? active.pool.cachedFrames() : new Map();
     const spaces = [];
     for (const t of targets.slice(0, 30)) {
@@ -303,7 +306,6 @@ async function snapshotSpaces() {
         url: t.url,
         title: t.title,
         active: isActive,
-        thumbnail: meta?.frame ? `data:image/jpeg;base64,${meta.frame}` : null,
         lastActive: meta?.lastActive ?? 0,
         viewportW: meta?.viewportW ?? undefined,
         viewportH: meta?.viewportH ?? undefined,
@@ -694,8 +696,37 @@ async function runConnectLoop() {
  * Runs until `session` stops being current (its socket dropped). frameFor is
  * idempotent for existing casts, so calling it often is cheap; the screenshot
  * backstop is throttled per target by refreshFrame's own 500ms floor.
+ *
+ * This loop ALSO broadcasts a `spaces` event on every tick (URL/title/active
+ * changes), so the watch panel no longer needs to poll /api/spaces. The tick
+ * cadence is the panel's metadata freshness bound — every 500ms by default.
  */
-async function keepCastsAlive(session, intervalMs = 3000) {
+
+// Metadata broadcast throttle. `spaces` events are cheap (no JPEG bytes), but
+// we still don't want to flood the SSE pipe on a busy tab churn — coalesce
+// back-to-back triggers into a single push within this window.
+let spacesBroadcastPending = false;
+let spacesBroadcastTimer = null;
+const SPACES_BROADCAST_THROTTLE_MS = 250;
+/**
+ * Schedule a `spaces` event broadcast on the next microtask, coalesced so a
+ * flurry of target changes / url updates collapses into a single push.
+ * Safe to call from any path (CDP event handler, keepalive tick, etc).
+ */
+function scheduleSpacesBroadcast() {
+  if (spacesBroadcastPending) return;
+  spacesBroadcastPending = true;
+  spacesBroadcastTimer = setTimeout(() => {
+    spacesBroadcastPending = false;
+    spacesBroadcastTimer = null;
+    if (sseClients.size === 0) return;
+    snapshotSpaces().then((snap) => {
+      if (sseClients.size > 0) sseBroadcast("spaces", snap);
+    }).catch(() => {});
+  }, SPACES_BROADCAST_THROTTLE_MS);
+}
+
+async function keepCastsAlive(session, intervalMs = 500) {
   while (active === session) {
     try {
       const targets = await listPageTargets(session.cdp);
@@ -712,6 +743,9 @@ async function keepCastsAlive(session, intervalMs = 3000) {
           sseBroadcast("frame", { targetId: t.targetId, data: cast.frame, ts: Date.now() });
         }
       }
+      // Push the current tab list (url/title/active/viewport/humanCheck) so
+      // the panel can render its tab bar without polling /api/spaces.
+      scheduleSpacesBroadcast();
     } catch {
       // browser call failed; keep trying on the next tick
     }
@@ -828,48 +862,17 @@ async function main() {
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/spaces") {
+      // Lightweight metadata endpoint. Used as the initial snapshot when a
+      // watch panel's SSE connection comes up, and as a reconnect fallback.
+      // Returns ONLY metadata (url/title/active/viewport/humanCheck) — no
+      // thumbnail bytes — because the live frames already stream over SSE.
+      // This drops a 30-tab response from ~30 × 700ms captureScreenshot calls
+      // down to a single Target.getTargets + cachedFrames() map lookup (<50ms).
       const sess = active;
       if (!sess) return sendJson(res, 200, { ok: true, spaces: [] });
       try {
-        const targets = await listPageTargets(sess.cdp);
-        const activeId = await activeTabId();
-        const spaces = [];
-        for (const t of targets.slice(0, 30)) {
-          try {
-            // refreshFrame forces a fresh screenshot so the watch panel shows
-            // the CURRENT picture of each page (screencast alone can freeze on
-            // pages that change without repainting, e.g. a playing video).
-            const cast = await sess.pool.refreshFrame(t.targetId);
-            const cached = probeCache.get(t.targetId);
-            if (!cached || Date.now() - cached.at > PROBE_INTERVAL_MS) {
-              probeHuman(sess.cdp, sess.pool.sessionFor ? sess.pool.sessionFor(t.targetId) : null)
-                .then((human) => probeCache.set(t.targetId, { at: Date.now(), human }))
-                .catch(() => {});
-            }
-            spaces.push({
-              targetId: t.targetId,
-              url: t.url,
-              title: t.title,
-              active: activeId !== null && t.targetId === activeId,
-              thumbnail: cast?.frame ? `data:image/jpeg;base64,${cast.frame}` : null,
-              // Most-recently-active first: the page the agent is currently
-              // looking at (or just touched) gets the newest lastActive.
-              lastActive: cast?.lastActive ?? 0,
-              viewportW: cast?.viewportW ?? undefined,
-              viewportH: cast?.viewportH ?? undefined,
-              humanCheck: (cached && cached.human) ?? null,
-            });
-          } catch {
-            /* skip broken target */
-          }
-        }
-        // The agent's browser-MRU-active tab always on top; the rest by activity.
-        spaces.sort((a, b) => {
-          const ad = a.active ? 1 : 0, bd = b.active ? 1 : 0;
-          if (ad !== bd) return bd - ad;
-          return (b.lastActive ?? 0) - (a.lastActive ?? 0);
-        });
-        return sendJson(res, 200, { ok: true, spaces });
+        const snap = await snapshotSpaces();
+        return sendJson(res, 200, { ok: true, spaces: snap });
       } catch {
         return sendJson(res, 200, { ok: true, spaces: [] });
       }
