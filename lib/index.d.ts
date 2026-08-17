@@ -93,6 +93,23 @@ export interface Config {
      */
     chromePath?: string;
     /**
+     * Cap on live-frame fan-out (frames/sec) from the cast worker to the
+     * watch panel. 0 = uncapped (full browser repaint cadence). >0 = at
+     * most N frames/sec; the watched (active) tab is never throttled, only
+     * background repainting tabs. Range 0–60; default 0.
+     */
+    castFpsCap?: number;
+    /**
+     * JPEG quality (1–100) for screencast frames and screenshot backstop.
+     * Range 1–100; default 55.
+     */
+    screencastQuality?: number;
+    /**
+     * Max width (CSS px) of each pushed screencast frame. Range 320–1920;
+     * default 960.
+     */
+    screencastMaxWidth?: number;
+    /**
      * Path or command name of the ego-browser CLI.
      * Default: the vendored CLI bundled inside this plugin
      * (`runtime/ego-linux/bin/ego-browser.mjs`), so the plugin works with just
