@@ -95,7 +95,7 @@ export interface Config {
     /**
      * Base refresh interval (ms) for the realtime watch panel: how often the
      * client polls /api/ego/spaces while the agent is actively driving the
-     * browser. Idle cadence is 4× this value. Range 500–30000; default 2000.
+     * browser. Idle cadence is 4× this value. Range 100–30000; default 2000.
      * Set via the DSH settings UI (ego-browser card) or composition layer.
      */
     refreshInterval?: number;
