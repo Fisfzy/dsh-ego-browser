@@ -342,6 +342,40 @@ async function snapshotSpaces() {
   }
 }
 
+/**
+ * Script injected into every page target to force the compositor to keep
+ * producing frames. Without this, pages that don't visibly repaint — video
+ * players with hardware-accelerated <video>, canvas animations rendered in
+ * a separate compositor layer, or simply static pages — never trigger
+ * Page.screencastFrame events, so the watch panel freezes until the 5-second
+ * captureScreenshot backstop fires.
+ *
+ * The element is a 1px fully-transparent div with an infinite opacity
+ * animation. The animation forces the compositor to recomposite every frame
+ * (opacity is a compositor-layer property), which in turn causes Chrome to
+ * emit Page.screencastFrame events at the browser's native cadence. The
+ * element is invisible (opacity:0 + pointer-events:none + z-index:-1) and
+ * costs negligible CPU/GPU on modern hardware.
+ *
+ * Idempotent: the guard variable prevents double-injection on
+ * addScriptToEvaluateOnNewDocument + Runtime.evaluate overlap.
+ */
+const FORCE_REPAINT_SCRIPT = `(function(){
+  if(window.__egoForceRepaint__)return;
+  window.__egoForceRepaint__=true;
+  var s=document.createElement('style');
+  s.textContent='@keyframes __ego_fr__{0%,100%{opacity:0}50%{opacity:0.001}}';
+  (document.head||document.documentElement).appendChild(s);
+  function add(){
+    var el=document.createElement('div');
+    el.setAttribute('data-ego-fr','');
+    el.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;pointer-events:none;z-index:-1;opacity:0;animation:__ego_fr__ 0.5s infinite';
+    (document.body||document.documentElement).appendChild(el);
+  }
+  if(document.body)add();
+  else document.addEventListener('DOMContentLoaded',add);
+})();`;
+
 /** Screencast pool: one live stream per page target, newest JPEG cached. */
 function createCastPool(cdp) {
   const casts = new Map();
@@ -417,7 +451,25 @@ function createCastPool(cdp) {
     try {
       const { result } = await cdp.call("Target.attachToTarget", { targetId, flatten: true });
       sessionId = result.sessionId;
+      // Enable Page domain explicitly so screencastFrame events are delivered.
+      // startScreencast implicitly enables it in most Chrome builds, but being
+      // explicit avoids relying on undocumented behavior.
+      await cdp.call("Page.enable", {}, sessionId).catch(() => {});
       await cdp.call("Page.startScreencast", { format: "jpeg", quality: castConfig.screencastQuality, maxWidth: castConfig.screencastMaxWidth, everyNthFrame: 1 }, sessionId);
+      // Inject a force-repaint animation so the compositor keeps producing
+      // frames even on pages that don't repaint on their own — video players,
+      // canvas animations, and static pages with hardware-accelerated content
+      // all freeze the screencast stream because Chrome's compositor only
+      // emits a new frame when something visible changes. The injected element
+      // is a 1px transparent div with an infinite opacity animation; this
+      // forces the compositor to recomposite every frame, which triggers
+      // Page.screencastFrame events at the browser's native cadence.
+      // addScriptToEvaluateOnNewDocument survives navigation; Runtime.evaluate
+      // covers the current page immediately.
+      try {
+        await cdp.call("Page.addScriptToEvaluateOnNewDocument", { source: FORCE_REPAINT_SCRIPT }, sessionId);
+        await cdp.call("Runtime.evaluate", { expression: FORCE_REPAINT_SCRIPT, silent: true }, sessionId);
+      } catch { /* best-effort — screencast still works, just may be slow on static pages */ }
     } catch (err) {
       return null; // attach/screencast failed — caller reports no thumbnail
     }
