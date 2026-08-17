@@ -93,23 +93,6 @@ export interface Config {
      */
     chromePath?: string;
     /**
-     * Base refresh interval (ms) for the realtime watch panel: how often the
-     * client polls /api/ego/spaces while the agent is actively driving the
-     * browser. Idle cadence is 4× this value. Range 100–30000; default 2000.
-     * Set via the DSH settings UI (ego-browser card) or composition layer.
-     */
-    refreshInterval?: number;
-    /**
-     * Probe interval (ms) for the sidebar-tab auto-open detector. The watch
-     * panel itself is pure SSE-driven (real-time `frame` + `spaces` events
-     * from /api/ego/stream), so this setting does NOT affect the panel's
-     * live-update speed — only the standalone probe's polling rate while
-     * waiting for the first ego_* tool call (before the Tab auto-opens).
-     * Range 100–30000; default 2000. Set via the DSH settings UI
-     * (ego-browser card) or composition layer.
-     */
-    idleMultiplier?: number;
-    /**
      * Path or command name of the ego-browser CLI.
      * Default: the vendored CLI bundled inside this plugin
      * (`runtime/ego-linux/bin/ego-browser.mjs`), so the plugin works with just
