@@ -57,17 +57,6 @@ const LAUNCH_FLAGS = [
   // appears as its own running app and the launcher icon cannot raise it.
   // Paired with StartupWMClass in the desktop entry.
   `--class=${WM_CLASS}`,
-  // The browser must come up holding NO tab. ego_space_open (and every other
-  // structured ego_* tool) routes through useSpace(...) + ensureRealTab(),
-  // which creates the first tab inside its own browser context — Chrome
-  // isolates each context to its own window, so that tab is the single window
-  // the user sees. If launch also opened a tab (the old "about:blank"
-  // positional arg), it would land in the default context and force a second
-  // window. The "no active tab to attach session" failure that used to make
-  // --no-startup-window unsafe only fired when a tool called page.* directly
-  // without first going through useSpace+ensureRealTab; the structured tools
-  // all do, so it no longer applies.
-  "--no-startup-window",
 ];
 
 /**
@@ -399,6 +388,11 @@ async function launch({ headless }) {
           "--proxy-bypass-list=<-loopback>;127.0.0.1;localhost;[::1];172.16.0.0/12;10.0.0.0/8;*.local",
         ]
       : []),
+    // The harness attaches its CDP session to the active tab and fails with
+    // "no active tab to attach session" when there is none, so the browser has
+    // to come up holding one. --no-startup-window was tried here and breaks
+    // every page operation for that reason.
+    "about:blank",
   ];
   const child = spawn(binary, args, {
     detached: true,
