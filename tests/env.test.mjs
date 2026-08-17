@@ -337,3 +337,43 @@ describe("runtime chrome.mjs (Windows path handling)", () => {
     );
   });
 });
+
+// ─── runtime/ego-linux/src/chrome.mjs (single-window launch) ───────────────
+// Regression: ego_space_open used to open two windows because launch() passed
+// "about:blank" as a positional arg (opening a tab in the default browser
+// context), and ego_space_open then created another tab in its own context —
+// Chrome isolates contexts to separate windows. The fix is --no-startup-window
+// in LAUNCH_FLAGS and no positional URL. See PLAN-single-window-fix.md.
+
+describe("runtime chrome.mjs (single-window launch)", () => {
+  const readSrc = () =>
+    import("node:fs/promises").then((fs) =>
+      fs.readFile(
+        new URL("../runtime/ego-linux/src/chrome.mjs", import.meta.url),
+        "utf8",
+      ),
+    );
+
+  it("LAUNCH_FLAGS contains --no-startup-window", async () => {
+    const src = await readSrc();
+    assert.ok(
+      src.includes('"--no-startup-window"'),
+      "chrome.mjs LAUNCH_FLAGS should include --no-startup-window so launch " +
+        "does not open a residual tab in the default browser context",
+    );
+  });
+
+  it("launch() does not pass a bare about:blank positional arg", async () => {
+    const src = await readSrc();
+    // The old form was a standalone line `    "about:blank",` inside the
+    // launch() args array. Match it as the sole non-whitespace content of a
+    // line (with trailing comma) — flag-form uses like --no-startup-window
+    // don't match because they start with --.
+    assert.ok(
+      !/^\s*"about:blank",\s*$/m.test(src),
+      "chrome.mjs launch() should not pass a bare 'about:blank' positional " +
+        "URL — that opens a tab in the default context and forces a second " +
+        "window when ego_space_open later creates its own context-backed tab",
+    );
+  });
+});
