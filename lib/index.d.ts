@@ -102,5 +102,12 @@ export interface Config {
     graceMs?: number;
 }
 export declare const Config: {};
+/** Find a usable Chrome/Edge/Brave binary by scanning PATH + common fixed locations. */
+export declare function findChromeBinary(): string | undefined;
+/** Build the env handed to `ego-browser nodejs` spawns (platform-injectable for testing). */
+export declare function resolveEgoEnv(cfg: Partial<Config>, opts?: {
+    platform?: string;
+    baseEnv?: Record<string, string | undefined>;
+}): Record<string, string | undefined>;
 export declare function apply(ctx: CtxLike, config?: Partial<Config>): void;
 export {};

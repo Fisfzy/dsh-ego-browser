@@ -23,7 +23,8 @@
   },
   "scripts": {
     "build": "node --check lib/index.js && node --check lib/client.js && node --check lib/index.d.ts && echo build-ok",
-    "typecheck": "node --check lib/index.js && echo typecheck-ok"
+    "typecheck": "node --check lib/index.js && echo typecheck-ok",
+    "test": "node --test tests/*.test.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "^0.0.1",
