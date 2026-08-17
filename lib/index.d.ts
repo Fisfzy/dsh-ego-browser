@@ -100,6 +100,13 @@ export interface Config {
      */
     refreshInterval?: number;
     /**
+     * Multiplier applied to `refreshInterval` to derive the idle poll cadence
+     * (when no page has been touched recently). 1 = no slowdown; 4 = idle polls
+     * every 4× the active interval. Range 1–20; default 4. Set via the DSH
+     * settings UI (ego-browser card) or composition layer.
+     */
+    idleMultiplier?: number;
+    /**
      * Path or command name of the ego-browser CLI.
      * Default: the vendored CLI bundled inside this plugin
      * (`runtime/ego-linux/bin/ego-browser.mjs`), so the plugin works with just
