@@ -87,6 +87,12 @@ interface CtxLike {
 }
 export interface Config {
     /**
+     * Path to the Chrome/Chromium binary. Empty string = auto-detect
+     * (scan PATH + common fixed locations). Set via the DSH settings UI
+     * (ego-browser card) or the composition layer (cordis.patch.yml).
+     */
+    chromePath?: string;
+    /**
      * Path or command name of the ego-browser CLI.
      * Default: the vendored CLI bundled inside this plugin
      * (`runtime/ego-linux/bin/ego-browser.mjs`), so the plugin works with just

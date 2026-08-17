@@ -82,6 +82,88 @@ describe("resolveEgoEnv (Windows)", () => {
   });
 });
 
+// ─── resolveEgoEnv: chromePath config priority ─────────────────────────────
+
+describe("resolveEgoEnv (chromePath config)", () => {
+  const savedChrome = process.env.EGO_LINUX_CHROME;
+  const savedAdapt = process.env.EGO_BROWSER_AUTO_ADAPT;
+
+  beforeEach(() => {
+    delete process.env.EGO_LINUX_CHROME;
+    delete process.env.EGO_BROWSER_AUTO_ADAPT;
+  });
+
+  afterEach(() => {
+    if (savedChrome !== undefined) process.env.EGO_LINUX_CHROME = savedChrome;
+    else delete process.env.EGO_LINUX_CHROME;
+    if (savedAdapt !== undefined) process.env.EGO_BROWSER_AUTO_ADAPT = savedAdapt;
+    else delete process.env.EGO_BROWSER_AUTO_ADAPT;
+  });
+
+  it("uses cfg.chromePath when set (takes priority over auto-detect)", () => {
+    const configured = "/opt/my-chrome/chrome";
+    const env = resolveEgoEnv(
+      { chromePath: configured },
+      {
+        platform: "win32",
+        baseEnv: {
+          LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+          ProgramFiles: "C:\\Program Files",
+        },
+      },
+    );
+    assert.equal(env.EGO_LINUX_CHROME, configured);
+  });
+
+  it("falls back to auto-detect when cfg.chromePath is empty string", () => {
+    const env = resolveEgoEnv(
+      { chromePath: "" },
+      {
+        platform: "win32",
+        baseEnv: {
+          LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+          ProgramFiles: "C:\\Program Files",
+        },
+      },
+    );
+    // Should NOT be the empty string; either auto-detected or undefined
+    assert.notEqual(env.EGO_LINUX_CHROME, "");
+  });
+
+  it("falls back to auto-detect when cfg.chromePath is undefined", () => {
+    const env = resolveEgoEnv(
+      {},
+      {
+        platform: "win32",
+        baseEnv: {
+          LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+          ProgramFiles: "C:\\Program Files",
+        },
+      },
+    );
+    // Should be auto-detected (string) or undefined if no Chrome installed
+    if (env.EGO_LINUX_CHROME !== undefined) {
+      assert.equal(typeof env.EGO_LINUX_CHROME, "string");
+      assert.ok(env.EGO_LINUX_CHROME.length > 0);
+    }
+  });
+
+  it("user-set EGO_LINUX_CHROME env var still wins over cfg.chromePath", () => {
+    const userSet = "/usr/bin/my-chrome";
+    const env = resolveEgoEnv(
+      { chromePath: "/from/config/chrome" },
+      {
+        platform: "linux",
+        baseEnv: {
+          EGO_LINUX_CHROME: userSet,
+          HOME: "/home/test",
+        },
+      },
+    );
+    assert.equal(env.EGO_LINUX_CHROME, userSet);
+  });
+});
+
 // ─── resolveEgoEnv: auto-adapt opt-out ─────────────────────────────────────
 
 describe("resolveEgoEnv (auto-adapt off)", () => {

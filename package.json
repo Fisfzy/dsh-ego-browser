@@ -17,18 +17,30 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-web-react",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
       ]
     }
   },
   "scripts": {
-    "build": "node --check lib/index.js && node --check lib/client.js && node --check lib/index.d.ts && echo build-ok",
+    "build": "node --check lib/index.js && node --check lib/client.js && node --check lib/config.js && node --check lib/settings.js && node --check lib/gateway.js && node --check lib/index.d.ts && echo build-ok",
     "typecheck": "node --check lib/index.js && echo typecheck-ok",
     "test": "node --test tests/*.test.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "^0.0.1",
-    "cordis": "^4.0.0-rc.7"
+    "@deepseek-ai/dsh-settings": "^0.0.1",
+    "@deepseek-ai/cordis": "^4.0.0-rc.7",
+    "@deepseek-ai/dsh-client-runtime": "^0.0.1",
+    "@deepseek-ai/dsh-client-web-react": "^0.0.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.0.1",
+    "@deepseek-ai/dsh-client-locale": "^0.0.1",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.0.1",
+    "react": "^18.2.0",
+    "schemastery": "^3.18.0"
   },
   "engines": {
     "node": ">=22"
