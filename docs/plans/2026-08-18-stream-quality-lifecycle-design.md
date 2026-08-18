@@ -44,7 +44,7 @@ Windows Media Foundation 和其他码率编码器使用：
 
 host 的 worker POST 代理返回 `{ status, body }`，不再把所有非 2xx 或网络错误折叠成 `null`。
 
-- `watch/start`、`watch/switch`：12 秒超时，覆盖 worker 的 8 秒 MP4 init 超时。
+- `watch/start`、`watch/switch`：30 秒超时，覆盖窗口探测、编码器探测和 8 秒 MP4 init 的完整上限；FFmpeg 探针必须异步执行，启动期间 health 仍可响应。
 - input、stop、close、flush、config：保持短超时。
 - worker 返回 4xx/5xx 时，host 原样转发状态与 JSON 错误。
 - worker 不可达时才返回 502。

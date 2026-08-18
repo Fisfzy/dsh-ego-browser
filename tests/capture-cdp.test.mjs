@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { CdpCaptureBackend } from "../bin/capture-cdp.mjs";
+import { CdpCaptureBackend, TargetSessions } from "../bin/capture-cdp.mjs";
 
 class FakeCdp {
   constructor() { this.handlers = new Map(); this.calls = []; }
@@ -10,6 +10,18 @@ class FakeCdp {
 }
 
 describe("CDP capture backend", () => {
+  it("dispatches text, control keys, and modifiers", async () => {
+    const calls = [];
+    const sessions = { call: async (targetId, method, params) => calls.push({ targetId, method, params }) };
+    await TargetSessions.prototype.sendInput.call(sessions, "target", { type: "insertText", text: "中文" });
+    await TargetSessions.prototype.sendInput.call(sessions, "target", { type: "keyDown", key: "a", code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 });
+    await TargetSessions.prototype.sendInput.call(sessions, "target", { type: "keyUp", key: "a", code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65 });
+    assert.deepEqual(calls.map((call) => call.method), ["Input.insertText", "Input.dispatchKeyEvent", "Input.dispatchKeyEvent"]);
+    assert.equal(calls[0].params.text, "中文");
+    assert.equal(calls[1].params.modifiers, 2);
+    assert.equal(calls[1].params.windowsVirtualKeyCode, 65);
+  });
+
   it("ACKs with the frame id while routing on the flattened target session", async () => {
     const cdp = new FakeCdp();
     const session = { targetId: "target-1", sessionId: "target-session", viewportW: 800, viewportH: 600 };

@@ -69,9 +69,10 @@ ego-browser/
 
 维护时要同步注意：
 - 数据源：`/api/ego/stream` 提供元数据、CDP JPEG 与 capture status；`/api/ego/video` 提供 FFmpeg 二进制 fMP4
-- 生命周期：浮窗/side Tab 通过 `/api/ego/watch/*` 获取租约；隐藏、页面后台或 dispose 时释放
+- 生命周期：浮窗/side Tab 通过 `/api/ego/watch/*` 获取租约；组件逻辑隐藏或 dispose 时释放，`document.hidden` 不释放，以避免后台切换重建 WGC/FFmpeg
 - renderer：CDP 用 `<img>` + rAF 最新帧；FFmpeg 用 generation-aware `MediaSource` + `<video>`
 - 坐标交互：`makeDraggable`（球/窗口各自拖动）、`browserXY`（坐标逆映射）
+- 键盘交互：画面点击聚焦透明 textarea；beforeinput/composition 发送 `Input.insertText`，控制键/快捷键发送 keyDown/keyUp。禁止 document 全局键盘监听
 - 状态：`pageMeta`（vw/vh）、`frameCache`、`lastList`
 - 提醒条：`maybeShowLoginGuide` / `maybeShowCaptchaGuide`（读 `space.humanCheck`）
 
@@ -81,7 +82,11 @@ ego-browser/
 
 独立 Node 进程，attach 到 agent 浏览器。控制面由 `TargetSessions` 持有，捕获停止时输入、viewport 与 humanCheck 不依赖 screencast session。`CaptureManager` 维护 lease、backend、target 与 generation；CDP/FFmpeg 后端只负责画面生产。JPEG 留在 SSE，fMP4 走独立二进制响应并处理背压。
 
+watch lease TTL 为 120 秒，抵抗浏览器后台定时器节流。host 对 start/switch 使用 30 秒 POST 超时并透传 worker 状态；其他控制请求保持短超时。FFmpeg 能力探针不得使用 `spawnSync`，否则会阻塞 health 并触发 sibling worker 误替换。
+
 CDP 帧必须使用 `params.sessionId` 作为 `Page.screencastFrameAck` 参数，同时使用事件外层 session 作为命令路由 session。不要再次把二者合并。
+
+Windows FFmpeg 后端必须走 `Browser.getWindowForTarget` + Win32 顶层窗口枚举匹配 HWND，再使用 `gfxcapture`。禁止恢复 `gdigrab desktop` fallback：它会在 Chrome 被遮挡时串流用户前台应用。`h264_mf` 的能力探针必须使用真实 D3D11 窗口输入，不能用 `lavfi` 软件帧代替。
 
 **改动需重启 worker**（DSH 的 cast-server 检测到 worker 死后会重启，或手动重启）。
 worker 与 lib/index.js 的探针逻辑（humanCheck）是两份相似实现——改动一处要同步另一处，

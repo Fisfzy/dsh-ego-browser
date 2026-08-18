@@ -100,7 +100,8 @@ export interface Config {
     cdpBackstopIntervalMs?: number;
     ffmpegFps?: number;
     ffmpegMaxWidth?: number;
-    ffmpegEncoder?: "auto" | "software" | "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_videotoolbox" | "h264_vaapi";
+    ffmpegBitrateKbps?: number;
+    ffmpegEncoder?: "auto" | "software" | "h264_mf" | "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_videotoolbox" | "h264_vaapi";
     ffmpegPath?: string;
     /**
      * Cap on live-frame fan-out (frames/sec) from the cast worker to the
@@ -146,6 +147,12 @@ export interface Config {
     graceMs?: number;
 }
 export declare const Config: {};
+export declare function createActiveSpaceTracker(defaultSpace?: string | number): {
+    current(): string | number;
+    opened(args: { name?: string | number }, result: { id?: string | number; name?: string }): void;
+    selected(space: string | number): void;
+    closed(space: string | number, done: boolean): void;
+};
 /** Find a usable Chrome/Edge/Brave binary by scanning PATH + common fixed locations. */
 export declare function findChromeBinary(): string | undefined;
 /** Build the env handed to `ego-browser nodejs` spawns (platform-injectable for testing). */

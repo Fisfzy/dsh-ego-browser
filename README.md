@@ -95,7 +95,7 @@ dshx install ego-browser <ego-browser.tgz>                             # tarball
 dshx list                                                # 应显示：[on] ego-browser
 ```
 
-观察窗设置中可选 `captureBackend=auto|cdp|ffmpeg`（默认 `auto`，当前解析为 CDP）、画质档位、CDP FPS/JPEG 质量/最大宽度，以及 FFmpeg FPS/最大宽度/编码器/自定义路径。旧的 `castFpsCap`、`screencastQuality`、`screencastMaxWidth`、`backstopIntervalMs` 会读取迁移一个版本周期，保存时只写新字段。
+观察窗设置中可选 `captureBackend=auto|cdp|ffmpeg`（默认 `auto`，当前解析为 CDP）、画质档位、CDP FPS/JPEG 质量/最大宽度，以及 FFmpeg FPS/最大宽度/码率/编码器/自定义路径。FFmpeg 码率范围为 500-20000 kbps，低/平衡/高档默认 2000/4000/8000 kbps。旧的 `castFpsCap`、`screencastQuality`、`screencastMaxWidth`、`backstopIntervalMs` 会读取迁移一个版本周期，保存时只写新字段。
 
 无需宿主侧任何配置：`resolveEgoEnv` 自动探测 root / 无显示器并兜底。观察窗 host 路由（`/api/ego/spaces` 等）仅在有 HTTP server 时注册，headless 是安全 no-op。
 
@@ -116,18 +116,18 @@ dshx list                                                # 应显示：[on] ego-
 
 右下角 **🌐 常驻小球** → 点开：
 
-- **主画面**：agent 当前页面实况；滚轮缩放、按住拖动、双击复位；Ctrl+滚轮缩放视图、Ctrl+拖动平移（v0.5.0）。
+- **主画面**：agent 当前页面实况；点击/拖动/滚轮直接操作页面，Ctrl+滚轮缩放视图、Ctrl+拖动平移，双击复位。点击画面后可直接键盘输入，支持中文 IME、粘贴、Tab/Enter/方向键及 Ctrl/Cmd 快捷键。
 - **标签页条**：顶部横排，点选切换，`×` 关闭。
 - **历史抽屉**（🕘）：按时间回看访问轨迹。
 - 操作时下方网址行就地显示提示，2 秒后恢复。
-- 面板关闭、sidebar Tab 隐藏或页面进入后台后，1.5 秒宽限结束即停止昂贵的画面生产；异常关闭由 worker lease 超时兜底。
+- 面板关闭、sidebar Tab 隐藏或组件卸载后，1.5 秒宽限结束即停止画面生产。仅把 DSH 窗口切到后台不会停止串流，避免回前台时反复重建 WGC/FFmpeg；异常关闭由 120 秒 worker lease 超时兜底。
 
 ### 画面后端
 
 - `cdp`：`Page.startScreencast` JPEG，默认 20 FPS。每个源帧立即按 Chrome 提供的帧 ID ACK，只保留最新待发帧；仅捕获当前观看标签，静态页恢复截图默认 3 秒一次。
-- `ffmpeg`：系统窗口/显示 crop → H.264 fragmented MP4 → HTTP 二进制 chunk → MediaSource `<video>`。不经过 Base64/SSE，generation 变化时播放器完整重建。
+- `ffmpeg`：Windows 以 `gfxcapture(hwnd)` 直接采集目标 Chrome 窗口的 D3D11 surface；其他平台使用显示来源 crop。随后编码 H.264 fragmented MP4 → HTTP 二进制 chunk → MediaSource `<video>`，不经过 Base64/SSE。
 - `auto`：默认选择 CDP。显式选择 FFmpeg 后若二进制、编码器、窗口来源或权限不可用，会展示明确失败，不静默伪装成 FFmpeg 成功。
-- FFmpeg 捕获属于系统屏幕捕获：Windows 桌面 crop 会受遮挡/最小化影响；macOS 首次使用需要“屏幕录制”权限；X11 需要 Chromium 与 FFmpeg 共享 `DISPLAY`；随包 FFmpeg 在 Wayland 不保证 Portal/PipeWire 输入，缺失时会提示切回 CDP。
+- Windows FFmpeg 必须包含 `gfxcapture`。插件按 browser PID、target title 和 CDP window bounds 匹配 HWND；窗口移动或被遮挡时仍捕获目标页面，并且不允许回退到桌面录制。若 target 是同一 Chrome 窗口里的后台 tab，会明确报错而不是展示当前可见 tab 或抢用户焦点。macOS 首次使用需要“屏幕录制”权限；X11 需要 Chromium 与 FFmpeg 共享 `DISPLAY`；Wayland 缺少 Portal/PipeWire 输入时会提示切回 CDP。
 
 > 登录态说明：多任务空间 Cookie 相互隔离，请在对应空间内登录。重启 DSH 后运行期登录态被清空（Chrome 运行期 Cookie 仅优雅关闭时落盘），需重登——扫码很快。
 
@@ -149,7 +149,7 @@ npm run build   # node --check lib/*.js（lib/ 为唯一权威源，不复编译
 ## 已知限制（诚实说明）
 
 - **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。
-- **FFmpeg 平台捕获**：首版 Windows 使用 `gdigrab`、Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop。遮挡时仍正确的单窗口捕获、Windows `ddagrab`/HWND、macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
+- **FFmpeg 平台捕获**：Windows 已使用 `gfxcapture(HWND)`，需要 2025-08 之后且编译了该 filter 的 FFmpeg；旧 `ffmpeg-static` 或 PATH 中的旧 FFmpeg 会明确失败。Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop；macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
 - **安装环境**：本仓库的 DSH peer 包不全在公共 npm registry。普通 `pnpm install` 可能在解析 `@deepseek-ai/*` peer 时失败；DSH profile 安装应提供这些 peer。`ffmpeg-static` 延迟加载，缺失不会影响 CDP 后端。
 - **快照质量**：Linux 用 CDP `DOMSnapshot` 重建语义树，非 macOS 内核级，复杂 iframe/画布场景可能降级。
 - **宿主可靠性（Linux）**：未合并的社区 PR，跨 CLI 调用间可能丢 tab/空间状态；插件已内置防御，简单流程稳定，复杂流程可能需重试。

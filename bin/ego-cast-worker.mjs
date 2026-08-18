@@ -19,7 +19,7 @@ const CAST_STATE_FILE = join(STATE_DIR, "ego-cast.json");
 const DEFAULT_CONFIG = {
   captureBackend: "auto", streamProfile: "balanced",
   cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 960, cdpBackstopIntervalMs: 3000,
-  ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegEncoder: "auto", ffmpegPath: "",
+  ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "",
 };
 let castConfig = { ...DEFAULT_CONFIG };
 try { castConfig = { ...castConfig, ...JSON.parse(process.argv[2] || "{}") }; } catch {}
@@ -45,9 +45,9 @@ function normalizeConfig(input) {
   const numberValue = (key, min, max) => { if (Number.isFinite(input[key]) && input[key] >= min && input[key] <= max) next[key] = input[key]; };
   enumValue("captureBackend", ["auto", "cdp", "ffmpeg"]);
   enumValue("streamProfile", ["low", "balanced", "high"]);
-  enumValue("ffmpegEncoder", ["auto", "software", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox", "h264_vaapi"]);
+  enumValue("ffmpegEncoder", ["auto", "software", "h264_mf", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox", "h264_vaapi"]);
   numberValue("cdpFps", 5, 30); numberValue("cdpQuality", 1, 100); numberValue("cdpMaxWidth", 320, 1920); numberValue("cdpBackstopIntervalMs", 1000, 10000);
-  numberValue("ffmpegFps", 5, 30); numberValue("ffmpegMaxWidth", 320, 1920);
+  numberValue("ffmpegFps", 5, 30); numberValue("ffmpegMaxWidth", 320, 1920); numberValue("ffmpegBitrateKbps", 500, 20000);
   if (typeof input.ffmpegPath === "string") next.ffmpegPath = input.ffmpegPath;
   return next;
 }
@@ -74,24 +74,31 @@ function writeSse(res, event, payload) {
   return res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
 }
 
+function queueSse(client, event, payload) {
+  if (event === "frame") client.pendingFrame = payload;
+  else client.pendingEvents.set(event, payload);
+}
+
+function sendSse(client, event, payload) {
+  if (client.blocked) { queueSse(client, event, payload); return; }
+  try {
+    if (!writeSse(client.res, event, payload)) {
+      client.blocked = true;
+      client.res.once("drain", () => {
+        client.blocked = false;
+        const pendingEvents = [...client.pendingEvents];
+        const pendingFrame = client.pendingFrame;
+        client.pendingEvents.clear();
+        client.pendingFrame = null;
+        for (const [pendingEvent, pendingPayload] of pendingEvents) sendSse(client, pendingEvent, pendingPayload);
+        if (pendingFrame) sendSse(client, "frame", pendingFrame);
+      });
+    }
+  } catch { sseClients.delete(client); }
+}
+
 function broadcast(event, payload) {
-  for (const client of sseClients) {
-    if (event === "frame" && client.blocked) { client.pendingFrame = payload; continue; }
-    try {
-      const ok = writeSse(client.res, event, payload);
-      if (!ok) {
-        client.blocked = true;
-        client.res.once("drain", () => {
-          client.blocked = false;
-          if (client.pendingFrame) {
-            const pending = client.pendingFrame;
-            client.pendingFrame = null;
-            try { writeSse(client.res, "frame", pending); } catch { sseClients.delete(client); }
-          }
-        });
-      }
-    } catch { sseClients.delete(client); }
-  }
+  for (const client of sseClients) sendSse(client, event, payload);
 }
 
 function publishStatus(status) {
@@ -159,7 +166,7 @@ const manager = new CaptureManager({
     },
     ffmpeg: ({ generation, onStatus }) => {
       if (!active) throw new Error("no live browser");
-      return new FfmpegCaptureBackend({ sessions: active.sessions, getConfig: () => castConfig, generation, onStatus, onVideoInit: publishVideoInit, onVideoChunk: publishVideoChunk, onVideoEnd: endVideo });
+      return new FfmpegCaptureBackend({ sessions: active.sessions, browserPid: active.pid, getConfig: () => castConfig, generation, onStatus, onVideoInit: publishVideoInit, onVideoChunk: publishVideoChunk, onVideoEnd: endVideo });
     },
   },
 });
@@ -272,13 +279,26 @@ async function main() {
       if (req.method === "POST" && url.pathname === "/api/watch/start") { if (!active) return sendJson(res, 409, { ok: false, error: "no live browser" }); return sendJson(res, 200, { ok: true, ...await manager.startWatch(await readJson(req)) }); }
       if (req.method === "POST" && url.pathname === "/api/watch/switch") return sendJson(res, 200, { ok: true, ...await manager.switchWatch(await readJson(req)) });
       if (req.method === "POST" && url.pathname === "/api/watch/stop") return sendJson(res, 200, { ok: true, ...await manager.stopWatch(await readJson(req)) });
-      if (req.method === "POST" && url.pathname === "/api/input") { const body = await readJson(req); if (!active) return sendJson(res, 409, { ok: false, error: "no live browser" }); return sendJson(res, 200, await active.sessions.sendInput(body.targetId, body)); }
+      if (req.method === "POST" && url.pathname === "/api/input") {
+        const body = await readJson(req);
+        if (!active) return sendJson(res, 409, { ok: false, code: "browser-disconnected", error: "no live browser" });
+        if (!body.targetId) return sendJson(res, 400, { ok: false, code: "target-required", error: "targetId required" });
+        const targets = await listTargets();
+        if (!targets.some((target) => target.targetId === body.targetId)) {
+          return sendJson(res, 409, { ok: false, code: "capture-target-stale", error: "target is no longer available" });
+        }
+        try {
+          return sendJson(res, 200, await active.sessions.sendInput(body.targetId, body));
+        } catch (error) {
+          return sendJson(res, 503, { ok: false, code: "input-dispatch-failed", error: error.message || String(error) });
+        }
+      }
       if (req.method === "POST" && url.pathname === "/api/close") { const { targetId } = await readJson(req); if (!active || !targetId) return sendJson(res, 400, { ok: false, error: "targetId required" }); await active.cdp.call("Target.closeTarget", { targetId }); return sendJson(res, 200, { ok: true }); }
       if (req.method === "POST" && url.pathname === "/api/flush") { if (!active) return sendJson(res, 409, { ok: false, error: "no live browser" }); await active.cdp.call("Storage.flushCookies").catch(() => {}); return sendJson(res, 200, { ok: true }); }
       if (req.method === "GET" && url.pathname === "/api/stream") {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" });
         res.write(":ok\n\n");
-        const client = { res, blocked: false, pendingFrame: null };
+        const client = { res, blocked: false, pendingFrame: null, pendingEvents: new Map() };
         sseClients.add(client);
         writeSse(res, "capture-status", manager.status());
         snapshotSpaces().then((spaces) => { if (sseClients.has(client)) writeSse(res, "spaces", spaces); }).catch(() => {});

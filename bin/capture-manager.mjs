@@ -1,5 +1,5 @@
 export class CaptureManager {
-  constructor({ backendFactories, getConfig, onStatus, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, leaseTtlMs = 15000, idleGraceMs = 1500 }) {
+  constructor({ backendFactories, getConfig, onStatus, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, leaseTtlMs = 120000, idleGraceMs = 1500 }) {
     this.backendFactories = backendFactories;
     this.getConfig = getConfig;
     this.onStatus = onStatus;
@@ -31,7 +31,11 @@ export class CaptureManager {
     const requestedBackend = backend || this.getConfig().captureBackend;
     const existing = this.leases.get(clientId);
     this.leases.set(clientId, { clientId, backend: requestedBackend, targetId, expiresAt: this.now() + this.leaseTtlMs });
-    if (existing && existing.backend === requestedBackend && existing.targetId === targetId) return this.status();
+    if (existing && existing.backend === requestedBackend && existing.targetId === targetId) {
+      const resolved = this.#resolvedBackend(requestedBackend);
+      if (this.targetId !== targetId || (this.backendName && this.backendName !== resolved)) return this.status();
+      if (this.backend && this.backendName === resolved) return this.status();
+    }
     return this.#enqueue(async () => { await this.#activate(this.#resolvedBackend(backend), targetId); return this.status(); });
   }
 
@@ -55,8 +59,13 @@ export class CaptureManager {
   }
 
   async updateConfig() {
-    if (!this.backend) return;
     const desired = this.#resolvedBackend();
+    if (!this.backend) {
+      const lease = [...this.leases.values()].sort((a, b) => b.expiresAt - a.expiresAt)[0];
+      if (lease) return this.#enqueue(() => this.#activate(this.#resolvedBackend(lease.backend), lease.targetId, true));
+      this.#setStatus({ backend: desired, state: "idle", targetId: null, code: null, message: "config-updated" });
+      return;
+    }
     return this.#enqueue(() => this.#activate(desired, this.targetId, true));
   }
 
@@ -85,7 +94,7 @@ export class CaptureManager {
       this.targetId = targetId;
       this.generation += 1;
       const generation = this.generation;
-      this.#setStatus({ backend: backendName, state: "starting", targetId, generation });
+      this.#setStatus({ backend: backendName, state: "starting", targetId, generation, code: null, message: null });
       let candidate;
       candidate = factory({ generation, onStatus: (status) => {
         if (this.backend !== candidate || this.generation !== generation) return;
@@ -100,7 +109,7 @@ export class CaptureManager {
         await failed.stop?.("start-failed").catch(() => {});
         await failed.dispose?.().catch(() => {});
       }
-      this.#setStatus({ backend: backendName, state: "failed", targetId, generation: this.generation, message: error.message });
+      this.#setStatus({ backend: backendName, state: "failed", targetId, generation: this.generation, code: error.code, message: error.message });
     }
   }
 

@@ -56,6 +56,25 @@ export class TargetSessions {
       await this.call(targetId, "Input.dispatchMouseEvent", { type, x, y, button, buttons, clickCount, modifiers });
     } else if (type === "mouseWheel") {
       await this.call(targetId, "Input.dispatchMouseEvent", { type, x, y, deltaX, deltaY });
+    } else if (type === "insertText") {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      if (text === "" || text.length > 10000) return { ok: false, error: "text must contain 1-10000 characters" };
+      await this.call(targetId, "Input.insertText", { text });
+    } else if (type === "keyDown" || type === "keyUp") {
+      const key = typeof payload.key === "string" ? payload.key.slice(0, 64) : "";
+      const code = typeof payload.code === "string" ? payload.code.slice(0, 64) : "";
+      if (!key) return { ok: false, error: "key is required" };
+      const virtualKeyCode = Number.isInteger(payload.windowsVirtualKeyCode) ? payload.windowsVirtualKeyCode : 0;
+      await this.call(targetId, "Input.dispatchKeyEvent", {
+        type,
+        key,
+        code,
+        modifiers,
+        autoRepeat: !!payload.autoRepeat,
+        windowsVirtualKeyCode: virtualKeyCode,
+        nativeVirtualKeyCode: virtualKeyCode,
+        ...(type === "keyDown" && key === "Enter" ? { text: "\r", unmodifiedText: "\r" } : {}),
+      });
     } else {
       return { ok: false, error: `unsupported input type: ${type}` };
     }

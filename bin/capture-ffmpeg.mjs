@@ -1,10 +1,41 @@
-import { spawn as nodeSpawn, spawnSync } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { Mp4FragmentParser } from "./mp4-fragments.mjs";
 import { buildCaptureInput, buildEncoderArgs, resolveCaptureSource } from "./capture-platform.mjs";
 
-export async function resolveFfmpegPath(configuredPath = "") {
+function runProbe(path, argv, spawn, timeoutMs, captureOutput = false) {
+  return new Promise((resolve) => {
+    let child;
+    let output = "";
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok, output });
+    };
+    try {
+      child = spawn(path, argv, {
+        shell: false,
+        windowsHide: true,
+        stdio: captureOutput ? ["ignore", "pipe", "pipe"] : "ignore",
+      });
+    } catch {
+      resolve({ ok: false, output });
+      return;
+    }
+    if (captureOutput) {
+      child.stdout?.on("data", (chunk) => { output += chunk.toString(); });
+      child.stderr?.on("data", (chunk) => { output += chunk.toString(); });
+    }
+    const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {}; finish(false); }, timeoutMs);
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0));
+  });
+}
+
+export async function resolveFfmpegPath(configuredPath = "", spawn = nodeSpawn) {
   let path = configuredPath;
   if (!path) {
     try {
@@ -15,8 +46,8 @@ export async function resolveFfmpegPath(configuredPath = "") {
   for (const candidate of candidates) {
     try {
       if (candidate !== "ffmpeg") await access(candidate, process.platform === "win32" ? constants.F_OK : constants.X_OK);
-      const probe = spawnSync(candidate, ["-version"], { shell: false, windowsHide: true, stdio: "ignore", timeout: 3000 });
-      if (!probe.error && probe.status === 0) return candidate;
+      const probe = await runProbe(candidate, ["-version"], spawn, 3000);
+      if (probe.ok) return candidate;
     } catch {}
   }
   const error = new Error(configuredPath ? `FFmpeg is not executable: ${configuredPath}` : "Neither bundled FFmpeg nor a PATH ffmpeg executable is usable");
@@ -24,22 +55,30 @@ export async function resolveFfmpegPath(configuredPath = "") {
   throw error;
 }
 
-export async function selectEncoder(path, requested, spawn = nodeSpawn) {
+export async function assertCaptureSupport(path, platform = process.platform, spawn = nodeSpawn) {
+  if (platform !== "win32") return;
+  const result = await runProbe(path, ["-hide_banner", "-h", "filter=gfxcapture"], spawn, 3000, true);
+  if (!result.ok || !/Filter gfxcapture\b/.test(result.output)) {
+    const error = new Error("This FFmpeg build does not support Windows gfxcapture; configure a current FFmpeg build instead of desktop capture");
+    error.code = "ffmpeg-gfxcapture-unavailable";
+    throw error;
+  }
+}
+
+export async function selectEncoder(path, requested, spawn = nodeSpawn, capture = null, platform = process.platform) {
   if (requested === "software") return "libx264";
-  const candidates = requested !== "auto" ? [requested] : process.platform === "win32"
-    ? ["h264_nvenc", "h264_qsv", "h264_amf", "libx264"]
+  const candidates = requested !== "auto" ? [requested] : platform === "win32"
+    ? ["h264_mf", "h264_nvenc", "h264_qsv", "h264_amf", "libx264"]
     : process.platform === "darwin" ? ["h264_videotoolbox", "libx264"] : ["h264_nvenc", "h264_vaapi", "h264_qsv", "libx264"];
   for (const encoder of candidates) {
-    const ok = await new Promise((resolve) => {
-      let child;
-      try {
-        child = spawn(path, ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=size=64x64:rate=1", "-frames:v", "1", "-c:v", encoder, "-f", "null", "-"], { shell: false, windowsHide: true, stdio: "ignore" });
-      } catch { resolve(false); return; }
-      const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {}; resolve(false); }, 3000);
-      child.once("error", () => { clearTimeout(timer); resolve(false); });
-      child.once("exit", (code) => { clearTimeout(timer); resolve(code === 0); });
-    });
-    if (ok) return encoder;
+    const encoderArgs = encoder === "h264_mf"
+      ? ["-c:v", encoder, "-hw_encoding", "1", "-scenario", "display_remoting"]
+      : ["-c:v", encoder];
+    const inputArgs = platform === "win32" && capture?.source
+      ? buildCaptureInput({ source: capture.source, fps: capture.fps, maxWidth: capture.maxWidth, encoder })
+      : ["-f", "lavfi", "-i", "color=size=64x64:rate=1"];
+    const probe = await runProbe(path, ["-hide_banner", "-loglevel", "error", ...inputArgs, "-frames:v", "1", ...encoderArgs, "-f", "null", "-"], spawn, 2000);
+    if (probe.ok) return encoder;
   }
   const error = new Error(`FFmpeg encoder is unavailable: ${requested}`);
   error.code = "ffmpeg-encoder-unavailable";
@@ -53,8 +92,9 @@ export function codecFromAvcInit(buffer) {
 }
 
 export class FfmpegCaptureBackend {
-  constructor({ sessions, getConfig, generation, onStatus, onVideoInit, onVideoChunk, onVideoEnd, spawn = nodeSpawn, sourceResolver = resolveCaptureSource, pathResolver = resolveFfmpegPath }) {
+  constructor({ sessions, browserPid, getConfig, generation, onStatus, onVideoInit, onVideoChunk, onVideoEnd, spawn = nodeSpawn, sourceResolver = resolveCaptureSource, pathResolver = resolveFfmpegPath, supportProbe = assertCaptureSupport }) {
     this.sessions = sessions;
+    this.browserPid = browserPid;
     this.getConfig = getConfig;
     this.generation = generation;
     this.onStatus = onStatus;
@@ -64,6 +104,7 @@ export class FfmpegCaptureBackend {
     this.spawn = spawn;
     this.sourceResolver = sourceResolver;
     this.pathResolver = pathResolver;
+    this.supportProbe = supportProbe;
     this.child = null;
     this.stopping = null;
     this.termination = null;
@@ -81,12 +122,15 @@ export class FfmpegCaptureBackend {
     this.onStatus({ backend: "ffmpeg", state: "starting", targetId, message: "Resolving FFmpeg binary" });
     const [path, source] = await Promise.all([
       this.pathResolver(config.ffmpegPath),
-      this.sourceResolver({ sessions: this.sessions, targetId }),
+      this.sourceResolver({ sessions: this.sessions, targetId, browserPid: this.browserPid }),
     ]);
+    await this.supportProbe(path);
     this.onStatus({ backend: "ffmpeg", state: "starting", targetId, message: "Probing H.264 encoder" });
-    const encoder = await selectEncoder(path, config.ffmpegEncoder, this.spawn);
+    const encoder = await selectEncoder(path, config.ffmpegEncoder, this.spawn, {
+      source, fps: config.ffmpegFps, maxWidth: config.ffmpegMaxWidth,
+    });
     this.onStatus({ backend: "ffmpeg", state: "starting", targetId, message: `Starting capture with ${encoder}` });
-    const argv = ["-hide_banner", "-loglevel", "warning", ...buildCaptureInput({ source, fps: config.ffmpegFps }), ...buildEncoderArgs({ encoder, fps: config.ffmpegFps, maxWidth: config.ffmpegMaxWidth, source })];
+    const argv = ["-hide_banner", "-loglevel", "warning", ...buildCaptureInput({ source, fps: config.ffmpegFps, maxWidth: config.ffmpegMaxWidth, encoder }), ...buildEncoderArgs({ encoder, fps: config.ffmpegFps, maxWidth: config.ffmpegMaxWidth, bitrateKbps: config.ffmpegBitrateKbps, source })];
     const child = this.spawn(path, argv, { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     this.child = child;
     let initialized = false;
@@ -96,7 +140,7 @@ export class FfmpegCaptureBackend {
         initialized = true;
         const mime = `video/mp4; codecs="${codecFromAvcInit(buffer)}"`;
         this.onVideoInit({ targetId, mime, width: source.contentWidthCss, height: source.contentHeightCss, generation: this.generation, buffer });
-        this.onStatus({ backend: "ffmpeg", state: "streaming", targetId, encoder, mime });
+        this.onStatus({ backend: "ffmpeg", state: "streaming", targetId, encoder, mime, code: null, message: null });
       },
       onFragment: (buffer) => {
         if (this.child === child) this.onVideoChunk({ generation: this.generation, buffer });
