@@ -16,4 +16,10 @@ describe("watch panel input and capture status", () => {
     assert.doesNotMatch(source, /status\.backend \|\| 'cdp'/);
     assert.doesNotMatch(source, /targetValid[^\n]+streamState !== 'streaming'/);
   });
+
+  it("keeps the FFmpeg option disabled until installation is ready", () => {
+    assert.match(source, /disabled: !ffmpegStatus\.canSelectFfmpeg/);
+    assert.match(source, /ffmpeg-install/);
+    assert.match(source, /githubMirror/);
+  });
 });

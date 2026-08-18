@@ -103,6 +103,7 @@ export interface Config {
     ffmpegBitrateKbps?: number;
     ffmpegEncoder?: "auto" | "software" | "h264_mf" | "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_videotoolbox" | "h264_vaapi";
     ffmpegPath?: string;
+    githubMirror?: string;
     /**
      * Cap on live-frame fan-out (frames/sec) from the cast worker to the
      * watch panel. 0 = uncapped (full browser repaint cadence). >0 = at

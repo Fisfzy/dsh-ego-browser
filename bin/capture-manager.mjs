@@ -13,7 +13,8 @@ export class CaptureManager {
     this.backendName = null;
     this.targetId = null;
     this.generation = 0;
-    this.statusValue = { backend: this.#resolvedBackend(), state: "idle", targetId: null, generation: 0 };
+    const fallbackReason = this.getConfig().ffmpegFallbackReason;
+    this.statusValue = { backend: this.#resolvedBackend(), state: "idle", targetId: null, generation: 0, ...(fallbackReason ? { code: "ffmpeg-fallback-cdp", message: fallbackReason } : {}) };
     this.transition = Promise.resolve();
     this.stopTimer = null;
     this.sweepTimer = this.setTimer(() => this.#sweep(), Math.min(5000, leaseTtlMs));
@@ -63,7 +64,8 @@ export class CaptureManager {
     if (!this.backend) {
       const lease = [...this.leases.values()].sort((a, b) => b.expiresAt - a.expiresAt)[0];
       if (lease) return this.#enqueue(() => this.#activate(this.#resolvedBackend(lease.backend), lease.targetId, true));
-      this.#setStatus({ backend: desired, state: "idle", targetId: null, code: null, message: "config-updated" });
+      const fallbackReason = this.getConfig().ffmpegFallbackReason;
+      this.#setStatus({ backend: desired, state: "idle", targetId: null, code: fallbackReason ? "ffmpeg-fallback-cdp" : null, message: fallbackReason || "config-updated" });
       return;
     }
     return this.#enqueue(() => this.#activate(desired, this.targetId, true));
@@ -86,7 +88,12 @@ export class CaptureManager {
     await this.#stopBackend("backend-change");
     const factory = this.backendFactories[backendName];
     if (!factory) {
-      this.#setStatus({ backend: backendName, state: "failed", targetId, code: "capture-backend-unavailable", message: `${backendName} backend is unavailable` });
+      const message = `${backendName} backend is unavailable`;
+      this.#setStatus({ backend: backendName, state: "failed", targetId, code: "capture-backend-unavailable", message });
+      if (backendName === "ffmpeg" && this.backendFactories.cdp) {
+        await this.#activate("cdp", targetId, true);
+        if (this.backend && this.backendName === "cdp") this.#setStatus({ backend: "cdp", code: "ffmpeg-fallback-cdp", message: `FFmpeg unavailable; using CDP: ${message}` });
+      }
       return;
     }
     try {
@@ -94,7 +101,8 @@ export class CaptureManager {
       this.targetId = targetId;
       this.generation += 1;
       const generation = this.generation;
-      this.#setStatus({ backend: backendName, state: "starting", targetId, generation, code: null, message: null });
+      const fallbackReason = backendName === "cdp" ? this.getConfig().ffmpegFallbackReason : null;
+      this.#setStatus({ backend: backendName, state: "starting", targetId, generation, code: fallbackReason ? "ffmpeg-fallback-cdp" : null, message: fallbackReason || null });
       let candidate;
       candidate = factory({ generation, onStatus: (status) => {
         if (this.backend !== candidate || this.generation !== generation) return;
@@ -110,6 +118,10 @@ export class CaptureManager {
         await failed.dispose?.().catch(() => {});
       }
       this.#setStatus({ backend: backendName, state: "failed", targetId, generation: this.generation, code: error.code, message: error.message });
+      if (backendName === "ffmpeg" && this.backendFactories.cdp) {
+        await this.#activate("cdp", targetId, true);
+        if (this.backend && this.backendName === "cdp") this.#setStatus({ backend: "cdp", code: "ffmpeg-fallback-cdp", message: `FFmpeg unavailable; using CDP: ${error.message}` });
+      }
     }
   }
 

@@ -17,9 +17,9 @@ const STATE_DIR = process.env.EGO_LINUX_STATE_DIR || join(STATE_HOME, "ego-lite-
 const BROWSER_STATE_FILE = join(STATE_DIR, "browser.json");
 const CAST_STATE_FILE = join(STATE_DIR, "ego-cast.json");
 const DEFAULT_CONFIG = {
-  captureBackend: "auto", streamProfile: "balanced",
+  captureBackend: "auto", streamProfile: "balanced", ffmpegFallbackReason: "",
   cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 960, cdpBackstopIntervalMs: 3000,
-  ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "",
+  ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", ffmpegResolvedPath: "",
 };
 let castConfig = { ...DEFAULT_CONFIG };
 try { castConfig = { ...castConfig, ...JSON.parse(process.argv[2] || "{}") }; } catch {}
@@ -44,11 +44,13 @@ function normalizeConfig(input) {
   const enumValue = (key, values) => { if (values.includes(input[key])) next[key] = input[key]; };
   const numberValue = (key, min, max) => { if (Number.isFinite(input[key]) && input[key] >= min && input[key] <= max) next[key] = input[key]; };
   enumValue("captureBackend", ["auto", "cdp", "ffmpeg"]);
+  if (typeof input.ffmpegFallbackReason === "string") next.ffmpegFallbackReason = input.ffmpegFallbackReason;
   enumValue("streamProfile", ["low", "balanced", "high"]);
   enumValue("ffmpegEncoder", ["auto", "software", "h264_mf", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox", "h264_vaapi"]);
   numberValue("cdpFps", 5, 30); numberValue("cdpQuality", 1, 100); numberValue("cdpMaxWidth", 320, 1920); numberValue("cdpBackstopIntervalMs", 1000, 10000);
   numberValue("ffmpegFps", 5, 30); numberValue("ffmpegMaxWidth", 320, 1920); numberValue("ffmpegBitrateKbps", 500, 20000);
   if (typeof input.ffmpegPath === "string") next.ffmpegPath = input.ffmpegPath;
+  if (typeof input.ffmpegResolvedPath === "string") next.ffmpegResolvedPath = input.ffmpegResolvedPath;
   return next;
 }
 castConfig = normalizeConfig(castConfig);

@@ -36,13 +36,7 @@ function runProbe(path, argv, spawn, timeoutMs, captureOutput = false) {
 }
 
 export async function resolveFfmpegPath(configuredPath = "", spawn = nodeSpawn) {
-  let path = configuredPath;
-  if (!path) {
-    try {
-      path = (await import("ffmpeg-static")).default;
-    } catch {}
-  }
-  const candidates = configuredPath ? [path] : [path, "ffmpeg"].filter(Boolean);
+  const candidates = configuredPath ? [configuredPath] : ["ffmpeg"];
   for (const candidate of candidates) {
     try {
       if (candidate !== "ffmpeg") await access(candidate, process.platform === "win32" ? constants.F_OK : constants.X_OK);
@@ -50,7 +44,7 @@ export async function resolveFfmpegPath(configuredPath = "", spawn = nodeSpawn) 
       if (probe.ok) return candidate;
     } catch {}
   }
-  const error = new Error(configuredPath ? `FFmpeg is not executable: ${configuredPath}` : "Neither bundled FFmpeg nor a PATH ffmpeg executable is usable");
+  const error = new Error(configuredPath ? `FFmpeg is not executable: ${configuredPath}` : "No usable FFmpeg executable was resolved");
   error.code = configuredPath ? "ffmpeg-not-executable" : "ffmpeg-not-installed";
   throw error;
 }
@@ -121,7 +115,7 @@ export class FfmpegCaptureBackend {
     const config = this.getConfig();
     this.onStatus({ backend: "ffmpeg", state: "starting", targetId, message: "Resolving FFmpeg binary" });
     const [path, source] = await Promise.all([
-      this.pathResolver(config.ffmpegPath),
+      this.pathResolver(config.ffmpegResolvedPath || config.ffmpegPath),
       this.sourceResolver({ sessions: this.sessions, targetId, browserPid: this.browserPid }),
     ]);
     await this.supportProbe(path);

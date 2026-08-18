@@ -26,13 +26,12 @@
     }
   },
   "scripts": {
-    "build": "node --check lib/index.js && node --check lib/client.js && node --check lib/config.js && node --check lib/settings.js && node --check lib/gateway.js && node --check lib/cast-server.js && node --check bin/ego-cast-worker.mjs && node --check bin/cdp-client.mjs && node --check bin/capture-cdp.mjs && node --check bin/capture-manager.mjs && node --check bin/capture-ffmpeg.mjs && node --check bin/capture-platform.mjs && node --check bin/mp4-fragments.mjs && echo build-ok",
+    "build": "node --check lib/index.js && node --check lib/client.js && node --check lib/config.js && node --check lib/settings.js && node --check lib/gateway.js && node --check lib/cast-server.js && node --check lib/ffmpeg-manifest.js && node --check lib/ffmpeg-installation.js && node --check bin/ego-cast-worker.mjs && node --check bin/cdp-client.mjs && node --check bin/capture-cdp.mjs && node --check bin/capture-manager.mjs && node --check bin/capture-ffmpeg.mjs && node --check bin/ffmpeg-probe.mjs && node --check bin/capture-platform.mjs && node --check bin/mp4-fragments.mjs && echo build-ok",
     "typecheck": "node --check lib/index.js && echo typecheck-ok",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "link:../dsh/vendor/schemastery",
-    "ffmpeg-static": "5.2.0"
+    "@deepseek-ai/schemastery": "link:../dsh/vendor/schemastery"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.0-rc.7",

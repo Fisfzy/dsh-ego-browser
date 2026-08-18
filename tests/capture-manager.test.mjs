@@ -26,11 +26,22 @@ describe("CaptureManager", () => {
     await manager.dispose();
   });
 
-  it("does not silently replace an explicit unavailable backend", async () => {
+  it("falls back to CDP with a visible reason when FFmpeg is unavailable", async () => {
     const manager = new CaptureManager({ backendFactories: { cdp: () => ({ start: async () => {}, stop: async () => {}, updateConfig: async () => {} }) }, getConfig: () => ({ captureBackend: "ffmpeg" }), onStatus: () => {}, leaseTtlMs: 60000 });
     await manager.startWatch({ clientId: "one", backend: "ffmpeg", targetId: "a" });
-    assert.equal(manager.status().backend, "ffmpeg");
+    assert.equal(manager.status().backend, "cdp");
+    assert.equal(manager.status().code, "ffmpeg-fallback-cdp");
+    assert.match(manager.status().message, /FFmpeg unavailable/);
+    await manager.dispose();
+  });
+
+  it("does not claim a successful fallback when CDP also fails", async () => {
+    const failing = (message) => () => ({ start: async () => { throw new Error(message); }, stop: async () => {}, dispose: async () => {} });
+    const manager = new CaptureManager({ backendFactories: { ffmpeg: failing("ffmpeg failed"), cdp: failing("cdp failed") }, getConfig: () => ({ captureBackend: "ffmpeg" }), onStatus: () => {}, leaseTtlMs: 60000 });
+    await manager.startWatch({ clientId: "one", backend: "ffmpeg", targetId: "a" });
     assert.equal(manager.status().state, "failed");
+    assert.equal(manager.status().message, "cdp failed");
+    assert.notEqual(manager.status().code, "ffmpeg-fallback-cdp");
     await manager.dispose();
   });
 
