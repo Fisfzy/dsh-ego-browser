@@ -18,7 +18,6 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-web-react",
         "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings-plugins"
@@ -39,7 +38,6 @@
     "@deepseek-ai/dsh-client-runtime": "^0.0.1",
     "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.0.1",
     "@deepseek-ai/dsh-client-ui-slots": "^0.0.1",
-    "@deepseek-ai/dsh-client-web-react": "^0.0.1",
     "@deepseek-ai/dsh-settings": "^0.0.1",
     "@deepseek-ai/dsh-tools": "^0.0.1",
     "react": "^18.2.0",
