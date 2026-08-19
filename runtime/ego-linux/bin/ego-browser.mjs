@@ -341,13 +341,16 @@ async function main() {
   }
 
   // EGO_LINUX_HEADLESS is for a machine whose owner does not want the agent
-  // window in front of their work. The harness needs a page target to attach to,
-  // so a visible browser always shows a window — headless is the only way to be
-  // driven without one. --headless still works per run, and --open still trades
-  // a headless browser for a visible one on demand.
-  const envHeadless = !["", "0", "false", "no"].includes(
-    (process.env.EGO_LINUX_HEADLESS ?? "").toLowerCase(),
-  );
+  // window in front of their work (or a box with no display at all). When a
+  // usable X display is present (e.g. an Xvfb), run headed so the compositor
+  // produces full-rate screencast frames for the watch panel — headless would
+  // fall back to swiftshader (~1 fps). --headless still forces headless per run.
+  const hasDisplay = (process.env.DISPLAY || "").trim() !== "";
+  const envHeadless = hasDisplay
+    ? false
+    : !["", "0", "false", "no"].includes(
+        (process.env.EGO_LINUX_HEADLESS ?? "").toLowerCase(),
+      );
   const headless = argv.includes("--headless") || envHeadless;
   const rest = argv.filter((arg) => arg !== "--headless");
 
