@@ -10,6 +10,27 @@ including the Linux port work in [PR #234](https://github.com/citrolabs/ego-lite
 | `runtime/ego-browser/dist/out/index.js` | shared ego-browser harness build (`package/ego-browser`) | MIT |
 | `runtime/ego-linux/*` | Linux CDP host (`package/ego-linux`, PR #234) + local proxy patch | MIT |
 | `runtime/skills/ego-browser/*` | agent skill package (`skills/ego-browser`) | MIT |
+| BtbN FFmpeg builds (optional download) | https://github.com/BtbN/FFmpeg-Builds | GPL-3.0-or-later for the selected GPL build |
+| `ffmpeg-static` macOS release assets (optional download) | https://github.com/eugeneware/ffmpeg-static | GPL-3.0-or-later; upstream binaries originate from Evermeet/OSXExperts |
+| FFmpeg | https://ffmpeg.org/ | GPL-3.0-or-later for the selected builds |
+
+## FFmpeg distribution notice
+
+The CDP backend does not require FFmpeg. The optional FFmpeg backend first checks
+the user path and system PATH, then offers an explicit managed download into the
+user cache. No FFmpeg executable is included in this repository or npm package.
+Users and distributors must comply with the license attached to the selected
+build, preserve notices, and provide corresponding source as required. Sources:
+
+- BtbN builds: https://github.com/BtbN/FFmpeg-Builds
+- macOS release assets: https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1
+- Evermeet macOS Intel builds: https://evermeet.cx/ffmpeg/
+- OSXExperts Apple Silicon builds: https://www.osxexperts.net/
+- FFmpeg: https://git.ffmpeg.org/ffmpeg.git
+- GPL v3 text: https://www.gnu.org/licenses/gpl-3.0.html
+
+Using a user-supplied FFmpeg binary may carry different licensing obligations;
+the user/distributor is responsible for the selected build.
 
 Additional local modifications on top of upstream (see `runtime/ego-linux/src/chrome.mjs`):
 - `EGO_LINUX_PROXY` support: injects `--proxy-server` / `--proxy-bypass-list` into the

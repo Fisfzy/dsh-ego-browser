@@ -6,7 +6,7 @@
 ## 0. 一句话
 
 这是一个 DSH 插件：**自带 ego-lite 运行时**，把浏览器自动化能力封装成 `ego_*` 结构化工具，
-并提供**右下角实时观察窗 + 人机验证提醒 + 下载捕获**。三个运行时文件是唯一需要维护的核心。
+并提供**双后端实时观察窗 + 人机验证提醒 + 下载捕获**。
 
 ---
 
@@ -17,8 +17,17 @@ ego-browser/
   package.json          # 版本号、build=语法校验、exports
   lib/index.js          # [后端] 插件入口 + 30+ ego_* 工具注册（权威）
   lib/cast-server.js    # [后端] host 路由：把前端 /api/ego/* 转发到观察窗 worker
+  lib/ffmpeg-installation.js # [后端] FFmpeg 检测、下载、校验与托管缓存
+  lib/ffmpeg-manifest.js # 固定平台资源、版本、SHA-256 与 GitHub 镜像改写
   lib/client.js         # [前端] 右下角观察窗（通过 DSH 注入加载，单文件）
   bin/ego-cast-worker.mjs  # [后端] 观察窗 worker：attach 浏览器、SSE 实时画面、humanCheck
+  bin/cdp-client.mjs       # CDP 请求/错误/事件封装
+  bin/capture-manager.mjs  # watcher lease、单后端状态机、generation
+  bin/capture-cdp.mjs      # control session + 单 target JPEG capture
+  bin/capture-ffmpeg.mjs   # FFmpeg 进程与 fMP4 发布
+  bin/ffmpeg-probe.mjs     # 可执行性、平台输入与 H.264 编码器探测
+  bin/capture-platform.mjs # 平台来源/crop/argv
+  bin/mp4-fragments.mjs    # 有界 ISO BMFF box parser
   runtime/              # vendored ego-lite 运行时（只读参照，本地改动见 runtime/PATCHES.md）
   docs/ARCH.md          # 本文件
 ```
@@ -62,20 +71,28 @@ ego-browser/
 内部按 section 组织：CSS → icons → apply() → 各交互/渲染函数。
 
 维护时要同步注意：
-- 数据源：轮询 `/api/ego/spaces` + SSE `/api/ego/stream`（实时帧）
+- 数据源：`/api/ego/stream` 提供元数据、CDP JPEG 与 capture status；`/api/ego/video` 提供 FFmpeg 二进制 fMP4
+- 生命周期：浮窗/side Tab 通过 `/api/ego/watch/*` 获取租约；组件逻辑隐藏或 dispose 时释放，`document.hidden` 不释放，以避免后台切换重建 WGC/FFmpeg
+- renderer：CDP 用 `<img>` + rAF 最新帧；FFmpeg 用 generation-aware `MediaSource` + `<video>`
 - 坐标交互：`makeDraggable`（球/窗口各自拖动）、`browserXY`（坐标逆映射）
+- 键盘交互：画面点击聚焦透明 textarea；beforeinput/composition 发送 `Input.insertText`，控制键/快捷键发送 keyDown/keyUp。禁止 document 全局键盘监听
 - 状态：`pageMeta`（vw/vh）、`frameCache`、`lastList`
+- FFmpeg 设置：`/ego/api/ffmpeg-*` 读取宿主安装状态；未通过检测时 `<option value="ffmpeg">` 必须禁用，不能只依赖后端启动失败兜底
 - 提醒条：`maybeShowLoginGuide` / `maybeShowCaptchaGuide`（读 `space.humanCheck`）
 
 ---
 
 ## 4. bin/ego-cast-worker.mjs — 观察窗 worker
 
-独立 Node 进程，attach 到 agent 浏览器，负责：
-- CDP 连接 / 重连（`runConnectLoop`）
-- screencast 池 + SSE 实时帧（`createCastPool` / `sseBroadcast`）
-- 每页 viewport（`updateViewport`）与 humanCheck 探针（`probeHuman`，节流 5s）
-- 输入回传（`/api/input` → `Input.dispatchMouseEvent`）
+独立 Node 进程，attach 到 agent 浏览器。控制面由 `TargetSessions` 持有，捕获停止时输入、viewport 与 humanCheck 不依赖 screencast session。`CaptureManager` 维护 lease、backend、target 与 generation；CDP/FFmpeg 后端只负责画面生产。JPEG 留在 SSE，fMP4 走独立二进制响应并处理背压。
+
+watch lease TTL 为 120 秒，抵抗浏览器后台定时器节流。host 对 start/switch 使用 30 秒 POST 超时并透传 worker 状态；其他控制请求保持短超时。FFmpeg 能力探针不得使用 `spawnSync`，否则会阻塞 health 并触发 sibling worker 误替换。
+
+CDP 帧必须使用 `params.sessionId` 作为 `Page.screencastFrameAck` 参数，同时使用事件外层 session 作为命令路由 session。不要再次把二者合并。
+
+Windows FFmpeg 后端必须走 `Browser.getWindowForTarget` + Win32 顶层窗口枚举匹配 HWND，再使用 `gfxcapture`。禁止恢复 `gdigrab desktop` fallback：它会在 Chrome 被遮挡时串流用户前台应用。`h264_mf` 的能力探针必须使用真实 D3D11 窗口输入，不能用 `lavfi` 软件帧代替。
+
+FFmpeg 二进制不属于 worker 生命周期。宿主 `FfmpegInstallationManager` 按自定义路径、PATH、托管缓存的顺序检测，并把最终 `ffmpegResolvedPath` 作为运行态配置传给 worker。托管下载必须固定 manifest 和 SHA-256，临时目录完成校验/解压/探测后才能原子发布；CDP 路径不得触发下载。
 
 **改动需重启 worker**（DSH 的 cast-server 检测到 worker 死后会重启，或手动重启）。
 worker 与 lib/index.js 的探针逻辑（humanCheck）是两份相似实现——改动一处要同步另一处，
