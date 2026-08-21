@@ -11,6 +11,9 @@
 - **非自动、避免无限嵌套**：默认仍是截图实时视图，仅显式点击才切 iframe；切换后可 “↩ 返回截图”。目标页被 `X-Frame-Options` / `CSP frame-ancestors` 拒绝时回退截图并提示。
 - iframe 页面同样支持 **Ctrl+滚轮缩放 / 双击回 100%**（容器 transform 缩放）。
 
+### 修复
+- **iframe 视图 Ctrl+滚轮不再缩放整个 DSH 页面**：原实现挂在 React 合成的 `onWheel`（passive 监听器）上，`preventDefault()` 对被动监听无效，Ctrl+wheel 会冒泡触发浏览器整页缩放。改为 `useEffect` + 原生 `addEventListener("wheel", { passive:false, capture:true })`，`preventDefault` 真正生效，Ctrl+滚轮只缩放 iframe 容器。
+
 ### 新增 / 优化
 - **用户自定义启动参数**：设置卡新增 `ego-browser CLI 附加参数` 与 `Chrome 启动附加参数` 两个字段。前者追加到 `ego-browser nodejs` argv，下一次 `ego_*` 工具调用即生效；后者经 `EGO_LINUX_EXTRA_ARGS` 桥接到 vendored runtime 的 `launch()`，仅浏览器下次冷启动生效（浏览器是单例常驻——需 `ego-browser --stop` 或重启 DSH 才会重新启动）。两边都拉黑会破坏插件自管控制面的标志（`--status`/`--stop`/`--help`/`--user-data-dir`/`--remote-debugging-port`/`--headless`/`--proxy-server` 等）；`--proxy-server` 请走 `EGO_LINUX_PROXY`。`ego_doctor` 报告当前生效参数。
 - FFmpeg 改为显式按需安装：CDP 不再依赖或安装 `ffmpeg-static`。设置页优先检测自定义路径、系统 PATH 和托管缓存，兼容性检查完成前禁用 FFmpeg 选项，并提供固定版本、SHA-256 校验的一键下载。
