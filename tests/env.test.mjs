@@ -262,6 +262,84 @@ describe("resolveEgoEnv (headless detection)", () => {
   });
 });
 
+// ─── resolveEgoEnv: chromeArgs → EGO_LINUX_EXTRA_ARGS bridge ────────────────
+
+describe("resolveEgoEnv (chromeArgs bridge)", () => {
+  it("bridges cfg.chromeArgs to EGO_LINUX_EXTRA_ARGS (raw string)", () => {
+    const env = resolveEgoEnv(
+      { chromeArgs: "--disable-features=Translate --window-size=800,600" },
+      {
+        platform: "linux",
+        baseEnv: { HOME: "/root" },
+      },
+    );
+    assert.equal(env.EGO_LINUX_EXTRA_ARGS, "--disable-features=Translate --window-size=800,600");
+  });
+
+  it("does not set EGO_LINUX_EXTRA_ARGS when chromeArgs is empty", () => {
+    const env = resolveEgoEnv(
+      { chromeArgs: "" },
+      { platform: "linux", baseEnv: { HOME: "/root" } },
+    );
+    assert.equal(env.EGO_LINUX_EXTRA_ARGS, undefined);
+  });
+
+  it("does not set EGO_LINUX_EXTRA_ARGS when chromeArgs is whitespace-only", () => {
+    const env = resolveEgoEnv(
+      { chromeArgs: "   " },
+      { platform: "linux", baseEnv: { HOME: "/root" } },
+    );
+    assert.equal(env.EGO_LINUX_EXTRA_ARGS, undefined);
+  });
+
+  it("never overrides a user-set EGO_LINUX_EXTRA_ARGS (escape hatch)", () => {
+    const userSet = "--user-set-flag";
+    const env = resolveEgoEnv(
+      { chromeArgs: "--from-settings" },
+      {
+        platform: "linux",
+        baseEnv: { EGO_LINUX_EXTRA_ARGS: userSet, HOME: "/root" },
+      },
+    );
+    assert.equal(env.EGO_LINUX_EXTRA_ARGS, userSet);
+  });
+});
+
+// ─── runtime/ego-linux/src/chrome.mjs (EGO_LINUX_EXTRA_ARGS spread) ─────────
+// The runtime mirrors tokenizeArgs + CHROME_BLOCKED (it must not import from
+// lib/). Verify the launch() args array spreads EGO_LINUX_EXTRA_ARGS and that
+// blocked flags are stripped before reaching the Chrome process.
+
+describe("runtime chrome.mjs (EGO_LINUX_EXTRA_ARGS spread)", () => {
+  const readSrc = () =>
+    import("node:fs/promises").then((fs) =>
+      fs.readFile(
+        new URL("../runtime/ego-linux/src/chrome.mjs", import.meta.url),
+        "utf8",
+      ),
+    );
+
+  it("launch() spreads filterChromeArgs(process.env.EGO_LINUX_EXTRA_ARGS) into args", async () => {
+    const src = await readSrc();
+    assert.ok(
+      src.includes("...filterChromeArgs(process.env.EGO_LINUX_EXTRA_ARGS ?? \"\")"),
+      "chrome.mjs launch() should spread filterChromeArgs(EGO_LINUX_EXTRA_ARGS) into the args array",
+    );
+  });
+
+  it("defines a CHROME_BLOCKED set mirroring lib/config.js", async () => {
+    const src = await readSrc();
+    // Spot-check the critical control-plane flags are blocklisted in the
+    // runtime copy too (not just in lib/config.js).
+    for (const flag of ["--user-data-dir", "--remote-debugging-port", "--headless", "--proxy-server"]) {
+      assert.ok(
+        src.includes(`"${flag}"`),
+        `chrome.mjs CHROME_BLOCKED should include ${flag}`,
+      );
+    }
+  });
+});
+
 // ─── findChromeBinary ──────────────────────────────────────────────────────
 
 describe("findChromeBinary", () => {
