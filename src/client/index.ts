@@ -987,6 +987,15 @@ declare function require(id: string): any
 		// a hard (required) dependency for this plugin — expected, since the
 		// side bar is the intended home of the ego-browser watch tab.
 		if (ctx.betterSidebar) {
+			// Port of pull13's teardownFloating: if a floating FAB/panel was ever
+			// mounted (e.g. leftover from a hot-reload or an earlier no-sidebar
+			// phase), drop it so it never lingers once the sidebar tab is up.
+			try {
+				var staleFab = document.getElementById('dsh-ego-fab')
+				if (staleFab) staleFab.remove()
+				var stalePanel = document.getElementById('dsh-ego-panel')
+				if (stalePanel) stalePanel.remove()
+			} catch (e) { /* ignore */ }
 			ctx.effect(() => mountSidebarTab(ctx), 'ego-browser sidebar tab')
 		} else {
 			ctx.effect(() => mountFloatingWatch(ctx), 'ego-browser watch panel')
