@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 export function runFfmpegProbe(path, argv, { spawn = nodeSpawn, timeoutMs = 3000 } = {}) {
   return new Promise((resolve) => {
@@ -26,6 +27,11 @@ export async function probeFfmpeg(path, { platform = process.platform, env = pro
     if (!devices.ok || !/avfoundation/i.test(devices.output)) throw codedError("ffmpeg-capture-input-unavailable", "FFmpeg does not support avfoundation capture");
   } else if (platform === "linux") {
     if (env.XDG_SESSION_TYPE === "wayland" || env.WAYLAND_DISPLAY) throw codedError("ffmpeg-platform-unsupported", "Wayland capture is not supported");
+    // WSLg (Windows Subsystem for Linux GUI) exposes an Xwayland display that
+    // x11grab cannot read (XGetImage returns black). /mnt/wslg is the reliable
+    // marker for a WSLg session — without this, `auto` would pick ffmpeg and
+    // the watch panel would show a black screen.
+    if (existsSync("/mnt/wslg")) throw codedError("ffmpeg-platform-unsupported", "WSLg (Xwayland) capture is not supported");
     const devices = await runFfmpegProbe(path, ["-hide_banner", "-devices"], { spawn });
     if (!devices.ok || !/x11grab/i.test(devices.output)) throw codedError("ffmpeg-capture-input-unavailable", "FFmpeg does not support x11grab capture");
   }

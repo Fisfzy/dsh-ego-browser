@@ -296,6 +296,46 @@ async function main() {
         }
       }
       if (req.method === "POST" && url.pathname === "/api/close") { const { targetId } = await readJson(req); if (!active || !targetId) return sendJson(res, 400, { ok: false, error: "targetId required" }); await active.cdp.call("Target.closeTarget", { targetId }); return sendJson(res, 200, { ok: true }); }
+      if (req.method === "POST" && url.pathname === "/api/nav") {
+        // Forward a navigation/intent command to the real agent page. Body:
+        //   { targetId, action, url? }
+        // action: reload | goBack | goForward | stop | navigate | newTab
+        const body = await readJson(req);
+        if (!active) return sendJson(res, 400, { ok: false, error: "no live browser" });
+        const { targetId, action, url: navUrl } = body;
+        if (!action || typeof action !== "string") return sendJson(res, 400, { ok: false, error: "action required" });
+        try {
+          if (action === "newTab") {
+            const tt = await active.cdp.call("Target.getTargets");
+            const infos = (tt?.result?.targetInfos || []).filter((t) => t.type === "page");
+            if (!navUrl) {
+              const blank = infos.find((t) => t.url === "about:blank");
+              if (blank) return sendJson(res, 200, { ok: true, targetId: blank.targetId, created: false });
+            }
+            const nt = await active.cdp.call("Target.createTarget", { url: navUrl || "about:blank" });
+            return sendJson(res, 200, { ok: true, targetId: nt?.result?.targetId, created: !!nt?.result?.targetId });
+          }
+          if (!targetId) return sendJson(res, 400, { ok: false, error: "targetId required" });
+          let result;
+          if (action === "reload") result = await active.sessions.call(targetId, "Page.reload", { ignoreCache: false });
+          else if (action === "goBack") {
+            // Some Chrome builds no longer expose Page.goBack; fall back to the
+            // page's own history API.
+            try { result = await active.sessions.call(targetId, "Page.goBack", {}); }
+            catch (e) { result = await active.sessions.call(targetId, "Runtime.evaluate", { expression: "history.back()" }); }
+          }
+          else if (action === "goForward") {
+            try { result = await active.sessions.call(targetId, "Page.goForward", {}); }
+            catch (e) { result = await active.sessions.call(targetId, "Runtime.evaluate", { expression: "history.forward()" }); }
+          }
+          else if (action === "stop") result = await active.sessions.call(targetId, "Page.stopLoading", {});
+          else if (action === "navigate") result = await active.sessions.call(targetId, "Page.navigate", { url: navUrl });
+          else return sendJson(res, 400, { ok: false, error: `unknown action: ${action}` });
+          return sendJson(res, 200, { ok: true, result });
+        } catch (error) {
+          return sendJson(res, 500, { ok: false, error: String(error?.message || error) });
+        }
+      }
       if (req.method === "POST" && url.pathname === "/api/flush") { if (!active) return sendJson(res, 409, { ok: false, error: "no live browser" }); await active.cdp.call("Storage.flushCookies").catch(() => {}); return sendJson(res, 200, { ok: true }); }
       if (req.method === "GET" && url.pathname === "/api/stream") {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" });
