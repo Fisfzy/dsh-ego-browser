@@ -348,6 +348,11 @@ declare function require(id: string): any
 		// without adding a new peer dep just for one glyph).
 		var CHEVRON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'
 
+		// Blue pointer-cursor glyph shown over the live screenshot at the user's
+		// mouse position (the hotspot) so the watch panel replaces the default
+		// system cursor with a blue arrow. Pointer shape = classic arrow.
+		var HOTSPOT_CURSOR_SVG = '<svg width="18" height="22" viewBox="0 0 24 24" fill="#0a84ff" stroke="#ffffff" stroke-width="1.1"><path d="M4 1.2l15.5 7.4-5.9 1.6-3.1 6z"/></svg>'
+
 		// Field helper — mirrors the interpreters' Field component: label +
 		// input + hint, with an optional `narrow` + unit suffix for numeric
 		// fields that don't need to span the full width.
@@ -2215,7 +2220,7 @@ clearTimeout((panel as any)._dshHideT)
   max-height: 50vh; object-fit: contain;
   border: 1px solid rgba(128,128,128,.2); background: #000;
   user-select: none; -webkit-user-select: none; touch-action: none;
-  will-change: transform; cursor: grab;
+  will-change: transform; cursor: none;
 }
 .dsh-ego-side-embedwrap {
   width: 100%; border-radius: 9px; overflow: hidden;
@@ -2953,7 +2958,7 @@ clearTimeout((panel as any)._dshHideT)
 		LivePreviewController.prototype.handlePointerUp = function (e) {
 			if (!this._pointerState) return
 			if (this._pointerState.viewPanning) {
-				if (e.currentTarget) e.currentTarget.style.cursor = 'grab'
+				if (e.currentTarget) e.currentTarget.style.cursor = 'none'
 			}
 			if (this._pointerState.browserDrag) {
 				if (this._pointerState.lastDragPos && this._pointerState.targetId) {
@@ -3258,7 +3263,7 @@ clearTimeout((panel as any)._dshHideT)
 						),
 						showEmbedPre ? h('div', { className: 'dsh-ego-side-embednote' }, '该页面不允许被 iframe 嵌入（X-Frame-Options / CSP），已显示截图视图。') : null,
 						liveImg,
-						state.embedActive ? null : h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot' })),
+						state.embedActive ? null : h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot', dangerouslySetInnerHTML: { __html: HOTSPOT_CURSOR_SVG } })),
 						h('div', { className: 'dsh-ego-side-livetitle' }, currentSpace.title || currentSpace.url || '(新标签页)'),
 						h('div', { className: 'dsh-ego-side-liveurl' + (state.zoomHint ? ' dsh-ego-side-hint' : '') }, state.embedActive ? 'Ctrl+滚轮：本页为真实 iframe，缩放请用截图视图' : (state.zoomHint || currentSpace.url || ''))
 					)
