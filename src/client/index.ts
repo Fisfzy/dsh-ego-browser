@@ -2101,6 +2101,11 @@ clearTimeout((panel as any)._dshHideT)
 }
 .dsh-ego-hotspot-dot svg { display: block; }
 
+/* ---- dual-track iframe embed ---- */
+.dsh-ego-side-embed { width: 100%; height: 100%; min-height: 260px; border: 0; flex: 1; background: #fff; border-radius: 8px; }
+.dsh-ego-side-embedwrap { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 260px; }
+.dsh-ego-side-embeddbar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dsw-alias-label-secondary, #aab); padding: 6px 8px; background: rgba(14,110,255,.12); border-radius: 8px; }
+
 /* ---- guide strips (login / captcha) ---- */
 .dsh-ego-side-login, .dsh-ego-side-captcha {
   display: flex; align-items: center; gap: 7px; margin: 0 10px 7px; padding: 6px 9px;
@@ -2946,6 +2951,33 @@ clearTimeout((panel as any)._dshHideT)
 				if (videoRef.current && state.currentTargetId != null) controller.setLiveVideo(videoRef.current, state.currentTargetId)
 			}, [state.currentTargetId, state.backend, state.streamGeneration, state.streamState, controller])
 
+			// ── iframe embed (dual-track): probe whether the live page may be
+			// framed; if so render a REAL <iframe> (high-fps, native clicks)
+			// instead of the CDP screencast. Ported from pull13, adapted to follow
+			// state.currentSpace.url (the side panel tracks the live target).
+			var embedState = React.useState(null)          // null|'probe'|'iframe'|'agent'
+			var embedMode = embedState[0]
+			var setEmbedMode = embedState[1]
+			var liveUrlState = React.useState(null)
+			var liveUrl = liveUrlState[0]
+			var setLiveUrl = liveUrlState[1]
+			React.useEffect(function () {
+				var url = state.currentSpace && state.currentSpace.url
+				if (!url || !/^https?:\/\//i.test(url)) { setEmbedMode(null); setLiveUrl(null); return }
+				if (liveUrl === url) return
+				setLiveUrl(url)
+				setEmbedMode('probe')
+				var cx = null
+				var to = null
+				try { cx = new AbortController(); to = setTimeout(function () { if (cx) cx.abort() }, 6000) } catch (e) {}
+				try {
+					fetch('/api/ego/frameable?url=' + encodeURIComponent(url), { signal: cx ? cx.signal : undefined, cache: 'no-store' })
+						.then(function (r) { return r.json() })
+						.then(function (j) { if (to) clearTimeout(to); setEmbedMode(j && j.ok && j.frameable ? 'iframe' : 'agent') })
+						.catch(function () { if (to) clearTimeout(to); setEmbedMode('agent') })
+				} catch (e) { setEmbedMode('agent') }
+			}, [state.currentSpace, liveUrl])
+
 			// Native wheel listener (React onWheel is passive, can't preventDefault)
 			React.useEffect(function () {
 				var img = imgRef.current || videoRef.current
@@ -3120,7 +3152,17 @@ clearTimeout((panel as any)._dshHideT)
 								},
 							}, '⧉ 打开真实页')
 						),
-						liveImg,
+						embedMode === 'iframe' && liveUrl
+							? h('div', { className: 'dsh-ego-side-embedwrap', style: { position: 'relative', width: '100%' } },
+								h('div', { className: 'dsh-ego-side-embeddbar' },
+									'已嵌入真实页面 · ' + liveUrl,
+									h('button', { className: 'dsh-ego-side-back', type: 'button', onClick: function () { setEmbedMode('agent') } }, '切回截图')
+								),
+								h('iframe', { key: liveUrl, className: 'dsh-ego-side-embed', src: liveUrl, loading: 'lazy' })
+							)
+							: embedMode === 'probe'
+							? h('div', { className: 'dsh-ego-side-liveurl' }, '正在探测页面是否可嵌入…')
+							: liveImg,
 						h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot' })),
 						h('div', { className: 'dsh-ego-side-livetitle' }, currentSpace.title || currentSpace.url || '(新标签页)'),
 						h('div', { className: 'dsh-ego-side-liveurl' + (state.zoomHint ? ' dsh-ego-side-hint' : '') }, state.zoomHint || currentSpace.url || '')

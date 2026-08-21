@@ -27,6 +27,7 @@ export const EGO_CLOSE_ROUTE = '/api/ego/close'
 export const EGO_FLUSH_ROUTE = '/api/ego/flush'
 export const EGO_INPUT_ROUTE = '/api/ego/input'
 export const EGO_NAV_ROUTE = '/api/ego/nav'
+export const EGO_FRAMEABLE_ROUTE = '/api/ego/frameable'
 export const EGO_WATCH_START_ROUTE = '/api/ego/watch/start'
 export const EGO_WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
 export const EGO_WATCH_STOP_ROUTE = '/api/ego/watch/stop'
@@ -578,6 +579,60 @@ export function initCastServer(
     },
   })
 
+  // GET /api/ego/frameable?url=... — decide whether a target http(s) URL may be
+  // embedded in a side-panel <iframe>. Cross-origin servers send their
+  // X-Frame-Options / CSP (frame-ancestors) headers to ANY requester, so a
+  // server-side HEAD/GET is enough to enforce the same gate a browser's iframe
+  // embed would. Used by EgoBrowserTab to prefer a REAL embedded render over
+  // the CDP screencast view when the site allows it. (Ported from pull13.)
+  const disposeFrameable = server.register({
+    kind: 'exact',
+    path: EGO_FRAMEABLE_ROUTE,
+    handler: async (reqRaw: unknown, resRaw: unknown) => {
+      const req = reqRaw as IncomingMessage
+      const res = resRaw as ServerResponse
+      const u = new URL(req.url ?? '/', 'http://127.0.0.1')
+      const target = u.searchParams.get('url')
+      if (!target || !/^(https?):\/\//i.test(target)) {
+        return sendJson(res, 400, { ok: false, frameable: false, error: 'valid url (http/https) required' })
+      }
+      const parsed = new URL(target)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return sendJson(res, 200, { ok: true, frameable: false, reason: 'unsupported-scheme' })
+      }
+      try {
+        const ctl = new AbortController()
+        const timer = setTimeout(() => ctl.abort(), 8000)
+        let res2: Response
+        try {
+          res2 = await fetch(target, { method: 'HEAD', redirect: 'follow', signal: ctl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } })
+        } catch (headErr) {
+          ctl.abort()
+          const ctl2 = new AbortController()
+          setTimeout(() => ctl2.abort(), 8000)
+          res2 = await fetch(target, { method: 'GET', redirect: 'follow', signal: ctl2.signal, headers: { Range: 'bytes=0-0', 'User-Agent': 'Mozilla/5.0' } })
+          await res2.body?.cancel?.().catch?.(() => {})
+        } finally {
+          clearTimeout(timer)
+        }
+        const h = res2.headers
+        const xfo = h.get('x-frame-options')
+        const csp = h.get('content-security-policy') || ''
+        const faMatch = csp.match(/frame-ancestors[^;]*/i)
+        const fa = faMatch ? faMatch[0].trim() : null
+        let frameable = true
+        let reason: string | null = null
+        if (xfo && /deny|sameorigin/i.test(xfo)) { frameable = false; reason = `X-Frame-Options: ${xfo}` }
+        else if (fa && !/^\s*(\*|'none'|'self')/.test(fa.replace(/frame-ancestors/i, '').trim()) && /\s/.test(fa) && !/\/\*/.test(fa)) {
+          frameable = false; reason = `CSP: ${fa}`
+        }
+        return sendJson(res, 200, { ok: true, frameable, reason, status: res2.status, xfo, csp: fa })
+      } catch (err) {
+        return sendJson(res, 200, { ok: true, frameable: true, reason: 'probe-error-treat-as-frameable', error: String((err as Error)?.message || err) })
+      }
+    },
+  })
+
   const disposeHealth = server.register({
     kind: 'exact',
     path: EGO_HEALTH_ROUTE,
@@ -644,6 +699,7 @@ export function initCastServer(
     try { disposeClose() } catch { /* ignore */ }
     try { disposeFlush() } catch { /* ignore */ }
     try { disposeNav() } catch { /* ignore */ }
+    try { disposeFrameable() } catch { /* ignore */ }
     try { disposeHealth() } catch { /* ignore */ }
     for (const dispose of watchRoutes) try { dispose() } catch { /* ignore */ }
     try { disposeWatchStatus() } catch { /* ignore */ }
