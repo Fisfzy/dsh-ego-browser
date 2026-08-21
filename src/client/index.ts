@@ -2968,7 +2968,9 @@ clearTimeout((panel as any)._dshHideT)
 					})
 				}
 			}
-			if (e.currentTarget) e.currentTarget.style.cursor = 'grab'
+			// Keep the system cursor hidden so the blue hotspot arrow stays the
+			// only mouse pointer on the live screenshot (do NOT restore 'grab').
+			if (e.currentTarget) e.currentTarget.style.cursor = 'none'
 			this.hideHotspot()
 			this._pointerState = null
 		}
