@@ -2079,6 +2079,28 @@ clearTimeout((panel as any)._dshHideT)
 .dsh-ego-side-navurl:focus { border-color: rgba(10,132,255,.6); }
 .dsh-ego-side-navurl::placeholder { opacity: .45; }
 
+/* ---- mouse hotspot + click ripple overlay ---- */
+.dsh-ego-side-livewrap { position: relative; width: 100%; }
+.dsh-ego-ripple {
+  position: absolute; width: 34px; height: 34px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(10,132,255,.55) 0%, rgba(10,132,255,0) 70%);
+  transform: translate(-50%, -50%) scale(.2); pointer-events: none; z-index: 5;
+  animation: dsh-ego-ripple-anim .6s cubic-bezier(.16,.8,.3,1) forwards;
+}
+@keyframes dsh-ego-ripple-anim {
+  to { transform: translate(-50%, -50%) scale(3.2); opacity: 0; }
+}
+.dsh-ego-hotspot {
+  position: absolute; width: 14px; height: 18px; pointer-events: none; z-index: 6;
+  transform: translate(0, 0); opacity: 0; transition: opacity .12s ease;
+  line-height: 0;
+}
+.dsh-ego-hotspot-dot {
+  display: block; line-height: 0;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.4));
+}
+.dsh-ego-hotspot-dot svg { display: block; }
+
 /* ---- guide strips (login / captcha) ---- */
 .dsh-ego-side-login, .dsh-ego-side-captcha {
   display: flex; align-items: center; gap: 7px; margin: 0 10px 7px; padding: 6px 9px;
@@ -2139,7 +2161,7 @@ clearTimeout((panel as any)._dshHideT)
 .dsh-ego-side-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; }
 .dsh-ego-side-empty { padding: 20px 12px; text-align: center; font-size: 12px; opacity: .5; line-height: 1.7; }
 
-.dsh-ego-side-liveview { display: flex; flex-direction: column; gap: 7px; min-height: 60px; overflow: hidden; }
+.dsh-ego-side-liveview { display: flex; flex-direction: column; gap: 7px; min-height: 60px; overflow: hidden; position: relative; }
 .dsh-ego-side-livebadge {
   font-size: 10.5px; opacity: .6; letter-spacing: .2px;
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -2796,10 +2818,12 @@ clearTimeout((panel as any)._dshHideT)
 			var p = this.browserXY(e)
 			if (p) {
 				this._pointerState.lastDragPos = p
+				this.spawnRipple(e.clientX, e.clientY)
 				this.sendInput(this._pointerState.targetId, 'mousePressed', { x: p.x, y: p.y, button: 'left', buttons: 1, clickCount: 1 })
 			}
 		}
 		LivePreviewController.prototype.handlePointerMove = function (e) {
+			this.updateHotspot(e)
 			if (!this._pointerState) {
 				var p = this.browserXY(e)
 				if (p) this.sendInput(this.liveImgTargetId, 'mouseMoved', { x: p.x, y: p.y, buttons: 0 })
@@ -2833,11 +2857,49 @@ clearTimeout((panel as any)._dshHideT)
 				}
 			}
 			if (e.currentTarget) e.currentTarget.style.cursor = 'grab'
+			this.hideHotspot()
 			this._pointerState = null
 		}
 		LivePreviewController.prototype.handleDoubleClick = function (e) {
 			e.preventDefault()
 			this.resetZoom()
+		}
+		// Mouse hotspot + click ripple overlay (port from pull13). Renders a
+		// pointer dot at the current cursor position on the live image and a
+		// ripple on press, so the user sees the agent's click land in browser
+		// pixel space.
+		LivePreviewController.prototype.updateHotspot = function (e) {
+			var img = this.liveImg
+			if (!img) return
+			var host = img.parentElement
+			if (!host) return
+			var h = host.querySelector('.dsh-ego-hotspot') as HTMLElement | null
+			if (!h) return
+			var rect = host.getBoundingClientRect()
+			h.style.opacity = '1'
+			h.style.left = (e.clientX - rect.left) + 'px'
+			h.style.top = (e.clientY - rect.top) + 'px'
+		}
+		LivePreviewController.prototype.hideHotspot = function () {
+			var img = this.liveImg
+			if (!img) return
+			var host = img.parentElement
+			if (!host) return
+			var h = host.querySelector('.dsh-ego-hotspot') as HTMLElement | null
+			if (h) h.style.opacity = '0'
+		}
+		LivePreviewController.prototype.spawnRipple = function (clientX, clientY) {
+			var img = this.liveImg
+			if (!img) return
+			var host = img.parentElement
+			if (!host) return
+			var rect = host.getBoundingClientRect()
+			var r = document.createElement('div')
+			r.className = 'dsh-ego-ripple'
+			r.style.left = (clientX - rect.left) + 'px'
+			r.style.top = (clientY - rect.top) + 'px'
+			host.appendChild(r)
+			window.setTimeout(function () { if (r && r.parentNode) r.parentNode.removeChild(r) }, 1200)
 		}
 
 		// ── EgoBrowserTab: React component for the sidebar tab ─────────────────
@@ -3059,6 +3121,7 @@ clearTimeout((panel as any)._dshHideT)
 							}, '⧉ 打开真实页')
 						),
 						liveImg,
+						h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot' })),
 						h('div', { className: 'dsh-ego-side-livetitle' }, currentSpace.title || currentSpace.url || '(新标签页)'),
 						h('div', { className: 'dsh-ego-side-liveurl' + (state.zoomHint ? ' dsh-ego-side-hint' : '') }, state.zoomHint || currentSpace.url || '')
 					)
