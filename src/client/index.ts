@@ -918,6 +918,24 @@ declare function require(id: string): any
 		// 6-dot drag grip for the panel's title bar.
 		const ICON_GRIP = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="1.8"/><circle cx="16" cy="6" r="1.8"/><circle cx="8" cy="12" r="1.8"/><circle cx="16" cy="12" r="1.8"/><circle cx="8" cy="18" r="1.8"/><circle cx="16" cy="18" r="1.8"/></svg>`;
 
+		// Browser tab icon (port of pull13's browserTabIcon): a globe + magnifier.
+		function browserTabIcon(size) {
+			var s = size || 16
+			return React.createElement(
+				'svg',
+				{
+					width: s, height: s, viewBox: '0 0 24 24', fill: 'none',
+					stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round',
+					style: { display: 'block' },
+				},
+				React.createElement('circle', { cx: 11, cy: 11, r: 8 }),
+				React.createElement('path', { d: 'M11 3c2 2 3 4.5 3 8s-1 6-3 8' }),
+				React.createElement('path', { d: 'M11 3C9 5 8 7.5 8 11s1 6 3 8' }),
+				React.createElement('path', { d: 'M3 11h16' }),
+				React.createElement('path', { d: 'M16.5 14.5l3.6 3.6-1.8 1.8-1.2-2.6z', fill: 'currentColor', stroke: 'none' })
+			)
+		}
+
 		function apply(ctx) {
 			// ── Settings card: register locale + slot (always runs) ──────
 			ctx.effect(() => ctx.locale.register(SETTINGS_NS, { zh, en }), 'ego-browser: settings dictionaries')
@@ -2976,7 +2994,7 @@ clearTimeout((panel as any)._dshHideT)
 							title: s.url || '',
 							onClick: function () { controller.selectTab(s.targetId) },
 						},
-							h('span', { className: 'dsh-ego-side-tabdot' }),
+							h('span', { className: 'dsh-ego-side-tabdot' }, browserTabIcon(13)),
 							h('span', { className: 'dsh-ego-side-tabtxt' }, s.title || s.url || '(新标签页)'),
 							h('span', {
 								className: 'dsh-ego-side-tabclose',
