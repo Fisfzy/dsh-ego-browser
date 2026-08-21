@@ -70,6 +70,67 @@ const LAUNCH_FLAGS = [
   "--no-startup-window",
 ];
 
+// ── user-defined extra Chrome args (mirrors lib/config.js) ──────────────────
+// The runtime must not import from lib/, so the blocklist + tokenizer are
+// duplicated here. Keep in sync with lib/config.js (EGO_CLI_BLOCKED is not
+// needed here — only the Chrome side runs in this process). See
+// runtime/PATCHES.md and docs/plans/2026-08-20-custom-cli-args-design.md.
+const CHROME_BLOCKED = new Set([
+  "--user-data-dir",
+  "--remote-debugging-port",
+  "--remote-allow-origins",
+  "--headless",
+  "--no-startup-window",
+  "--proxy-server",
+  "--proxy-bypass-list",
+]);
+
+function tokenizeArgs(input) {
+  if (typeof input !== "string") return [];
+  const out = [];
+  let cur = "";
+  let i = 0;
+  let quote = null;
+  while (i < input.length) {
+    const c = input[i];
+    if (quote) {
+      if (c === "\\") {
+        const next = input[i + 1];
+        if (next !== undefined) { cur += next; i += 2; continue; }
+      } else if (c === quote) { quote = null; i += 1; continue; }
+      cur += c; i += 1; continue;
+    }
+    if (c === '"' || c === "'") { quote = c; i += 1; continue; }
+    if (c === "\\") {
+      const next = input[i + 1];
+      if (next !== undefined) { cur += next; i += 2; continue; }
+      i += 1; continue;
+    }
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      if (cur !== "") { out.push(cur); cur = ""; }
+      i += 1; continue;
+    }
+    cur += c; i += 1;
+  }
+  if (cur !== "") out.push(cur);
+  return out;
+}
+
+function filterChromeArgs(raw) {
+  const tokens = tokenizeArgs(raw);
+  const kept = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    const key = tok.includes("=") ? tok.slice(0, tok.indexOf("=")) : tok;
+    if (CHROME_BLOCKED.has(key)) {
+      if (!tok.includes("=") && i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) i += 1;
+      continue;
+    }
+    kept.push(tok);
+  }
+  return kept;
+}
+
 /**
  * Is this directory *provably* absent?
  *
@@ -399,6 +460,11 @@ async function launch({ headless }) {
           "--proxy-bypass-list=<-loopback>;127.0.0.1;localhost;[::1];172.16.0.0/12;10.0.0.0/8;*.local",
         ]
       : []),
+    // User-configured extra Chrome args, bridged from the plugin's `chromeArgs`
+    // settings field via resolveEgoEnv(). Filtered against CHROME_BLOCKED
+    // (mirrored here — the runtime must not import from lib/) so a saved value
+    // cannot break CDP control / profile isolation / proxy bypass.
+    ...filterChromeArgs(process.env.EGO_LINUX_EXTRA_ARGS ?? ""),
   ];
   const child = spawn(binary, args, {
     detached: true,
