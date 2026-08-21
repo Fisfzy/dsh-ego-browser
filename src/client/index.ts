@@ -70,6 +70,7 @@ declare function require(id: string): any
 			ffmpegTitle: 'FFmpeg installation', ffmpegReady: 'Ready', ffmpegMissing: 'No compatible FFmpeg found', ffmpegChecking: 'Checking local FFmpeg…', ffmpegDownloading: 'Downloading FFmpeg…', ffmpegVerifying: 'Verifying download…', ffmpegExtracting: 'Extracting FFmpeg…', ffmpegProbing: 'Checking capture capabilities…', ffmpegUnsupported: 'FFmpeg capture is unsupported on this platform', ffmpegFailed: 'FFmpeg installation failed', ffmpegSource: 'Source', ffmpegVersion: 'Version', ffmpegInstall: 'Download FFmpeg', ffmpegReinstall: 'Reinstall', ffmpegRecheck: 'Recheck', ffmpegRequired: 'FFmpeg (install required)', githubMirrorHint: 'Replaces https://github.com for GitHub downloads, for example https://gh-proxy.com/github.com.',
 			egoCliArgs: 'Extra ego-browser CLI args', egoCliArgsHint: 'Appended to `ego-browser nodejs` argv. Takes effect on the next ego_* call. Blocked: --status/--stop/--open/--spaces/--help (they exit before the heredoc runs). Use --headless via the headless env instead.',
 			chromeArgs: 'Extra Chrome launch args', chromeArgsHint: 'Appended to the Chrome launch argv. Takes effect on the next browser cold start (the browser is a singleton — run `ego-browser --stop` or restart DSH to relaunch). Blocked: --user-data-dir/--remote-debugging-port/--remote-allow-origins/--headless/--no-startup-window/--proxy-server (use EGO_LINUX_PROXY for the proxy).',
+			iframeEmbed: 'Embed the real page in the sidebar', iframeEmbedHint: 'When enabled, the sidebar Agent-browser tab gains an “⧉ 嵌入 iframe” button that renders the current page in a real iframe (sharing login state) instead of the screenshot stream. Ctrl+wheel is not usable inside cross-origin iframes; if you need zoom, stay on the screenshot view.' ,
 			save: 'Save', saving: 'Saving…', discard: 'Discard',
 			unsaved: 'Unsaved', readOnly: 'Settings are read-only in this deployment.',
 			namespaceUnavailable: 'The ego-browser configuration channel is unavailable. Please retry later.',
@@ -85,6 +86,7 @@ declare function require(id: string): any
 			ffmpegTitle: 'FFmpeg 安装', ffmpegReady: '已就绪', ffmpegMissing: '未找到兼容的 FFmpeg', ffmpegChecking: '正在检测本机 FFmpeg…', ffmpegDownloading: '正在下载 FFmpeg…', ffmpegVerifying: '正在校验下载文件…', ffmpegExtracting: '正在解压 FFmpeg…', ffmpegProbing: '正在检查捕获能力…', ffmpegUnsupported: '当前平台不支持 FFmpeg 捕获', ffmpegFailed: 'FFmpeg 安装失败', ffmpegSource: '来源', ffmpegVersion: '版本', ffmpegInstall: '下载 FFmpeg', ffmpegReinstall: '重新下载', ffmpegRecheck: '重新检测', ffmpegRequired: 'FFmpeg（需要安装）', githubMirrorHint: '替换 https://github.com，例如 https://gh-proxy.com/github.com。',
 			egoCliArgs: 'ego-browser CLI 附加参数', egoCliArgsHint: '追加到 `ego-browser nodejs` argv。下一次 ego_* 工具调用即生效。禁止：--status/--stop/--open/--spaces/--help（会在 heredoc 执行前退出）。--headless 请走 headless 环境变量。',
 			chromeArgs: 'Chrome 启动附加参数', chromeArgsHint: '追加到 Chrome 启动 argv。仅在浏览器下次冷启动时生效（浏览器是单例常驻——需运行 `ego-browser --stop` 或重启 DSH 才会重新启动）。禁止：--user-data-dir/--remote-debugging-port/--remote-allow-origins/--headless/--no-startup-window/--proxy-server（代理请用 EGO_LINUX_PROXY）。',
+			iframeEmbed: '在侧边栏嵌入真实页面', iframeEmbedHint: '开启后，侧边栏「Agent 浏览器」实时视图会出现 “⧉ 嵌入 iframe” 按钮，点击即以 iframe 渲染当前真实页面（共享登录态）而非截图推流。注意：跨源 iframe 内 Ctrl+滚轮不可用，如需缩放请留在截图视图。',
 			save: '保存', saving: '保存中…', discard: '放弃',
 			unsaved: '未保存', readOnly: '当前部署下设置只读。',
 			namespaceUnavailable: 'ego-browser 配置通道不可用，请稍后重试。',
@@ -98,7 +100,7 @@ declare function require(id: string): any
 				status: 'idle',        // 'idle' | 'loading' | 'ready'
 				available: false,      // true after a successful /ego/api/get
 				writable: false,       // false when settings service is absent
-				draft: { chromePath: '', captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '960', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '' },
+				draft: { chromePath: '', captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '960', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '', iframeEmbed: false },
 				ffmpegStatus: { state: 'checking', canDownload: false, canSelectFfmpeg: false },
 				dirty: false,
 				applyState: { kind: 'idle' }, // 'idle' | 'saving' | 'saved' | 'error'
@@ -149,7 +151,7 @@ declare function require(id: string): any
 				captureBackend: config.captureBackend === 'ffmpeg' && !ffmpegStatus.canSelectFfmpeg ? 'cdp' : (config.captureBackend || 'auto'), streamProfile: config.streamProfile || 'balanced',
 				cdpFps: String(config.cdpFps ?? 20), cdpQuality: String(config.cdpQuality ?? 55), cdpMaxWidth: String(config.cdpMaxWidth ?? 960), cdpBackstopIntervalMs: String(config.cdpBackstopIntervalMs ?? 3000),
 				ffmpegFps: String(config.ffmpegFps ?? 20), ffmpegMaxWidth: String(config.ffmpegMaxWidth ?? 1280), ffmpegBitrateKbps: String(config.ffmpegBitrateKbps ?? 4000), ffmpegEncoder: config.ffmpegEncoder || 'auto', ffmpegPath: config.ffmpegPath || '', githubMirror: config.githubMirror || '',
-				egoCliArgs: config.egoCliArgs || '', chromeArgs: config.chromeArgs || '',
+				egoCliArgs: config.egoCliArgs || '', chromeArgs: config.chromeArgs || '', iframeEmbed: config.iframeEmbed === true,
 			}
 				s.ffmpegStatus = ffmpegStatus
 				s.dirty = false
@@ -271,7 +273,7 @@ declare function require(id: string): any
 				captureBackend: config.captureBackend === 'ffmpeg' && ffmpegStatus && !ffmpegStatus.canSelectFfmpeg ? 'cdp' : (config.captureBackend || 'auto'), streamProfile: config.streamProfile || 'balanced',
 				cdpFps: String(config.cdpFps ?? 20), cdpQuality: String(config.cdpQuality ?? 55), cdpMaxWidth: String(config.cdpMaxWidth ?? 960), cdpBackstopIntervalMs: String(config.cdpBackstopIntervalMs ?? 3000),
 				ffmpegFps: String(config.ffmpegFps ?? 20), ffmpegMaxWidth: String(config.ffmpegMaxWidth ?? 1280), ffmpegBitrateKbps: String(config.ffmpegBitrateKbps ?? 4000), ffmpegEncoder: config.ffmpegEncoder || 'auto', ffmpegPath: config.ffmpegPath || '', githubMirror: config.githubMirror || '',
-				egoCliArgs: config.egoCliArgs || '', chromeArgs: config.chromeArgs || '',
+				egoCliArgs: config.egoCliArgs || '', chromeArgs: config.chromeArgs || '', iframeEmbed: config.iframeEmbed === true,
 			}
 				if (ffmpegStatus) s.ffmpegStatus = ffmpegStatus
 				s.dirty = false
@@ -325,6 +327,8 @@ declare function require(id: string): any
 .dsh-ego-card__input--narrow{width:120px;flex:none}
 .dsh-ego-card__unit{font-size:12px;color:var(--dsw-alias-label-tertiary);flex:none}
 .dsh-ego-card__hint{font-size:12px;color:var(--dsw-alias-label-tertiary);margin:0;line-height:1.5}
+.dsh-ego-card__checkbox{width:16px;height:16px;accent-color:var(--dsw-alias-brand-primary);cursor:pointer;flex:none}
+.dsh-ego-card__field-check{display:flex;align-items:center;gap:8px;flex-direction:row-reverse;justify-content:flex-end}
 .dsh-ego-card__ffmpeg{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
 .dsh-ego-card__ffmpeg-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}
 .dsh-ego-card__ffmpeg-status{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
@@ -357,7 +361,16 @@ declare function require(id: string): any
 			var numeric = props.numeric
 			var narrow = props.narrow
 			var unit = props.unit
-			var inputEl = props.options ? h('select', {
+			var unit = props.unit
+			var checkboxEl = props.type === 'checkbox'
+			var inputEl = checkboxEl ? h('input', {
+				id: id,
+				className: 'dsh-ego-card__checkbox',
+				type: 'checkbox',
+				checked: !!value,
+				disabled: disabled,
+				onChange: function (e) { onEdit(e.target.checked) },
+			}) : props.options ? h('select', {
 				id: id, className: 'dsh-ego-card__input', value: value, disabled: disabled,
 				onChange: function (e) { onEdit(e.target.value) },
 			}, props.options.map(function (option) {
@@ -374,10 +387,13 @@ declare function require(id: string): any
 				onChange: function (e) { onEdit(e.target.value) },
 			})
 			return h('div', { className: 'dsh-ego-card__field' },
-				h('label', { className: 'dsh-ego-card__field-label', htmlFor: id }, label),
-				narrow
+				checkboxEl
+					? h('label', { className: 'dsh-ego-card__field-check', htmlFor: id },
+						h('span', { className: 'dsh-ego-card__field-label' }, label), inputEl)
+					: h('label', { className: 'dsh-ego-card__field-label', htmlFor: id }, label),
+				!checkboxEl && (narrow
 					? h('div', { className: 'dsh-ego-card__field-row' }, inputEl, unit ? h('span', { className: 'dsh-ego-card__unit' }, unit) : null)
-					: inputEl,
+					: inputEl),
 				hint ? h('p', { className: 'dsh-ego-card__hint' }, hint) : null,
 			)
 		}
@@ -466,6 +482,7 @@ declare function require(id: string): any
 						h(SettingsField, { id: 'plugin-config-ego-browser-ghmirror', label: t('githubMirror'), value: state.draft.githubMirror, hint: t('githubMirrorHint'), placeholder: 'https://gh-proxy.com/github.com', disabled: busy, onEdit: function (v) { controller.edit('githubMirror', v) } }),
 						h(SettingsField, { id: 'plugin-config-ego-browser-ego-cli-args', label: t('egoCliArgs'), value: state.draft.egoCliArgs, hint: t('egoCliArgsHint'), placeholder: '--sdk-path /path/to/harness.js', disabled: busy, onEdit: function (v) { controller.edit('egoCliArgs', v) } }),
 						h(SettingsField, { id: 'plugin-config-ego-browser-chrome-args', label: t('chromeArgs'), value: state.draft.chromeArgs, hint: t('chromeArgsHint'), placeholder: '--disable-features=Translate --window-size=1024,768', disabled: busy, onEdit: function (v) { controller.edit('chromeArgs', v) } }),
+						h(SettingsField, { id: 'plugin-config-ego-browser-iframe-embed', label: t('iframeEmbed'), value: state.draft.iframeEmbed, type: 'checkbox', hint: t('iframeEmbedHint'), disabled: busy, onEdit: function (v) { controller.edit('iframeEmbed', v) } }),
 						h('div', { className: 'dsh-ego-card__ffmpeg' },
 							h('div', { className: 'dsh-ego-card__ffmpeg-title' }, t('ffmpegTitle')),
 							h('div', { className: 'dsh-ego-card__ffmpeg-status', role: 'status' }, t(ffmpegLabelKey) + (ffmpegStatus.reason ? ': ' + ffmpegStatus.reason : '') + (progressText ? ' ' + progressText : '')),
@@ -2200,6 +2217,17 @@ clearTimeout((panel as any)._dshHideT)
   user-select: none; -webkit-user-select: none; touch-action: none;
   will-change: transform; cursor: grab;
 }
+.dsh-ego-side-embedwrap {
+  width: 100%; border-radius: 9px; overflow: hidden;
+  border: 1px solid rgba(128,128,128,.2); background: #000;
+  height: 52vh; position: relative;
+}
+.dsh-ego-side-embedwrap iframe.dsh-ego-side-embed {
+  width: 100%; height: 100%; border: 0; display: block; background: #fff;
+}
+.dsh-ego-side-embednote {
+  font-size: 10.5px; opacity: .6; font-style: italic; padding: 4px 2px;
+}
 .dsh-ego-side-livetitle { font-size: 12px; font-weight: 600; }
 .dsh-ego-side-liveurl { font-size: 10.5px; opacity: .55; word-break: break-all; }
 .dsh-ego-side-liveurl.dsh-ego-side-hint { color: #75c2ff; font-style: italic; font-weight: 500; opacity: 1; }
@@ -2283,6 +2311,11 @@ clearTimeout((panel as any)._dshHideT)
 			this.liveImg = null
 			this.liveImgTargetId = null
 			this.historyOpen = false
+			this.iframeEmbed = false
+			this.embedActive = false
+			this.embedUrl = null
+			this.embedFrameable = null
+			this._embedProbeTimer = null
 			this._zoomHint = null
 			this._zoomHintTimer = null
 			this._pointerState = null
@@ -2304,6 +2337,7 @@ clearTimeout((panel as any)._dshHideT)
 				historyOpen: false,
 				zoomHint: null,
 				backend: 'cdp', streamState: 'idle', streamMessage: '', streamGeneration: 0, streamMime: 'video/mp4; codecs="avc1.42E01E"',
+				iframeEmbed: false, embedActive: false, iframeUrl: null, iframeFrameable: false,
 			}
 		}
 		LivePreviewController.prototype.subscribe = function (cb) {
@@ -2365,13 +2399,74 @@ clearTimeout((panel as any)._dshHideT)
 				s.streamMessage = self.streamMessage
 				s.streamGeneration = self.streamGeneration
 				s.streamMime = self.streamMime
+				s.iframeEmbed = self.iframeEmbed
+				s.embedActive = self.embedActive
+				s.iframeUrl = self.embedActive ? (currentSpace && currentSpace.url) : null
+				s.iframeFrameable = self.embedFrameable
 			})
 			this._syncWatch(currentTargetId)
 		}
 		LivePreviewController.prototype.start = function () {
 			document.addEventListener('visibilitychange', this.onDocumentVisibility)
+			this.loadConfig()
 			this._recompute()
 			if (this.visible) { this.refresh(); this.openStream() }
+		}
+		LivePreviewController.prototype.loadConfig = function () {
+			var self = this
+			if (this.disposed) return
+			fetch('/ego/api/get', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{}',
+			}).then(function (res) {
+				if (!res.ok) return null
+				return res.json().catch(function () { return null })
+			}).then(function (parsed) {
+				if (self.disposed) return
+				if (!parsed || parsed.ok !== true || !parsed.value) return
+				var cfg = parsed.value.config || {}
+				var next = cfg.iframeEmbed === true
+				if (next === self.iframeEmbed) return
+				self.iframeEmbed = next
+				if (!next) self.embedActive = false
+				self._recompute()
+			}).catch(function () {})
+		}
+		LivePreviewController.prototype.setEmbedMode = function (on) {
+			if (!this.iframeEmbed && on) return
+			if (this.embedActive === on) return
+			if (on && !this.currentActiveId) return
+			var target = this.lastList.find(function (s) { return s.targetId === this.currentActiveId }, this)
+			if (on && (!target || !target.url || target.url.indexOf('http') !== 0)) return
+			this.embedActive = on
+			if (on) this.probeFrameable()
+			else this.embedFrameable = null
+			this._recompute()
+			this._syncWatch(this.currentActiveId)
+		}
+		LivePreviewController.prototype.probeFrameable = function () {
+			var self = this
+			var target = this.lastList.find(function (s) { return s.targetId === this.currentActiveId }, this)
+			var url = target && target.url
+			if (!url || url.indexOf('http') !== 0) return
+			if (this._embedProbeTimer) window.clearTimeout(this._embedProbeTimer)
+			this._embedProbeTimer = window.setTimeout(function () {
+				self._embedProbeTimer = null
+				fetch('/api/ego/frameable?url=' + encodeURIComponent(url), { cache: 'no-store' }).then(function (res) {
+					return res.json().catch(function () { return null })
+				}).then(function (j) {
+					if (self.disposed || !self.embedActive) return
+					self.embedFrameable = !!(j && j.ok && j.frameable)
+					self._recompute()
+				}).catch(function () {})
+			}, 200)
+		}
+		LivePreviewController.prototype.closeEmbedZoom = function () {
+			this.embedActive = false
+			this.embedFrameable = null
+			this._recompute()
+			this._syncWatch(this.currentActiveId)
 		}
 		LivePreviewController.prototype.dispose = function () {
 			this.keyboardProxy.dispose()
@@ -2380,6 +2475,7 @@ clearTimeout((panel as any)._dshHideT)
 			if (this.followTimer) window.clearTimeout(this.followTimer)
 			if (this.reconnectFallbackTimer) window.clearTimeout(this.reconnectFallbackTimer)
 			if (this._zoomHintTimer) window.clearTimeout(this._zoomHintTimer)
+			if (this._embedProbeTimer) window.clearTimeout(this._embedProbeTimer)
 			document.removeEventListener('visibilitychange', this.onDocumentVisibility)
 			if (this.watchRenewTimer) window.clearInterval(this.watchRenewTimer)
 			if (this.watchStopTimer) window.clearTimeout(this.watchStopTimer)
@@ -2682,6 +2778,7 @@ clearTimeout((panel as any)._dshHideT)
 			if (this.disposed) return
 			this.pinned = space
 			this.selectedTabId = null
+			if (this.embedActive) { this.embedFrameable = null; this.probeFrameable() }
 			this._recompute()
 		}
 		LivePreviewController.prototype.unpin = function () {
@@ -2696,6 +2793,7 @@ clearTimeout((panel as any)._dshHideT)
 				this.selectedTabId = targetId
 				this.pinned = null
 			}
+			if (this.embedActive) { this.embedFrameable = null; this.probeFrameable() }
 			this._recompute()
 			this._syncWatch(this.selectedTabId || this.currentActiveId)
 		}
@@ -3088,7 +3186,19 @@ clearTimeout((panel as any)._dshHideT)
 					)
 				)
 			} else {
-				var liveImg = state.backend === 'ffmpeg'
+				var showEmbed = state.embedActive && state.iframeUrl && state.iframeFrameable
+				var showEmbedPre = state.embedActive && state.iframeUrl && !state.iframeFrameable
+				var liveImg
+				if (showEmbed) {
+					liveImg = h('div', { className: 'dsh-ego-side-embedwrap' },
+						h('iframe', {
+							className: 'dsh-ego-side-embed',
+							src: state.iframeUrl,
+							sandbox: 'allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals',
+							title: 'ego embedded page',
+						})
+					)
+				} else liveImg = state.backend === 'ffmpeg'
 					? h('video', {
 						ref: videoRef, key: 'livevideo-' + state.streamGeneration, className: 'dsh-ego-side-liveimg', muted: true, autoPlay: true, playsInline: true,
 						onPointerDown: function (e) { controller.handlePointerDown(e) }, onPointerMove: function (e) { controller.handlePointerMove(e) }, onPointerUp: function (e) { controller.handlePointerUp(e) }, onPointerCancel: function (e) { controller.handlePointerUp(e) }, onDoubleClick: function (e) { controller.handleDoubleClick(e) },
@@ -3109,17 +3219,34 @@ clearTimeout((panel as any)._dshHideT)
 					})
 					: h('div', { className: 'dsh-ego-side-liveurl' }, state.streamMessage || '（暂无截图 — about:blank 或浏览器未渲染）')
 
+				var embedSwitchBtn
+				if (state.iframeEmbed && !state.embedActive) {
+					embedSwitchBtn = h('button', {
+						className: 'dsh-ego-side-back', type: 'button',
+						title: '用 iframe 嵌入当前真实页面（共享登录态；页面须允许被嵌入）',
+						disabled: !(currentSpace.url && currentSpace.url.indexOf('http') === 0),
+						onClick: function () { controller.setEmbedMode(true) },
+					}, '⧉ 嵌入 iframe')
+				} else if (state.embedActive) {
+					embedSwitchBtn = h('button', {
+						className: 'dsh-ego-side-back', type: 'button',
+						title: '返回截图实时视图',
+						onClick: function () { controller.closeEmbedZoom() },
+					}, '↩ 返回截图')
+				}
+
 				body = h('div', { className: 'dsh-ego-side-body' },
 					h('div', { className: 'dsh-ego-side-liveview' },
 						h('div', { className: 'dsh-ego-side-livebadge' },
 							h('span', { className: 'dsh-ego-side-state-dot' + (state.pinned ? ' pin' : state.busy ? ' busy' : '') }),
-							h('span', { style: { flex: 1 } }, (state.backend === 'ffmpeg' ? 'FFmpeg · H.264' : 'CDP') + ' · ' + (state.streamState === 'failed' ? (state.streamMessage || '失败') : state.streamState)),
+							h('span', { style: { flex: 1 } }, state.embedActive ? 'iframe 嵌入' : ((state.backend === 'ffmpeg' ? 'FFmpeg · H.264' : 'CDP') + ' · ' + (state.streamState === 'failed' ? (state.streamMessage || '失败') : state.streamState))),
 							state.pinned
 								? h('button', {
 									className: 'dsh-ego-side-back', type: 'button',
 									onClick: function () { controller.unpin() },
 								}, '← 返回实时')
 								: null,
+							embedSwitchBtn,
 							h('button', {
 								className: 'dsh-ego-side-back', type: 'button',
 								title: '在浏览器新标签打开真实页面',
@@ -3129,10 +3256,11 @@ clearTimeout((panel as any)._dshHideT)
 								},
 							}, '⧉ 打开真实页')
 						),
+						showEmbedPre ? h('div', { className: 'dsh-ego-side-embednote' }, '该页面不允许被 iframe 嵌入（X-Frame-Options / CSP），已显示截图视图。') : null,
 						liveImg,
-						h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot' })),
+						state.embedActive ? null : h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot' })),
 						h('div', { className: 'dsh-ego-side-livetitle' }, currentSpace.title || currentSpace.url || '(新标签页)'),
-						h('div', { className: 'dsh-ego-side-liveurl' + (state.zoomHint ? ' dsh-ego-side-hint' : '') }, state.zoomHint || currentSpace.url || '')
+						h('div', { className: 'dsh-ego-side-liveurl' + (state.zoomHint ? ' dsh-ego-side-hint' : '') }, state.embedActive ? 'Ctrl+滚轮：本页为真实 iframe，缩放请用截图视图' : (state.zoomHint || currentSpace.url || ''))
 					)
 				)
 			}

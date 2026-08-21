@@ -446,6 +446,7 @@ interface EgoRuntimeConfig {
   readonly githubMirror: string
   readonly egoCliArgs: string
   readonly chromeArgs: string
+  readonly iframeEmbed: boolean
 }
 
 interface ExecLike {
@@ -672,6 +673,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // edits take effect on the next spawn / next browser cold start.
     get egoCliArgs() { return resolveConfig(bridge.source() as RawConfig).egoCliArgs },
     get chromeArgs() { return resolveConfig(bridge.source() as RawConfig).chromeArgs },
+    get iframeEmbed() { return resolveConfig(bridge.source() as RawConfig).iframeEmbed },
   }
   const reg = (tool: ToolHandle): void => {
     const dispose = ctx.tools.register(tool) as unknown as () => void

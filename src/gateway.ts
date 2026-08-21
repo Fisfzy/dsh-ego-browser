@@ -35,7 +35,7 @@ const API_PREFIX = '/ego/api'
 const ALLOWED_KEYS = new Set<string>([
   'chromePath', 'captureBackend', 'streamProfile', 'cdpFps', 'cdpQuality',
   'cdpMaxWidth', 'cdpBackstopIntervalMs', 'ffmpegFps', 'ffmpegMaxWidth', 'ffmpegBitrateKbps',
-  'ffmpegEncoder', 'ffmpegPath', 'githubMirror',
+  'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs', 'iframeEmbed',
 ])
 
 interface EnvelopeOk<T> { ok: true; value: T }
@@ -204,6 +204,8 @@ function extractPatch(body: unknown): Record<string, unknown> {
     if (typeof value === 'string') {
       normalized[key] = value
     } else if (typeof value === 'number' && Number.isFinite(value)) {
+      normalized[key] = value
+    } else if (typeof value === 'boolean') {
       normalized[key] = value
     }
   }

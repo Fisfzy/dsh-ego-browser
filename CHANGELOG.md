@@ -6,14 +6,10 @@
 
 观察窗落地双画面管线：修复 CDP 协议根因，并加入可选 FFmpeg H.264/fMP4 后端。
 
-### iframe 真实页面嵌入（0.9.0）
-- 新设置 **`iframeEmbed`**（“在侧边栏嵌入真实页面”）：在设置面板开启后，侧边栏「Agent 浏览器」实时视图出现 “⧉ 嵌入 iframe” 按钮。点击即用 iframe 渲染当前页面的真实可交互 DOM（后端 `/api/ego/frameable` 探测页面是否允许被嵌入）。
-- **非自动、避免无限嵌套**：默认仍是截图实时视图，仅显式点击才切 iframe；切换后可 “↩ 返回截图”。目标页被 `X-Frame-Options` / `CSP frame-ancestors` 拒绝时回退截图并提示。
-- iframe 页面同样支持 **Ctrl+滚轮缩放 / 双击回 100%**（容器 transform 缩放）。
-
-### 修复
-- **跨源 iframe 也能缩放（覆盖层方案）**：原实现“在 iframe 外层监听滚轮缩放”对**跨源站无效**——iframe 内部事件不会传到父文档（浏览器安全限制）。改为在 iframe 上叠一层默认穿透的透明覆盖层，点 **“🔍 缩放”** 进入缩放模式后覆盖层拦截滚轮，用滚轮 / Ctrl+滚轮缩放 iframe 容器，**双击复位**；再点 **“🔓 正常”** 退出、恢复鼠标操作 iframe 页面。跨源页（如 bilibili）同样可缩放。
-- **iframe 视图 Ctrl+滚轮不再同时缩放整个 DSH 页面**：改用非 passive 原生 `wheel` 监听（React 合成 `onWheel` 是 passive，`preventDefault` 无效）。
+### iframe 真实页面嵌入（可选开关）
+- 新设置 **`iframeEmbed`**（“在侧边栏嵌入真实页面”，默认关闭）：开启后，侧边栏「Agent 浏览器」实时视图出现 **“⧉ 嵌入 iframe”** 按钮，点击即以 iframe 渲染当前页面的**真实可交互 DOM**（与浏览器共享登录态）而不是截图推流。
+- **非自动、避免无限嵌套**：默认始终是截图实时视图，仅显式点击才切 iframe；切换后可用 **“↩ 返回截图”** 切回。目标页被 `X-Frame-Options` / `CSP frame-ancestors` 禁止时自动回退截图并提示（后端 `/api/ego/frameable` 探测）。
+- 注意：跨源 iframe 内无法由父文档监听滚轮，故 iframe 内不做缩放；如需 Ctrl+滚轮缩放，请留在截图实时视图（截图流已支持）。
 
 ### 新增 / 优化
 - **用户自定义启动参数**：设置卡新增 `ego-browser CLI 附加参数` 与 `Chrome 启动附加参数` 两个字段。前者追加到 `ego-browser nodejs` argv，下一次 `ego_*` 工具调用即生效；后者经 `EGO_LINUX_EXTRA_ARGS` 桥接到 vendored runtime 的 `launch()`，仅浏览器下次冷启动生效（浏览器是单例常驻——需 `ego-browser --stop` 或重启 DSH 才会重新启动）。两边都拉黑会破坏插件自管控制面的标志（`--status`/`--stop`/`--help`/`--user-data-dir`/`--remote-debugging-port`/`--headless`/`--proxy-server` 等）；`--proxy-server` 请走 `EGO_LINUX_PROXY`。`ego_doctor` 报告当前生效参数。

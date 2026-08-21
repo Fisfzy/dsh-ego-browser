@@ -28,6 +28,7 @@ export const Config = z.object({
   // control flags are stripped (see EGO_CLI_BLOCKED / CHROME_BLOCKED below).
   egoCliArgs: z.string().description('Extra args appended to `ego-browser nodejs` argv. Takes effect on the next ego_* call.'),
   chromeArgs: z.string().description('Extra args appended to the Chrome launch argv. Takes effect on the next browser cold start (the browser is a singleton).'),
+  iframeEmbed: z.boolean().description('Embed the real page in the sidebar watch panel via an iframe when the page permits framing. Off by default to avoid nesting.'),
   // Deprecated read-compatible keys. The settings UI only writes canonical keys.
   castFpsCap: z.number().min(0).max(60).step(1),
   screencastQuality: z.number().min(1).max(100).step(1),
@@ -193,5 +194,6 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     // so a saved value is not silently mutated by a later blocklist change.
     egoCliArgs: typeof config.egoCliArgs === 'string' ? config.egoCliArgs : '',
     chromeArgs: typeof config.chromeArgs === 'string' ? config.chromeArgs : '',
+    iframeEmbed: config.iframeEmbed === true,
   }
 }

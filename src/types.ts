@@ -134,6 +134,8 @@ export interface ResolvedConfig {
   githubMirror: string
   egoCliArgs: string
   chromeArgs: string
+  /** When true, the sidebar watch panel may render the current page via an embedded iframe (if frameable). */
+  iframeEmbed: boolean
 }
 
 /** Raw composition-layer config (may contain legacy / extra keys). */
