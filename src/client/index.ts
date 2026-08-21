@@ -2115,18 +2115,6 @@ clearTimeout((panel as any)._dshHideT)
 .dsh-ego-side-embedwrap { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 260px; }
 .dsh-ego-side-embeddbar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dsw-alias-label-secondary, #aab); padding: 6px 8px; background: rgba(14,110,255,.12); border-radius: 8px; }
 
-/* ---- login badge (persist login cookies) ---- */
-.dsh-ego-side-loginbadge {
-  flex: none; font-size: 10px; padding: 3px 8px; border-radius: 999px; cursor: pointer;
-  border: 1px solid rgba(10,132,255,.35); background: rgba(10,132,255,.12); color: inherit;
-  white-space: nowrap; transition: background .15s ease, opacity .15s ease; line-height: 1.3;
-}
-.dsh-ego-side-loginbadge:hover:not(:disabled) { background: rgba(10,132,255,.22); }
-.dsh-ego-side-loginbadge:disabled { opacity: .55; cursor: default; }
-.dsh-ego-side-loginbadge.busy { opacity: .6; }
-.dsh-ego-side-loginbadge.saved { border-color: rgba(48,209,88,.4); background: rgba(48,209,88,.15); }
-.dsh-ego-side-loginbadge.noconn { border-color: rgba(255,159,10,.4); background: rgba(255,159,10,.15); }
-
 /* ---- guide strips (login / captcha) ---- */
 .dsh-ego-side-login, .dsh-ego-side-captcha {
   display: flex; align-items: center; gap: 7px; margin: 0 10px 7px; padding: 6px 9px;
@@ -3053,7 +3041,6 @@ clearTimeout((panel as any)._dshHideT)
 					},
 				}, '↗ 打开')
 			)
-			var loginbadge = h(EgoLoginBadge, { controller: controller })
 
 			// History overlay: covers the body area
 			if (state.historyOpen) {
@@ -3061,7 +3048,6 @@ clearTimeout((panel as any)._dshHideT)
 				return h('div', { className: 'dsh-ego-side-root' },
 					header,
 					navtoolbar,
-					loginbadge,
 					h('div', { className: 'dsh-ego-side-history' },
 						h('div', { className: 'dsh-ego-side-historyhead' },
 							h('span', { dangerouslySetInnerHTML: { __html: ICON_CLOCK } }),
@@ -3193,33 +3179,7 @@ clearTimeout((panel as any)._dshHideT)
 				)
 			}
 
-			return h('div', { className: 'dsh-ego-side-root' }, header, navtoolbar, loginbadge, guides, tabsEl, body)
-		}
-
-		function EgoLoginBadge(props) {
-			var controller = props.controller
-			var h = React.createElement
-			var s1 = React.useState(null) // null=idle
-			var status = s1[0]; var setStatus = s1[1]
-			var run = function () {
-				setStatus('busy')
-				controller.flushLogin()
-					.then(function (j) { if (j && j.ok) setStatus('saved:' + (j.total || 0)); else setStatus('no-browser') })
-					.catch(function () { setStatus('error') })
-			}
-			var label: string; var cls = 'dsh-ego-side-loginbadge'
-			if (status === 'busy') { label = '保存中…' }
-			else if (status && status.indexOf('saved') === 0) { label = '🔐 已保存 ' + status.split(':')[1] + ' 条登录态'; cls += ' saved' }
-			else if (status === 'no-browser') { label = '未连接浏览器'; cls += ' noconn' }
-			else if (status === 'error') { label = '保存失败'; cls += ' noconn' }
-			else { label = '💾 保存登录态' }
-			return h('button', {
-				className: cls + (status === 'busy' ? ' busy' : ''),
-				type: 'button',
-				title: '把 ego 浏览器的登录 cookie 持久化到本地 profile，重启后仍保持登录',
-				disabled: status === 'busy',
-				onClick: run,
-			}, label)
+			return h('div', { className: 'dsh-ego-side-root' }, header, navtoolbar, guides, tabsEl, body)
 		}
 
 		function EgoLoginGuide(props) {
