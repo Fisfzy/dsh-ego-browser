@@ -5505,6 +5505,68 @@ async function main() {
 				await active.cdp.call("Storage.flushCookies").catch(() => {});
 				return sendJson(res, 200, { ok: true });
 			}
+			if (req.method === "POST" && url.pathname === "/api/nav") {
+				const body = await readJson(req);
+				if (!active) return sendJson(res, 400, {
+					ok: false,
+					error: "no live browser"
+				});
+				const { targetId, action, url: navUrl } = body;
+				if (!action || typeof action !== "string") return sendJson(res, 400, {
+					ok: false,
+					error: "action required"
+				});
+				try {
+					if (action === "newTab") {
+						const infos = ((await active.cdp.call("Target.getTargets"))?.result?.targetInfos || []).filter((t) => t.type === "page");
+						if (!navUrl) {
+							const blank = infos.find((t) => t.url === "about:blank");
+							if (blank) return sendJson(res, 200, {
+								ok: true,
+								targetId: blank.targetId,
+								created: false
+							});
+						}
+						const nt = await active.cdp.call("Target.createTarget", { url: navUrl || "about:blank" });
+						return sendJson(res, 200, {
+							ok: true,
+							targetId: nt?.result?.targetId,
+							created: !!nt?.result?.targetId
+						});
+					}
+					if (!targetId) return sendJson(res, 400, {
+						ok: false,
+						error: "targetId required"
+					});
+					let result;
+					if (action === "reload") result = await active.sessions.call(targetId, "Page.reload", { ignoreCache: false });
+					else if (action === "goBack") try {
+						result = await active.sessions.call(targetId, "Page.goBack", {});
+					} catch (e) {
+						result = await active.sessions.call(targetId, "Runtime.evaluate", { expression: "history.back()" });
+					}
+					else if (action === "goForward") try {
+						result = await active.sessions.call(targetId, "Page.goForward", {});
+					} catch (e) {
+						result = await active.sessions.call(targetId, "Runtime.evaluate", { expression: "history.forward()" });
+					}
+					else if (action === "stop") result = await active.sessions.call(targetId, "Page.stopLoading", {});
+					else if (action === "navigate") result = await active.sessions.call(targetId, "Page.navigate", { url: navUrl });
+					else return sendJson(res, 400, {
+						ok: false,
+						error: `unknown action: ${action}`
+					});
+					return sendJson(res, 200, {
+						ok: true,
+						result
+					});
+				} catch (error) {
+					return sendJson(res, 500, {
+						ok: false,
+						error: String(error?.message || error)
+					});
+				}
+			}
 			if (req.method === "GET" && url.pathname === "/api/stream") {
 				res.writeHead(200, {
 					"content-type": "text/event-stream",

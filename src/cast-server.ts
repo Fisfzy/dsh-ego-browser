@@ -26,6 +26,7 @@ export const EGO_HEALTH_ROUTE = '/api/ego/health'
 export const EGO_CLOSE_ROUTE = '/api/ego/close'
 export const EGO_FLUSH_ROUTE = '/api/ego/flush'
 export const EGO_INPUT_ROUTE = '/api/ego/input'
+export const EGO_NAV_ROUTE = '/api/ego/nav'
 export const EGO_WATCH_START_ROUTE = '/api/ego/watch/start'
 export const EGO_WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
 export const EGO_WATCH_STOP_ROUTE = '/api/ego/watch/stop'
@@ -558,6 +559,25 @@ export function initCastServer(
     },
   })
 
+  // POST /api/ego/nav — forward a navigation/intent to the real agent page
+  // (back / forward / refresh / stop / navigate / new tab). Bridges to the
+  // worker's /api/nav. Ported from pull13.
+  const disposeNav = server.register({
+    kind: 'exact',
+    path: EGO_NAV_ROUTE,
+    handler: async (reqRaw: unknown, resRaw: unknown) => {
+      const req = reqRaw as IncomingMessage
+      const res = resRaw as ServerResponse
+      const port = await ensureWorker()
+      if (port === null) return sendJson(res, 409, { ok: false, error: 'worker not ready' })
+      const body = await readJsonBody(req).catch(() => ({}))
+      const result = await proxyPost(port, '/api/nav', body)
+      return result
+        ? sendJson(res, result.status, result.body)
+        : sendJson(res, 502, { ok: false, error: 'nav worker request failed' })
+    },
+  })
+
   const disposeHealth = server.register({
     kind: 'exact',
     path: EGO_HEALTH_ROUTE,
@@ -623,6 +643,7 @@ export function initCastServer(
     try { disposeInput() } catch { /* ignore */ }
     try { disposeClose() } catch { /* ignore */ }
     try { disposeFlush() } catch { /* ignore */ }
+    try { disposeNav() } catch { /* ignore */ }
     try { disposeHealth() } catch { /* ignore */ }
     for (const dispose of watchRoutes) try { dispose() } catch { /* ignore */ }
     try { disposeWatchStatus() } catch { /* ignore */ }
