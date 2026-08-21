@@ -140,11 +140,15 @@ dshx list                                                # 应显示：[on] ego-
 
 ## 开发
 
+源码在 `src/`（TypeScript），构建产物在 `lib/`（host + client bundle）与 `bin/ego-cast-worker.mjs`（worker bundle）。
+
 ```sh
-npm run build   # node --check lib/*.js（lib/ 为唯一权威源，不复编译覆盖）
+pnpm typecheck   # tsc 类型门禁（tsconfig.json 主 + tsconfig.client.json 客户端）
+pnpm test        # vitest 单元测试
+pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-cast-worker.mjs
 ```
 
-> 直接改 `lib/`（`lib/index.js` 工具层、`lib/client.js` 前端、`bin/ego-cast-worker.mjs` worker）。新工具在 `registerActionTools` 按 `t({...})` 加，并在 `ego_help` 索引补一条。
+> 直接改 `src/`（`src/index.ts` 工具层、`src/client/index.ts` 前端、`src/worker/ego-cast-worker.ts` worker）。新工具在 `registerActionTools` 里按 `t({...})` 加，并在 `ego_help` 索引（`src/help.ts`）补一条，跑 `pnpm typecheck && pnpm test && pnpm run build`。`lib/` 与 `bin/ego-cast-worker.mjs` 是构建产物（预构建入库），不要手改。
 
 `node_modules/` 仅含指向 DSH checkout 的符号链接（编译期类型解析）；运行时由 harness 解析 `@deepseek-ai/dsh-tools`。
 
