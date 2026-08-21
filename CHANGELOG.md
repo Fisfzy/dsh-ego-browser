@@ -12,7 +12,8 @@
 - iframe 页面同样支持 **Ctrl+滚轮缩放 / 双击回 100%**（容器 transform 缩放）。
 
 ### 修复
-- **iframe 视图 Ctrl+滚轮不再缩放整个 DSH 页面**：原实现挂在 React 合成的 `onWheel`（passive 监听器）上，`preventDefault()` 对被动监听无效，Ctrl+wheel 会冒泡触发浏览器整页缩放。改为 `useEffect` + 原生 `addEventListener("wheel", { passive:false, capture:true })`，`preventDefault` 真正生效，Ctrl+滚轮只缩放 iframe 容器。
+- **跨源 iframe 也能缩放（覆盖层方案）**：原实现“在 iframe 外层监听滚轮缩放”对**跨源站无效**——iframe 内部事件不会传到父文档（浏览器安全限制）。改为在 iframe 上叠一层默认穿透的透明覆盖层，点 **“🔍 缩放”** 进入缩放模式后覆盖层拦截滚轮，用滚轮 / Ctrl+滚轮缩放 iframe 容器，**双击复位**；再点 **“🔓 正常”** 退出、恢复鼠标操作 iframe 页面。跨源页（如 bilibili）同样可缩放。
+- **iframe 视图 Ctrl+滚轮不再同时缩放整个 DSH 页面**：改用非 passive 原生 `wheel` 监听（React 合成 `onWheel` 是 passive，`preventDefault` 无效）。
 
 ### 新增 / 优化
 - **用户自定义启动参数**：设置卡新增 `ego-browser CLI 附加参数` 与 `Chrome 启动附加参数` 两个字段。前者追加到 `ego-browser nodejs` argv，下一次 `ego_*` 工具调用即生效；后者经 `EGO_LINUX_EXTRA_ARGS` 桥接到 vendored runtime 的 `launch()`，仅浏览器下次冷启动生效（浏览器是单例常驻——需 `ego-browser --stop` 或重启 DSH 才会重新启动）。两边都拉黑会破坏插件自管控制面的标志（`--status`/`--stop`/`--help`/`--user-data-dir`/`--remote-debugging-port`/`--headless`/`--proxy-server` 等）；`--proxy-server` 请走 `EGO_LINUX_PROXY`。`ego_doctor` 报告当前生效参数。
