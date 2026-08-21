@@ -57,7 +57,7 @@ declare function require(id: string): any
 			}
 		}
 
-		const inject = ['slots', 'locale', 'connection']
+		const inject = ['slots', 'betterSidebar', 'locale', 'connection']
 
 		// ── Settings card: locale ─────────────────────────────────────────
 		var SETTINGS_NS = 'ego-browser'
@@ -959,13 +959,15 @@ declare function require(id: string): any
 			})
 
 		// ── Watch panel: sidebar tab if available, floating fallback otherwise ──
-		// Opportunistic consumption via ctx.get() (NOT ctx.betterSidebar — that
-		// requires 'betterSidebar' in inject, which would make it a hard
-		// dependency: without dsh-better-sidebar installed the whole plugin,
-		// including the settings card, would fail to load). ctx.get() is the
-		// documented pattern for optional services (see approval-seam notes,
-		// postmortem 0001). Reads presence per call, degrades across HMR.
-		if (ctx.get('betterSidebar') !== undefined) {
+		// rc.8+ requires the consumer to declare the service in `inject` and
+		// reach it via the injected property (`ctx.betterSidebar`); the older
+		// opportunistic `ctx.get('betterSidebar')` no longer resolves the
+		// cross-plugin service (it returns undefined), so the sidebar tab never
+		// mounts. Adopt the official better-sidebar consumption pattern: inject
+		// 'betterSidebar' and read ctx.betterSidebar. dsh-better-sidebar is now
+		// a hard (required) dependency for this plugin — expected, since the
+		// side bar is the intended home of the ego-browser watch tab.
+		if (ctx.betterSidebar) {
 			ctx.effect(() => mountSidebarTab(ctx), 'ego-browser sidebar tab')
 		} else {
 			ctx.effect(() => mountFloatingWatch(ctx), 'ego-browser watch panel')
@@ -2162,7 +2164,7 @@ clearTimeout((panel as any)._dshHideT)
 		// pointer/wheel events to controller methods. The controller holds a ref
 		// to the live <img> element (set via setLiveImg) so it can swap src in
 		// place at rAF cadence without triggering React re-renders per frame.
-		// `ctx` is stored so the controller can call ctx.get('betterSidebar')
+		// `ctx` is stored so the controller can call ctx.betterSidebar
 		// to auto-open the Tab on the first ego_* tool call.
 		function LivePreviewController(ctx) {
 			this.ctx = ctx
@@ -3012,7 +3014,7 @@ clearTimeout((panel as any)._dshHideT)
 
 		// ── mountSidebarTab: register the ego-browser watch tab ────────────────
 		function mountSidebarTab(ctx) {
-			var betterSidebar = ctx.get('betterSidebar')
+			var betterSidebar = ctx.betterSidebar
 			if (!betterSidebar) return function () {}
 			// Inject Tab CSS once (cleaned up on dispose)
 			var styleEl = document.createElement('style')
