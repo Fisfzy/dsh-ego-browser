@@ -2987,6 +2987,29 @@ clearTimeout((panel as any)._dshHideT)
 				} catch (e) { setEmbedMode('agent') }
 			}, [state.currentSpace, liveUrl])
 
+			// ── iframe container zoom (Ctrl / Meta + wheel) ──────────────────
+			// The real <iframe> can't be zoomed from outside (cross-origin), so we
+			// scale the whole embed wrap with a CSS transform. Ctrl+wheel zooms,
+			// plain wheel scrolls the iframe natively. Ported/enhanced beyond pull13.
+			var iframeWrapRef = React.useRef(null)
+			var iframeZoomRef = React.useRef({ scale: 1, tx: 0, ty: 0 })
+			var handleIframeWheel = function (e) {
+				if (e.ctrlKey || e.metaKey) {
+					e.preventDefault()
+					var wrap = iframeWrapRef.current
+					if (!wrap) return
+					var rect = wrap.getBoundingClientRect()
+					var mx = e.clientX - rect.left, my = e.clientY - rect.top
+					var z = iframeZoomRef.current
+					var next = Math.min(8, Math.max(0.5, z.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+					z.tx = mx - (mx - z.tx) * (next / z.scale)
+					z.ty = my - (my - z.ty) * (next / z.scale)
+					z.scale = next
+					wrap.style.transformOrigin = '0 0'
+					wrap.style.transform = 'translate(' + z.tx + 'px,' + z.ty + 'px) scale(' + z.scale + ')'
+				}
+			}
+
 			// Native wheel listener (React onWheel is passive, can't preventDefault)
 			React.useEffect(function () {
 				var img = imgRef.current || videoRef.current
@@ -3162,12 +3185,12 @@ clearTimeout((panel as any)._dshHideT)
 							}, '⧉ 打开真实页')
 						),
 						embedMode === 'iframe' && liveUrl
-							? h('div', { className: 'dsh-ego-side-embedwrap', style: { position: 'relative', width: '100%' } },
+							? h('div', { ref: iframeWrapRef, className: 'dsh-ego-side-embedwrap', style: { position: 'relative', width: '100%' }, onWheel: handleIframeWheel },
 								h('div', { className: 'dsh-ego-side-embeddbar' },
 									'已嵌入真实页面 · ' + liveUrl,
 									h('button', { className: 'dsh-ego-side-back', type: 'button', onClick: function () { setEmbedMode('agent') } }, '切回截图')
 								),
-								h('iframe', { key: liveUrl, className: 'dsh-ego-side-embed', src: liveUrl, loading: 'lazy' })
+								h('iframe', { key: liveUrl, className: 'dsh-ego-side-embed', src: liveUrl, loading: 'lazy', title: 'Ctrl+滚轮缩放 · 滚轮滚动页面' })
 							)
 							: embedMode === 'probe'
 							? h('div', { className: 'dsh-ego-side-liveurl' }, '正在探测页面是否可嵌入…')
