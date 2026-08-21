@@ -3265,7 +3265,10 @@ clearTimeout((panel as any)._dshHideT)
 						),
 						showEmbedPre ? h('div', { className: 'dsh-ego-side-embednote' }, '该页面不允许被 iframe 嵌入（X-Frame-Options / CSP），已显示截图视图。') : null,
 						liveImg,
-						state.embedActive ? null : h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot', dangerouslySetInnerHTML: { __html: HOTSPOT_CURSOR_SVG } })),
+						// ALWAYS render the hotspot marker — it is a no-op when a real
+						// iframe is shown (no live <img>), and must exist whenever the
+						// screenshot stream is on screen so updateHotspot can find it.
+						h('div', { className: 'dsh-ego-hotspot' }, h('div', { className: 'dsh-ego-hotspot-dot', dangerouslySetInnerHTML: { __html: HOTSPOT_CURSOR_SVG } })),
 						h('div', { className: 'dsh-ego-side-livetitle' }, currentSpace.title || currentSpace.url || '(新标签页)'),
 						h('div', { className: 'dsh-ego-side-liveurl' + (state.zoomHint ? ' dsh-ego-side-hint' : '') }, state.embedActive ? 'Ctrl+滚轮：本页为真实 iframe，缩放请用截图视图' : (state.zoomHint || currentSpace.url || ''))
 					)
