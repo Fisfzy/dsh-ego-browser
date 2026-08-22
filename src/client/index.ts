@@ -3024,6 +3024,14 @@ clearTimeout((panel as any)._dshHideT)
 				title: function () { return 'Agent 浏览器' },
 				order: 70,
 				single: true,
+				// Claim external web links so they route into the ego browser
+				// tab (native better-sidebar urlTarget mechanism; url is a
+				// URL object). Scope to http(s) web pages, leaving documents
+				// for the built-in PDF/text/markdown viewers rather than
+				// shadowing them.
+				urlTarget: function (url) {
+					return /^https?:$/.test(url.protocol) && !/\.(pdf|txt|md|docx?|xlsx?|pptx?)$/i.test(url.pathname)
+				},
 				component: EgoBrowserTab,
 			})
 
