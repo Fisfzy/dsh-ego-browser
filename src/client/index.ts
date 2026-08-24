@@ -57,7 +57,7 @@ declare function require(id: string): any
 			}
 		}
 
-		const inject = ['slots', 'locale', 'connection']
+		const inject = ['slots', 'locale', 'connection', 'betterSidebar']
 
 		// ── Settings card: locale ─────────────────────────────────────────
 		var SETTINGS_NS = 'ego-browser'
@@ -958,14 +958,12 @@ declare function require(id: string): any
 				}, EgoBrowserCard)
 			})
 
-		// ── Watch panel: sidebar tab if available, floating fallback otherwise ──
-		// Opportunistic consumption via ctx.get() (NOT ctx.betterSidebar — that
-		// requires 'betterSidebar' in inject, which would make it a hard
-		// dependency: without dsh-better-sidebar installed the whole plugin,
-		// including the settings card, would fail to load). ctx.get() is the
-		// documented pattern for optional services (see approval-seam notes,
-		// postmortem 0001). Reads presence per call, degrades across HMR.
-		if (ctx.get('betterSidebar') !== undefined) {
+		// ── Watch panel: sidebar tab (betterSidebar injected so the tab shows in
+		// the dsh-better-sidebar '+' menu). The floating fallback is kept only
+		// for a HOST without the sidebar — with 'betterSidebar' in inject the
+		// client bundle requires dsh-better-sidebar to load, so the else branch
+		// is effectively a safety net.
+		if (ctx.betterSidebar !== undefined) {
 			ctx.effect(() => mountSidebarTab(ctx), 'ego-browser sidebar tab')
 		} else {
 			ctx.effect(() => mountFloatingWatch(ctx), 'ego-browser watch panel')
@@ -3012,7 +3010,7 @@ clearTimeout((panel as any)._dshHideT)
 
 		// ── mountSidebarTab: register the ego-browser watch tab ────────────────
 		function mountSidebarTab(ctx) {
-			var betterSidebar = ctx.get('betterSidebar')
+			var betterSidebar = ctx.betterSidebar
 			if (!betterSidebar) return function () {}
 			// Inject Tab CSS once (cleaned up on dispose)
 			var styleEl = document.createElement('style')
