@@ -19,7 +19,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { resolveConfig } from './config.ts'
 import { SETTINGS_NAMESPACE } from './settings.ts'
 import { rewriteGithubUrl } from './ffmpeg-manifest.ts'
-import type { EgoContext, SettingsService } from './types.ts'
+import type { EgoContext, SettingsService, WebServerLike } from './types.ts'
 import type { FfmpegInstallationManager, FfmpegStatus } from './ffmpeg-installation.ts'
 import type { RawConfig, ResolvedConfig } from './types.ts'
 
@@ -77,8 +77,9 @@ export function registerEgoBrowserGateway(
     }
   })
   ctx.effect?.(() => {
-    if (!ctx.webServer || typeof ctx.webServer.register !== 'function') return
-    return ctx.webServer.register({
+    const webServer = (ctx as EgoContext).get?.('webServer') as WebServerLike | undefined
+    if (!webServer || typeof webServer.register !== 'function') return
+    return webServer.register({
       kind: 'prefix',
       path: API_PREFIX,
       handler: async (reqRaw: unknown, resRaw: unknown) => {

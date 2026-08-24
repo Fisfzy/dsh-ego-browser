@@ -8,13 +8,16 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./dsh-plugin.json": "./dsh-plugin.json",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/",
     "bin/",
     "runtime/",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "dsh-plugin.json",
+    "dsh.plugin.json"
   ],
   "dsh": {
     "bundle": {

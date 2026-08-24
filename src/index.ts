@@ -46,19 +46,16 @@ import { installEgoBrowserSettings } from './settings.ts'
 import { registerEgoBrowserGateway } from './gateway.ts'
 import { getSharedFfmpegInstallationManager } from './ffmpeg-installation.ts'
 import { SENTINEL, j, str, num, bool, readAll, SAFE_FN } from './util.ts'
-import type { EgoContext, RawConfig, ResolvedConfig, SubprocessService, ToolExec } from './types.ts'
+import type { EgoContext, RawConfig, ResolvedConfig, SubprocessService, ToolExec, WebServerLike } from './types.ts'
 
 export const name = 'ego-browser'
 // Platform-aware host services: the web shell exposes `webServer`, other Web
-// hosts expose `httpServer`. Declare both as optional so the plugin mounts on
-// either runner; initCastServer picks whichever one is present.
-// cordis 0.1.0 requires a plain string array (the object-optional syntax it
-// previously used is unsupported and broke cast-server registration — the
-// 2026-08-13 regression). Declaring the HTTP service as a plain string is how
-// every working host plugin (aionui-panel, client-connection, web-app) does it:
-// plain-string services resolve through fiber.store, keeping ctx.webServer
-// reachable so initCastServer can re-register the /api/ego/* watch routes.
-export const inject = ['tools', 'subprocess', 'webServer']
+// hosts expose `httpServer`. To keep activation platform-agnostic (TUI /
+// headless hosts have neither), neither is a required inject — the /api/ego/*
+// watch routes are registered opportunistically via ctx.get('webServer') and
+// guarded, so a GUI-less host is a safe no-op. The ego_* tools depend only on
+// tools + subprocess, present in every host.
+export const inject = ['tools', 'subprocess']
 // Schemastery schema for the composition entry and the `ego-browser` settings
 // namespace. Re-exported from config.ts so cordis's loader validates the
 // composition layer and ctx.settings.register() validates the user layer.
@@ -690,7 +687,8 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   // earlier disable dropped both the webServer inject and this registration,
   // killing the bottom-right live browser view. Plain-string `webServer`
   // inject resolves through fiber.store and is fully supported by cordis.]
-  if (typeof ctx.webServer?.register === 'function') {
+  const webServer = (ctx as EgoContext).get?.('webServer')
+  if (webServer && typeof (webServer as WebServerLike | undefined)?.register === 'function') {
     try {
       initCastServer(ctx, cfg, bridge, ffmpegManager)
     } catch (err) {

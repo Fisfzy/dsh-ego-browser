@@ -110,6 +110,7 @@ export interface EgoContext {
   logger?: LoggerLike
   webServer?: WebServerLike
   httpServer?: HttpServerLike
+  get?(name: string): unknown
   effect?(fn: () => unknown, label?: string): unknown
   inject?(services: readonly string[], fn: (sctx: EgoContext) => void): void
   on?(event: string, fn: (...args: unknown[]) => unknown): () => void

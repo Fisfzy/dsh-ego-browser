@@ -1,0 +1,84 @@
+{
+  "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
+  "id": "dsh-ego-browser",
+  "name": "ego-browser",
+  "version": "0.8.0",
+  "manifestVersion": "0.15",
+  "facets": {
+    "host": {
+      "entry": "lib/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      {
+        "apiVersion": "presentation.dsh/v1alpha1",
+        "kind": "OpenExternal",
+        "optional": true,
+        "fallback": "report the URL as text instead of opening it"
+      },
+      {
+        "apiVersion": "presentation.dsh/v1alpha1",
+        "kind": "Notification",
+        "optional": true,
+        "fallback": "log the notice to the browser-status scene"
+      }
+    ]
+  },
+  "permissions": [],
+  "contributes": {
+    "commands": [],
+    "x-dsh-tui": [
+      {
+        "apiVersion": "tui.dsh/v1alpha1",
+        "kind": "Scene",
+        "id": "dsh-ego-browser.watch",
+        "name": "agent_browser",
+        "spec": {
+          "title": "Agent 浏览器",
+          "titles": {
+            "en": "Agent Browser",
+            "zh": "Agent 浏览器"
+          }
+        }
+      },
+      {
+        "apiVersion": "tui.dsh/v1alpha1",
+        "kind": "SettingsSection",
+        "id": "dsh-ego-browser.settings",
+        "name": "ego_browser_settings",
+        "spec": {
+          "namespace": "ego-browser",
+          "title": "Agent 浏览器",
+          "titles": {
+            "en": "Agent Browser",
+            "zh": "Agent 浏览器"
+          },
+          "fields": [
+            { "path": ["chromePath"], "label": "Browser binary path", "kind": "text", "hint": "Path to the Chrome/Chromium/Edge binary. Empty = auto-detect." },
+            { "path": ["captureBackend"], "label": "Capture backend", "kind": "select", "options": [
+              { "value": "auto", "label": "Auto" },
+              { "value": "cdp", "label": "CDP" },
+              { "value": "ffmpeg", "label": "FFmpeg" }
+            ] },
+            { "path": ["streamProfile"], "label": "Quality profile", "kind": "select", "options": [
+              { "value": "balanced", "label": "Balanced" },
+              { "value": "quality", "label": "Quality" },
+              { "value": "speed", "label": "Speed" }
+            ] },
+            { "path": ["ffmpegPath"], "label": "FFmpeg binary path", "kind": "text", "hint": "Path to ffmpeg. Empty = auto-detect / on-demand install." }
+          ]
+        }
+      }
+    ]
+  },
+  "subscriptions": [],
+  "license": "MIT",
+  "source": {
+    "repository": "https://github.com/Fisfzy/dsh-ego-browser"
+  },
+  "compat": {
+    "hosts": ["dsh-tui"]
+  }
+}

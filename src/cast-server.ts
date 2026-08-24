@@ -14,7 +14,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { request, type ClientRequest, type IncomingMessage, type ServerResponse } from 'node:http'
-import type { EgoContext, ResolvedConfig } from './types.ts'
+import type { EgoContext, ResolvedConfig, WebServerLike } from './types.ts'
 import type { SettingsBridge } from './settings.ts'
 import type { FfmpegInstallationManager, FfmpegStatus } from './ffmpeg-installation.ts'
 
@@ -445,12 +445,11 @@ export function initCastServer(
 ): void {
   const ensureWorker = makeEnsureWorker(ctx, cfg, ffmpegManager)
   const pushConfig = makePushConfig(ensureWorker, ffmpegManager)
-  // The web shell exposes `webServer` (the only HTTP host surface the plugin
-  // declares in inject). We deliberately reach for `webServer` alone: touching
-  // an undeclared `httpServer` on a strict-inject host would trip the
-  // `cannot get property without inject` guard. If webServer is absent here
-  // (headless / non-Web runner) there is nothing to register, so exit cleanly.
-  const server = ctx.webServer
+  // The web shell exposes `webServer` — the only HTTP host surface the plugin
+  // uses. It is NOT a required inject (TUI / headless hosts have none), so we
+  // resolve it opportunistically via ctx.get('webServer'); if absent here there
+  // is nothing to register, so exit cleanly.
+  const server = (ctx as EgoContext).get?.('webServer') as WebServerLike | undefined
   if (!server || typeof server.register !== 'function') {
     return
   }
