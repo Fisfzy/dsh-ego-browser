@@ -15,7 +15,7 @@ export function defaultFfmpegCacheRoot(home: string = homedir()): string {
   return join(home, '.dsh', 'cache', 'ego-browser', 'ffmpeg')
 }
 
-const SHARED_MANAGERS_KEY = Symbol.for('@dsh-external/ego-browser.ffmpeg-installation-managers')
+const SHARED_MANAGERS_KEY = Symbol.for('dsh-ego-browser.ffmpeg-installation-managers')
 
 type SharedManagers = Map<string, FfmpegInstallationManager>
 

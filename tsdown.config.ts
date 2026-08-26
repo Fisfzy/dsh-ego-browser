@@ -12,7 +12,7 @@
  */
 import { defineConfig, type UserConfig } from 'tsdown'
 
-const ID = '@dsh-external/ego-browser'
+const ID = 'dsh-ego-browser'
 
 /** Host-provided singletons: never bundle, keep as runtime imports. */
 const HOST_EXTERNALS = [

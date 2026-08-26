@@ -1,8 +1,7 @@
 {
-  "name": "@dsh-external/ego-browser",
+  "name": "dsh-ego-browser",
   "version": "0.8.0",
-  "description": "ego-browser (ego-lite) integration plugin for DSH: structured browser-automation tools (30+ ego_*) that drive the vendored ego runtime through ctx.subprocess, plus a realtime watch panel (live SSE screencast + direct mouse interaction with the agent browser + download capture + human-verification notice + tab bar + login guide).",
-  "private": true,
+  "description": "ego-browser (ego-lite) integration plugin for DSH: structured browser-automation tools (30+ ego_*) that drive the vendored ego runtime through ctx.subprocess, plus a realtime watch panel (live SSE screencast + direct mouse interaction + download capture + human-verification notice). Web shell: floating watch panel without dsh-better-sidebar, sidebar tab with it. Headless/TUI hosts: tools-only.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -17,7 +16,8 @@
     "runtime/",
     "cordis.patch.yml",
     "dsh-plugin.json",
-    "dsh.plugin.json"
+    "THIRD_PARTY_NOTICES.md",
+    "!**/*.map"
   ],
   "dsh": {
     "bundle": {
@@ -39,7 +39,7 @@
     "build": "tsdown -c tsdown.config.ts"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "link:../dsh/vendor/schemastery"
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-client-locale": "0.1.0-rc.8",
@@ -74,5 +74,9 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fisfzy/dsh-ego-browser.git"
+  }
 }

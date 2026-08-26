@@ -7,4 +7,4 @@
 # (vendored runtime CLI, sane maxOutputBytes / graceMs, empty defaultSpace).
 - insert:
     - id: ego-browser
-      name: '@dsh-external/ego-browser'
+      name: 'dsh-ego-browser'

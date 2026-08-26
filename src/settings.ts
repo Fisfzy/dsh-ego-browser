@@ -21,7 +21,7 @@ import type { EgoContext, SettingsScope } from './types.ts'
 /** Settings namespace under which ego-browser config persists. */
 export const SETTINGS_NAMESPACE = settingsNamespace('ego-browser')
 
-const SHARED_SCOPE_KEY = Symbol.for('@dsh-external/ego-browser.settings-scope')
+const SHARED_SCOPE_KEY = Symbol.for('dsh-ego-browser.settings-scope')
 
 interface SharedScope {
   scope: SettingsScope | null
