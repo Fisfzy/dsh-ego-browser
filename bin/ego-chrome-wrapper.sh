@@ -24,6 +24,13 @@ if [ "${EGO_FRAME_RATE_UNCAP:-0}" = "1" ]; then
   EXTRA="--disable-frame-rate-limit"
 fi
 
+# Resolve our own absolute path so we can refuse to exec ourselves. On root
+# hosts the plugin sets EGO_LINUX_CHROME to this very wrapper (see
+# resolveEgoEnv in lib/index.js); without this guard the first candidate below
+# would exec us again — re-appending --no-sandbox on every pass — and spin
+# forever instead of ever reaching a real browser binary.
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+
 # Candidate Chrome binaries, in preference order. The first that exists wins.
 for bin in \
   "${EGO_LINUX_CHROME:-}" \
@@ -36,7 +43,9 @@ for bin in \
   /snap/bin/chromium
 do
   if [ -n "${bin:-}" ] && [ -x "${bin}" ]; then
-    exec "${bin}" --no-sandbox ${EXTRA} "$@"
+    if [ "$(readlink -f "${bin}" 2>/dev/null || echo "${bin}")" != "${SELF}" ]; then
+      exec "${bin}" --no-sandbox ${EXTRA} "$@"
+    fi
   fi
 done
 
