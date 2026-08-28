@@ -9,6 +9,14 @@
  *   3. worker — src/worker/ego-cast-worker.ts bundled to
  *      bin/ego-cast-worker.mjs (Node ESM, self-contained: only node: builtins).
  *      cast-server spawns this single file by path (../bin/ego-cast-worker.mjs).
+ *
+ * [0.1.2 client contract] the browser bundle MUST register the DECLARED
+ * package name `dsh-ego-browser` — the boot manifest rows are keyed by the
+ * package.json `name`, and the loader row specifier must equal it too
+ * (nearestPackage name check). The previous `@dsh-external/ego-browser` alias
+ * (junction install key) does NOT match the manifest name, so the 0.1.2
+ * client scan permanently classifies the entry as "not a client row" and the
+ * watch panel silently disappears. Load the package under its real name.
  */
 import { defineConfig, type UserConfig } from 'tsdown'
 

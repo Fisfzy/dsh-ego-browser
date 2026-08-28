@@ -5,6 +5,13 @@
 #
 # All Config fields are optional — defaults are computed in lib/index.js
 # (vendored runtime CLI, sane maxOutputBytes / graceMs, empty defaultSpace).
+#
+# [0.1.2 client contract] the loader row specifier MUST equal the package.json
+# `name` (`dsh-ego-browser`) — the client-modules scan matches the nearest
+# manifest name against the Loader specifier, and the boot row id is the
+# package name. The earlier `@dsh-external/ego-browser` alias (junction key)
+# made the scan classify the entry as "not a client row": host tools kept
+# working but the watch panel silently disappeared.
 - insert:
     - id: ego-browser
-      name: 'dsh-ego-browser'
+      name: "dsh-ego-browser"

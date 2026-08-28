@@ -1,7 +1,7 @@
 {
   "name": "dsh-ego-browser",
-  "version": "0.8.0",
-  "description": "ego-browser (ego-lite) integration plugin for DSH: structured browser-automation tools (30+ ego_*) that drive the vendored ego runtime through ctx.subprocess, plus a realtime watch panel (live SSE screencast + direct mouse interaction + download capture + human-verification notice). Web shell: floating watch panel without dsh-better-sidebar, sidebar tab with it. Headless/TUI hosts: tools-only.",
+  "version": "0.8.1",
+  "description": "ego-browser (ego-lite) integration plugin for DSH: structured browser-automation tools (30+ ego_*) that drive the vendored ego runtime through ctx.subprocess, plus a realtime watch panel (live SSE screencast + direct mouse interaction + download capture + human-verification notice). Web shell: floating watch panel without dsh-better-sidebar, sidebar tab with it. Headless/TUI hosts: tools-only. [0.1.2-alpha.1: client store migration + scoped client registration id]",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -20,14 +20,15 @@
     "!**/*.map"
   ],
   "dsh": {
+    "engines": {
+      "dsh": ">=0.1.2-alpha.1"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings-plugins"
       ]
@@ -42,18 +43,18 @@
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-client-locale": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-settings": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-store": ">=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": ">=0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2",
     "react": "^18.2.0",
     "schemastery": "^3.18.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-locale": { "optional": true },
-    "@deepseek-ai/dsh-client-runtime": { "optional": true },
+    "@deepseek-ai/dsh-client-store": { "optional": true },
     "@deepseek-ai/dsh-client-ui-settings-plugins": { "optional": true },
     "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
     "@deepseek-ai/dsh-settings": { "optional": true },

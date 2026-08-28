@@ -687,10 +687,16 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   // earlier disable dropped both the webServer inject and this registration,
   // killing the bottom-right live browser view. Plain-string `webServer`
   // inject resolves through fiber.store and is fully supported by cordis.]
-  const webServer = (ctx as EgoContext).get?.('webServer')
-  if (webServer && typeof (webServer as WebServerLike | undefined)?.register === 'function') {
+  // [0.1.2 migration 2026-08-28] the strict service resolver returns undefined
+  // for an UNDECLARED service, so the old `ctx.get?.('webServer')` guard was
+  // silently undefined and the /api/ego/* watch routes were never installed —
+  // the watch panel had no data endpoints (sidebar tab showed the empty state
+  // forever, zero errors). The official optional-service pattern is a nested
+  // inject: the callback runs only once the service is available, and no-ops
+  // on hosts without a web server (TUI / headless stay tools-only).
+  ctx.inject?.(['webServer'], (wctx) => {
     try {
-      initCastServer(ctx, cfg, bridge, ffmpegManager)
+      initCastServer(wctx as EgoContext, cfg, bridge, ffmpegManager)
     } catch (err) {
       ctx.logger?.warn?.(
         `ego-browser: cast server init failed: ${(err as Error)?.message ?? err}`,
@@ -701,13 +707,13 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // bypassing the host's settings-RPC allowlist. Same webServer the cast
     // server uses; guarded so a headless host without webServer is a no-op.
     try {
-      registerEgoBrowserGateway(ctx, bridge, ffmpegManager)
+      registerEgoBrowserGateway(wctx as EgoContext, bridge, ffmpegManager)
     } catch (err) {
       ctx.logger?.warn?.(
         `ego-browser: settings gateway init failed: ${(err as Error)?.message ?? err}`,
       )
     }
-  }
+  })
   // Graceful teardown: stop the persistent browser when the plugin unmounts.
   // CRITICAL: this must be fire-and-forget, NOT awaited. Awaiting `--stop`
   // (which asks the browser to graceful-close, ~seconds) stalls the host process

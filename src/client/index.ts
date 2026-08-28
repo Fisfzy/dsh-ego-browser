@@ -33,8 +33,13 @@ declare function require(id: string): any
 		// Required up-front so the settings card + watch panel share the same
 		// React runtime. The ModuleLoader factory's `require` resolves these
 		// from the profile's node_modules (declared as peerDependencies).
+		//
+		// [0.1.2-alpha.1 migration] `@deepseek-ai/dsh-client-runtime` was renamed
+		// to `@deepseek-ai/dsh-client-store` (packages/client/store); the browser
+		// module graph now resolves the store as a static module under the plain
+		// package id (no `/client` subpath). createSnapshotStore kept its shape.
 		var React = require('react')
-		var runtimeClient = require('@deepseek-ai/dsh-client-runtime/client')
+		var runtimeClient = require('@deepseek-ai/dsh-client-store')
 		var createSnapshotStore = runtimeClient.createSnapshotStore
 		// bindSnapshotSelector inlined from dsh-client-ui-renderer (shell-only
 		// glue; business plugins depend on runtime + ui-slots only). Uses

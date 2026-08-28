@@ -2,7 +2,7 @@
   "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "id": "dsh-ego-browser",
   "name": "ego-browser",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "manifestVersion": "0.15",
   "facets": {
     "host": {
