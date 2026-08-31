@@ -281,8 +281,9 @@ function isPosixRoot(platform: NodeJS.Platform = process.platform): boolean {
 }
 /** No display server → headless is required (Linux/macOS headless servers). */
 function isHeadlessDetected(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (platform === 'win32') {
-    return false // Windows always has a desktop session.
+  // Windows and macOS always have a desktop session; only Linux headless servers need to run the backing browser headless.
+  if (platform === 'win32' || platform === 'darwin') {
+    return false
   }
   return env.DISPLAY === undefined || env.DISPLAY === ''
 }
