@@ -433,16 +433,211 @@ async function clearProfileLock(profileDir) {
   return true;
 }
 
+// ── X display (Xvfb) handling ───────────────────────────────────────────────
+// A visible (non-headless) browser draws into an X server, and on a machine
+// with no display — a container, CI runner, headless server — $DISPLAY is
+// unset, so Chrome aborts with "Missing X server or $DISPLAY". Rather than
+// fail, the absence is detected through the environment (the $DISPLAY
+// variable plus the socket it names) and a virtual framebuffer (Xvfb) is
+// started automatically. A user-provided display is always preferred and is
+// never touched.
+
+const X11_UNIX_DIR = "/tmp/.X11-unix";
+
+/**
+ * Does this $DISPLAY value name a usable X server right now?
+ *
+ * The env var is the primary signal, but a set-but-stale value (a dead
+ * session, a wiped /tmp) would read as "X is here" when it is not — so a
+ * local display must also have its socket file present. A display with a
+ * host part names a *remote* X server whose socket is not local; trust it
+ * as-is instead of shadowing it with a local Xvfb.
+ */
+async function displayUsable(display) {
+  if (typeof display !== "string" || display === "") return false;
+  const [host, numPart] = display.split(":");
+  const num = Number((numPart ?? "").split(".")[0]);
+  if (!Number.isInteger(num)) return false;
+  if (host) return true;
+  return exists(join(X11_UNIX_DIR, `X${num}`));
+}
+
+/**
+ * Find an Xvfb an earlier launch already started, so it can be reused.
+ *
+ * Every CLI run is a fresh process with a fresh environment, so a display
+ * this machine started earlier is invisible through $DISPLAY here. Without
+ * this check a crash-and-relaunch cycle would spawn a fresh Xvfb on every
+ * attempt, one display number per cycle, until the numbers ran out.
+ *
+ * @returns {Promise<string | null>} the display name (":N") when a live Xvfb
+ *   with a matching X socket exists, else null.
+ */
+async function findLiveXvfbDisplay() {
+  let sockets;
+  try {
+    sockets = await readdir(X11_UNIX_DIR);
+  } catch {
+    return null; // no X runtime dir at all
+  }
+  const liveDisplays = new Set();
+  try {
+    const entries = await readdir("/proc");
+    await Promise.all(
+      entries
+        .filter((entry) => /^\d+$/.test(entry))
+        .map(async (pid) => {
+          try {
+            const argv = (await readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0");
+            const idx = argv.findIndex((arg) => arg === "Xvfb" || arg.endsWith("/Xvfb"));
+            const match = idx >= 0 ? argv[idx + 1]?.match(/^:(\d+)$/) : null;
+            if (match) liveDisplays.add(match[1]);
+          } catch {
+            // exited under us, or another user's process
+          }
+        }),
+    );
+  } catch {
+    return null; // no procfs to walk (non-Linux) — nothing to reuse
+  }
+  for (const socket of sockets) {
+    const match = socket.match(/^X(\d+)$/);
+    if (match && liveDisplays.has(match[1])) return `:${match[1]}`;
+  }
+  return null;
+}
+
+/** Pick a display number whose socket does not exist yet. */
+async function pickFreeDisplayNumber() {
+  const taken = new Set();
+  try {
+    const sockets = await readdir(X11_UNIX_DIR);
+    for (const socket of sockets) {
+      const match = socket.match(/^X(\d+)$/);
+      if (match) taken.add(Number(match[1]));
+    }
+  } catch {
+    // no X runtime dir yet — nothing taken
+  }
+  for (const num of [99, 98, 97, 96, 95]) if (!taken.has(num)) return num;
+  for (let num = 1; num < 128; num++) if (!taken.has(num)) return num;
+  throw new Error("no free X display number available");
+}
+
+/**
+ * Start Xvfb on the given display number and wait for its X socket to come
+ * up.
+ *
+ * @returns {Promise<{ display: string, pid: number }>}
+ */
+async function spawnXvfb(num) {
+  const xvfb = await which("Xvfb");
+  if (!xvfb) {
+    throw new Error(
+      "no X display (DISPLAY is not set) and no Xvfb binary on PATH. " +
+        "Install xvfb (e.g. `apt-get install -y xvfb`) or run the browser " +
+        "headless instead (EGO_LINUX_HEADLESS=1).",
+    );
+  }
+  const display = `:${num}`;
+  const child = spawn(
+    xvfb,
+    [display, "-screen", "0", "1280x900x24", "-nolisten", "tcp", "-ac"],
+    { detached: true, stdio: "ignore" },
+  );
+  child.unref();
+  const socket = join(X11_UNIX_DIR, `X${num}`);
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (await exists(socket)) return { display, pid: child.pid };
+    if (child.exitCode !== null) break; // Xvfb died before its socket appeared
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Xvfb ${display} did not create its X socket within 10000ms`);
+}
+
+/**
+ * Make sure a visible browser has an X display to draw into.
+ *
+ * Preference order: (1) a $DISPLAY that already names a live socket — the
+ * user's real session, never touched; (2) an Xvfb an earlier launch started
+ * on this machine (see findLiveXvfbDisplay); (3) a fresh Xvfb on a free
+ * display number. Headless launches skip this entirely.
+ *
+ * A *remote* display (host part in $DISPLAY) can be trusted as "usable" but
+ * not verified from inside a container — the browser launch itself is the
+ * real test. Callers that already know the environment display failed pass
+ * `ignoreEnvDisplay` so this function moves straight to Xvfb instead of
+ * handing the same broken display back.
+ *
+ * @param {{ ignoreEnvDisplay?: boolean }} [options]
+ * @returns {Promise<{ display: string, pid: number | null, launched: boolean }>}
+ *   `launched` is true only when this call started the X server itself; the
+ *   caller records that in the browser state so stopBrowser knows which
+ *   displays are ours to terminate.
+ */
+export async function ensureXDisplay({ ignoreEnvDisplay = false } = {}) {
+  if (!ignoreEnvDisplay && (await displayUsable(process.env.DISPLAY))) {
+    return { display: process.env.DISPLAY, pid: null, launched: false };
+  }
+  const reused = await findLiveXvfbDisplay();
+  if (reused) return { display: reused, pid: null, launched: false };
+  const { display, pid } = await spawnXvfb(await pickFreeDisplayNumber());
+  return { display, pid, launched: true };
+}
+
+/**
+ * Spawn the browser and wait for its DevTools endpoint.
+ *
+ * @param {string[] | null} args - full Chrome argv (null for headless is
+ *   not used; headless simply passes its own flag list).
+ * @param {{ display: string, launched: boolean } | null} plan - which display
+ *   the browser should draw into; null means "inherit the environment".
+ * @returns {Promise<{ port: number, wsUrl: string, pid: number } | null>}
+ *   null when no endpoint answered within the timeout; the attempt's process
+ *   is guaranteed to be dead on return, so a caller may retry immediately.
+ */
+async function spawnAndAwait(binary, args, plan, lastError) {
+  const child = spawn(binary, args, {
+    detached: true,
+    stdio: "ignore",
+    // Xvfb lives on a display number this process just chose, so the browser
+    // must be told where to draw explicitly — the caller's environment may
+    // still carry no DISPLAY at all.
+    env: plan ? { ...process.env, DISPLAY: plan.display } : process.env,
+  });
+  child.unref();
+  try {
+    const { port, wsUrl } = await waitForEndpoint(PROFILE_DIR);
+    return { port, wsUrl, pid: child.pid };
+  } catch (error) {
+    lastError.error = error;
+    // The endpoint never came up. Before the caller retries, make sure this
+    // attempt's process is really gone: a half-dead Chrome would keep holding
+    // the profile lock and block the next spawn.
+    if (child.exitCode === null) {
+      try {
+        process.kill(child.pid, "SIGTERM");
+      } catch {
+        // already gone
+      }
+      if (!(await waitForProcessExit(child.pid, 3000))) {
+        try {
+          process.kill(child.pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    }
+    return null;
+  }
+}
+
 async function launch({ headless }) {
   const binary = await resolveBinary();
   await mkdir(PROFILE_DIR, { recursive: true });
   // Ours now exists, so it cannot be mistaken for an orphan below.
   await reapOrphanedBrowsers();
-  await neutralizeZoom(PROFILE_DIR);
-  await clearStaleCrashMark(PROFILE_DIR);
-  await clearProfileLock(PROFILE_DIR);
-  // A stale port file would be read as this launch's port.
-  await rm(join(PROFILE_DIR, PORT_FILE), { force: true });
 
   const args = [
     ...LAUNCH_FLAGS,
@@ -466,22 +661,66 @@ async function launch({ headless }) {
     // cannot break CDP control / profile isolation / proxy bypass.
     ...filterChromeArgs(process.env.EGO_LINUX_EXTRA_ARGS ?? ""),
   ];
-  const child = spawn(binary, args, {
-    detached: true,
-    stdio: "ignore",
-  });
-  child.unref();
 
-  const { port, wsUrl } = await waitForEndpoint(PROFILE_DIR);
+  // Display strategy for a visible browser:
+  //
+  // 1. The environment's display goes first — the user's session wins. A
+  //    remote display (host:screen) cannot be verified from inside a
+  //    container, so the launch itself is the test.
+  // 2. If that attempt fails to bring the browser up — unreachable remote X,
+  //    dead socket, whatever the cause — fall back to a virtual framebuffer
+  //    and retry immediately.
+  // 3. If there is no usable display at all, go straight to Xvfb.
+  //
+  // Headless needs no display at all.
+  const initial = headless ? null : await ensureXDisplay();
+
+  // Pre-spawn cleanup lives inside the attempt because a retry must redo it:
+  // a failed attempt can leave a profile lock and a stale port file behind.
+  const lastError = { error: null };
+  const attempt = async (plan) => {
+    await neutralizeZoom(PROFILE_DIR);
+    await clearStaleCrashMark(PROFILE_DIR);
+    await clearProfileLock(PROFILE_DIR);
+    // A stale port file would be read as this launch's port.
+    await rm(join(PROFILE_DIR, PORT_FILE), { force: true });
+    return spawnAndAwait(binary, args, plan, lastError);
+  };
+
+  let plan = initial;
+  let result = await attempt(plan);
+  let xvfb = plan?.launched ? plan : null;
+
+  if (!result && plan && !plan.launched) {
+    // The environment display did not bring the browser up. Retry right away
+    // on a virtual framebuffer — never hand the same broken display back.
+    process.stderr.write(
+      `ego: browser did not come up on display ${plan.display}; falling back to Xvfb\n`,
+    );
+    plan = await ensureXDisplay({ ignoreEnvDisplay: true });
+    xvfb = plan.launched ? plan : null;
+    result = await attempt(plan);
+  }
+  if (!result) {
+    throw new Error(
+      plan
+        ? `browser failed to come up on display ${plan.display}: ${lastError.error?.message}`
+        : (lastError.error?.message ?? "browser failed to come up"),
+    );
+  }
+
   await writeBrowserState({
-    port,
-    wsUrl,
-    pid: child.pid,
+    port: result.port,
+    wsUrl: result.wsUrl,
+    pid: result.pid,
     binary,
     headless,
     profileDir: PROFILE_DIR,
+    // Only recorded when *we* started the X server: stopBrowser terminates
+    // what is ours and leaves any user display alone.
+    ...(xvfb ? { xvfb: { pid: xvfb.pid, display: xvfb.display } } : {}),
   });
-  return { port, wsUrl, launched: true };
+  return { port: result.port, wsUrl: result.wsUrl, launched: true };
 }
 
 /**
@@ -580,6 +819,16 @@ export async function stopBrowser() {
     try {
       process.kill(state.pid, "SIGTERM");
       stopped = true;
+    } catch {
+      // already gone
+    }
+  }
+
+  // An X server we started for a display-less machine is dead weight once the
+  // browser is gone; a user display (reused, not launched by us) stays up.
+  if (state?.xvfb?.pid) {
+    try {
+      process.kill(state.xvfb.pid, "SIGTERM");
     } catch {
       // already gone
     }
