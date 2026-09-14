@@ -34,8 +34,40 @@ declare function require(id: string): any
 		// React runtime. The ModuleLoader factory's `require` resolves these
 		// from the profile's node_modules (declared as peerDependencies).
 		var React = require('react')
-		var runtimeClient = require('@deepseek-ai/dsh-client-runtime/client')
-		var createSnapshotStore = runtimeClient.createSnapshotStore
+		var createSnapshotStore
+		try {
+			createSnapshotStore = require('@deepseek-ai/dsh-client-store').createSnapshotStore
+		} catch (e) {
+			try {
+				createSnapshotStore = require('@deepseek-ai/dsh-client-runtime/client').createSnapshotStore
+			} catch (e2) {
+				createSnapshotStore = function (initial) {
+					var state = initial
+					var listeners = new Set<any>()
+					return {
+						getSnapshot: function () { return state },
+						subscribe: function (fn) {
+							listeners.add(fn)
+							return function () { listeners.delete(fn) }
+						},
+						update: function (mutator) {
+							var draft = Object.assign({}, state)
+							mutator(draft)
+							state = draft
+							listeners.forEach(function (fn: any) {
+								try { fn() } catch (err) { console.error(err) }
+							})
+						},
+						set: function (next) {
+							state = next
+							listeners.forEach(function (fn: any) {
+								try { fn() } catch (err) { console.error(err) }
+							})
+						}
+					}
+				}
+			}
+		}
 		// bindSnapshotSelector inlined from dsh-client-ui-renderer (shell-only
 		// glue; business plugins depend on runtime + ui-slots only). Uses
 		// React 18's built-in useSyncExternalStore with per-snapshot selector
@@ -57,7 +89,7 @@ declare function require(id: string): any
 			}
 		}
 
-		const inject = ['slots', 'locale', 'connection', 'betterSidebar']
+		const inject = ['slots', 'locale', 'connection']
 
 		// ── Settings card: locale ─────────────────────────────────────────
 		var SETTINGS_NS = 'ego-browser'
@@ -958,16 +990,16 @@ declare function require(id: string): any
 				}, EgoBrowserCard)
 			})
 
-		// ── Watch panel: sidebar tab (betterSidebar injected so the tab shows in
-		// the dsh-better-sidebar '+' menu). The floating fallback is kept only
-		// for a HOST without the sidebar — with 'betterSidebar' in inject the
-		// client bundle requires dsh-better-sidebar to load, so the else branch
-		// is effectively a safety net.
-		if (ctx.betterSidebar !== undefined) {
-			ctx.effect(() => mountSidebarTab(ctx), 'ego-browser sidebar tab')
-		} else {
-			ctx.effect(() => mountFloatingWatch(ctx), 'ego-browser watch panel')
+		// ── Watch panel: sidebar tab & floating watch ─────────────────────
+		// Use dynamic injection for betterSidebar so that if dsh-better-sidebar
+		// is loaded, the sidebar Tab registers seamlessly. If not, the main
+		// bundle still loads without error and mounts the floating watch panel.
+		if (typeof ctx.inject === 'function') {
+			ctx.inject(['betterSidebar'], function (sidebarCtx) {
+				sidebarCtx.effect(function () { return mountSidebarTab(sidebarCtx) }, 'ego-browser sidebar tab')
+			})
 		}
+		ctx.effect(function () { return mountFloatingWatch(ctx) }, 'ego-browser watch panel')
 	}
 
 	// ── Floating watch panel (vanilla DOM, fallback when no sidebar) ────────
@@ -3010,7 +3042,10 @@ clearTimeout((panel as any)._dshHideT)
 
 		// ── mountSidebarTab: register the ego-browser watch tab ────────────────
 		function mountSidebarTab(ctx) {
-			var betterSidebar = ctx.betterSidebar
+			var betterSidebar = undefined
+			try {
+				betterSidebar = typeof ctx.get === 'function' ? ctx.get('betterSidebar') : ctx.betterSidebar
+			} catch (e) {}
 			if (!betterSidebar) return function () {}
 			// Inject Tab CSS once (cleaned up on dispose)
 			var styleEl = document.createElement('style')
