@@ -33,6 +33,7 @@ const API_PREFIX = '/ego/api'
 
 /** Config keys the `set` endpoint accepts (allow-list; unknown keys are dropped). */
 const ALLOWED_KEYS = new Set<string>([
+  'isolateSpaces',
   'chromePath', 'captureBackend', 'streamProfile', 'cdpFps', 'cdpQuality',
   'cdpMaxWidth', 'cdpBackstopIntervalMs', 'ffmpegFps', 'ffmpegMaxWidth', 'ffmpegBitrateKbps',
   'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',
@@ -203,6 +204,8 @@ function extractPatch(body: unknown): Record<string, unknown> {
     if (!ALLOWED_KEYS.has(key)) continue
     if (value === null || value === undefined) continue
     if (typeof value === 'string') {
+      normalized[key] = value
+    } else if (typeof value === 'boolean') {
       normalized[key] = value
     } else if (typeof value === 'number' && Number.isFinite(value)) {
       normalized[key] = value

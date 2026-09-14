@@ -409,6 +409,13 @@ export function createTaskSpacesApi(cdp) {
   }
 
   async function createSeededContext() {
+    // 若未开启沙盒隔离（默认）：直接使用 Chrome 默认原生磁盘 Profile。
+    // 效果：用户在任务中登录的账号 Cookie 实时落盘，关机重启永久保留。
+    if (process.env.EGO_ISOLATE_SPACES !== "1") {
+      return null;
+    }
+
+    // 若开启沙盒隔离：按原作者设计创建独立内存 BrowserContext，防止 Cookie 串扰
     let browserContextId;
     try {
       ({ browserContextId } = await cdp.call("Target.createBrowserContext", {}));

@@ -58,6 +58,14 @@
           "fields": [
             {
               "path": [
+                "isolateSpaces"
+              ],
+              "label": "任务空间沙盒隔离 (Space isolation)",
+              "kind": "boolean",
+              "hint": "默认关闭：使用磁盘持久化 Profile，任务中登录的账号跨电脑重启永久保留；开启后使用内存临时沙盒隔离，任务结束不落盘。"
+            },
+            {
+              "path": [
                 "chromePath"
               ],
               "label": "Browser binary path",

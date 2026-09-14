@@ -120,6 +120,7 @@ export interface EgoContext {
 
 /** Resolved (post-defaults) runtime config — the canonical key set. */
 export interface ResolvedConfig {
+  isolateSpaces: boolean
   chromePath: string
   captureBackend: 'auto' | 'cdp' | 'ffmpeg'
   streamProfile: 'low' | 'balanced' | 'high'

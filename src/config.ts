@@ -11,6 +11,7 @@ const encoder = z.union([
 // Defaults live in resolveConfig so a persisted legacy value is not hidden by
 // a schema default before the one-release migration runs.
 export const Config = z.object({
+  isolateSpaces: z.boolean().description('Space isolation: false = persistent profile (keep logins across restarts); true = isolated sandbox.'),
   chromePath: z.string().description('Path to Chrome/Chromium. Empty = auto-detect.'),
   captureBackend: backend.description('Capture backend: auto, cdp, or ffmpeg.'),
   streamProfile: profile.description('Capture quality profile.'),
@@ -193,5 +194,6 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     // so a saved value is not silently mutated by a later blocklist change.
     egoCliArgs: typeof config.egoCliArgs === 'string' ? config.egoCliArgs : '',
     chromeArgs: typeof config.chromeArgs === 'string' ? config.chromeArgs : '',
+    isolateSpaces: typeof config.isolateSpaces === 'boolean' ? config.isolateSpaces : config.isolateSpaces === 'true' || config.isolateSpaces === '1' || config.isolateSpaces === 1,
   }
 }
