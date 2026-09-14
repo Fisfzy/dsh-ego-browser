@@ -63,10 +63,11 @@ declare function require(id: string): any
 		}
 
 		// 'betterSidebar' must NOT be declared here: hosts without
-		// dsh-better-sidebar have no such module-table key, and a strict
-		// resolver throws on the ctx.betterSidebar property access itself
-		// (issue #29). Probe it defensively below instead.
-		const inject = ['slots', 'locale', 'connection', 'betterSidebar']
+		// dsh-better-sidebar have no such service, and the module loader keeps
+		// any row that statically injects it pending forever — which blocks the
+		// whole web boot (issue #29, reproduced on DSH 0.1.2-rc.1 without the
+		// sidebar installed). Probe it defensively in apply() instead.
+		const inject = ['slots', 'locale', 'connection']
 
 		// ── Settings card: locale ─────────────────────────────────────────
 		var SETTINGS_NS = 'ego-browser'
@@ -988,17 +989,33 @@ declare function require(id: string): any
 				}, EgoBrowserCard)
 			})
 
-		// ── Watch panel: sidebar tab (betterSidebar injected so the tab shows in
-		// the dsh-better-sidebar '+' menu). The floating fallback is kept only
-		// for a HOST without the sidebar — a strict resolver throws on the
-		// ctx.betterSidebar property access itself when the service is absent
-		// (issue #29), so the probe below is wrapped and never assumed.
+		// ── Watch panel: sidebar tab & floating watch ─────────────────────
+		// betterSidebar is an OPTIONAL service and is intentionally absent from
+		// the static inject list (see its declaration above): on hosts without
+		// dsh-better-sidebar the module loader would otherwise keep this row
+		// pending forever and block the whole web boot (issue #29, reproduced
+		// on DSH 0.1.2-rc.1). Probe with ctx.get; when absent, mount the
+		// floating watch panel immediately and upgrade to the sidebar tab if
+		// the service appears later (dynamic ctx.inject, same pattern as PR #45).
 		var betterSidebarService
-		try { betterSidebarService = ctx.betterSidebar } catch (e) { betterSidebarService = undefined }
+		try { betterSidebarService = typeof ctx.get === 'function' ? ctx.get('betterSidebar') : undefined } catch (e) { betterSidebarService = undefined }
 		if (betterSidebarService !== undefined) {
 			ctx.effect(() => mountSidebarTab(ctx, betterSidebarService), 'ego-browser sidebar tab')
 		} else {
-			ctx.effect(() => mountFloatingWatch(ctx), 'ego-browser watch panel')
+			var disposeFloating = null
+			ctx.effect(() => {
+				disposeFloating = mountFloatingWatch(ctx)
+				return function () { if (disposeFloating) { var d = disposeFloating; disposeFloating = null; d() } }
+			}, 'ego-browser watch panel')
+			if (typeof ctx.inject === 'function') {
+				ctx.inject(['betterSidebar'], function (sidebarCtx) {
+					var svc
+					try { svc = typeof sidebarCtx.get === 'function' ? sidebarCtx.get('betterSidebar') : sidebarCtx.betterSidebar } catch (e) { svc = undefined }
+					if (!svc) return
+					if (disposeFloating) { var d2 = disposeFloating; disposeFloating = null; d2() }
+					sidebarCtx.effect(function () { return mountSidebarTab(sidebarCtx, svc) }, 'ego-browser sidebar tab')
+				})
+			}
 		}
 	}
 
