@@ -38,6 +38,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { importLoginCookies } from './login-import.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
@@ -773,6 +774,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   }
   registerEgoStatus(ctx, cfg, reg)
   registerAuthFlush(ctx, cfg, reg)
+  registerLoginImport(ctx, cfg, reg)
   registerActionTools(ctx, cfg, reg)
   registerHelpAndDoctor(ctx, cfg, reg)
   // Realtime watch-panel host routes (/api/ego/*). Guarded: only meaningful
@@ -1042,6 +1044,87 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
       presentCall: () => ({
         card: 'generic',
         title: 'ego_auth_flush',
+        kind: 'other',
+        rawInput: null,
+      }),
+    } as unknown as DefineToolOpts),
+  )
+}
+/** `ego_login_import` — copy login cookies from the system browser (issue #46). */
+function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
+  reg(
+    defineTool({
+      name: 'ego_login_import',
+      description:
+        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. Works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
+      parameters: {
+        source: {
+          type: 'string',
+          description: 'chrome | edge | brave | auto (default: auto = first detected browser).',
+        },
+        domains: {
+          type: 'json',
+          description:
+            'Optional array of domains to import, e.g. ["bilibili.com","zhihu.com"] (subdomains included). Omit = ALL cookies — prefer an explicit list.',
+        },
+        profile: {
+          type: 'string',
+          description: 'Source browser profile directory name, e.g. "Default" or "Profile 1" (default: the first profile).',
+        },
+        closeSource: {
+          type: 'boolean',
+          description:
+            'A running source browser holds an exclusive lock on its cookie store (Windows). true = gracefully close it first (its windows/tabs restore on next launch). false (default) = return an actionable error instead.',
+        },
+        dryRun: {
+          type: 'boolean',
+          description: 'true = only report what would be imported (domains + cookie counts), write nothing.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            source: { type: 'string' },
+            profile: { type: 'string' },
+            dryRun: { type: 'boolean' },
+            totalRead: { type: 'integer' },
+            matched: { type: 'integer' },
+            written: { type: 'integer' },
+            domains: { type: 'json' },
+            error: { type: 'string' },
+          },
+        },
+        render: renderText,
+      },
+      timeoutMs: 60_000,
+      execute: async (args: Record<string, unknown>) =>
+        withEgoLock(async () => {
+          try {
+            const domains = Array.isArray(args.domains) ? (args.domains as unknown[]).map(String) : undefined
+            const source = typeof args.source === 'string' && args.source !== '' ? args.source : 'auto'
+            if (!['chrome', 'edge', 'brave', 'auto'].includes(source)) {
+              return { ok: false, error: `invalid source "${source}" — expected chrome|edge|brave|auto` }
+            }
+            return await importLoginCookies(
+              {
+                source: source as 'chrome' | 'edge' | 'brave' | 'auto',
+                domains,
+                profile: typeof args.profile === 'string' && args.profile !== '' ? args.profile : undefined,
+                closeSource: args.closeSource === true,
+                dryRun: args.dryRun === true,
+              },
+              { subprocess: ctx.subprocess },
+            )
+          } catch (err) {
+            return { ok: false, error: String((err as Error)?.message || err) }
+          }
+        }),
+      presentCall: () => ({
+        card: 'generic',
+        title: 'ego_login_import',
         kind: 'other',
         rawInput: null,
       }),
