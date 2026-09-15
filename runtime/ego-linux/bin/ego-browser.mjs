@@ -350,11 +350,15 @@ async function main() {
   // starts into an Xvfb lookup that can never succeed there.
   const hasDisplay =
     process.platform === "win32" || (process.env.DISPLAY || "").trim() !== "";
-  const envHeadless = hasDisplay
-    ? false
-    : !["", "0", "false", "no"].includes(
-        (process.env.EGO_LINUX_HEADLESS ?? "").toLowerCase(),
-      );
+  // An explicit EGO_LINUX_HEADLESS=1 always wins — even on Windows, where
+  // hasDisplay is hard-coded true (issue #35: the variable used to be silently
+  // ignored there). The display probe only decides when the variable is unset.
+  const headlessEnv = (process.env.EGO_LINUX_HEADLESS ?? "").toLowerCase();
+  const envHeadless = ["1", "true", "yes", "on"].includes(headlessEnv)
+    ? true
+    : hasDisplay
+      ? false
+      : !["", "0", "false", "no"].includes(headlessEnv);
   const headless = argv.includes("--headless") || envHeadless;
   const rest = argv.filter((arg) => arg !== "--headless");
 

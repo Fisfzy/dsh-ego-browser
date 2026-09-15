@@ -299,6 +299,13 @@ export function resolveEgoEnv(cfg: Partial<ResolvedConfig>, { platform = process
     return baseEnv
   }
   const env: NodeJS.ProcessEnv = { ...baseEnv }
+  // Electron hosts (DSH Desktop): process.execPath is the Electron binary, and
+  // every spawn below passes this explicit env — without ELECTRON_RUN_AS_NODE=1
+  // the child boots as a second Electron app instead of running the script
+  // (empty stderr, no @@DSH_RESULT@@ sentinel; issue #42). User-set value wins.
+  if ((process.versions as { electron?: string }).electron && env.ELECTRON_RUN_AS_NODE === undefined) {
+    env.ELECTRON_RUN_AS_NODE = '1'
+  }
   const chrome = findChromeBinary()
   // Settings-configured chrome path (highest priority after user-set env).
   // An empty string means "auto-detect" — skip so the platform branches below

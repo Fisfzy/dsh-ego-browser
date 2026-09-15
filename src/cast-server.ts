@@ -396,6 +396,18 @@ function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegManager: F
         const initCfg = JSON.stringify(captureConfig(cfg, ffmpegManager))
         const handle = ctx.subprocess.spawn({
           argv: [process.execPath, WORKER_BIN, initCfg],
+          // cwd is required by the dsh-subprocess provider on DSH >= 0.1.5 —
+          // omitting it throws inside spawn() and the catch below swallowed it
+          // silently, making the watch panel never start (issue #34 defect 1).
+          cwd: process.cwd(),
+          // Electron hosts (DSH Desktop): process.execPath is the Electron
+          // binary; children need ELECTRON_RUN_AS_NODE=1 or they boot as a
+          // second Electron app (issue #42). Mirror of resolveEgoEnv's guard —
+          // inlined here because cast-server cannot import from index.ts
+          // (circular import).
+          env: (process.versions as { electron?: string }).electron
+            ? { ...process.env, ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? '1' }
+            : undefined,
           stdio: {
             stdin: { data: '' },
             stdout: { maxBytes: 8192 },
