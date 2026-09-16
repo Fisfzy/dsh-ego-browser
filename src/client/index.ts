@@ -3158,9 +3158,30 @@ clearTimeout((panel as any)._dshHideT)
 			// baseline is fetched ONCE at mount via a single /api/ego/spaces
 			// request; after that, only a NEW tool call (count goes up)
 			// triggers the open.
+			//
+			// Per-session scope: the event carries the CALLING session id, so the
+			// Tab opens with that session's scope — a background conversation's
+			// tool call lands in ITS OWN sidebar instead of the sidebar the user
+			// happens to be looking at. The one-shot guard is therefore per
+			// session, and the probe stream stays open (a later session must
+			// still be able to auto-open).
 			var probeDisposed = false
 			var baseline = null // null = not yet observed; set on first fetch
-			var autoOpened = false
+			// Sessions whose sidebar already auto-opened this page load. Keyed PER
+			// SESSION: each conversation gets its own one-shot, and the open is scoped to
+			// the CALLING session, so a background conversation's tool call opens the Tab
+			// in ITS OWN sidebar instead of the one the user is looking at.
+			var autoOpened = {}
+			var openWatchTab = function (sessionId) {
+				var key = sessionId || ''
+				if (autoOpened[key] === true) return
+				autoOpened[key] = true
+				try {
+					// The second argument is the session scope; without it the open lands
+					// in whatever sidebar is currently on screen.
+					betterSidebar.openTab({ type: 'ego-browser:watch' }, sessionId ? { sessionId: sessionId } : undefined)
+				} catch (e) {}
+			}
 			// One-shot baseline fetch (NOT a polling loop). After this, the
 			// SSE `tool-call` event is the sole signal.
 			void (async function () {
@@ -3181,10 +3202,11 @@ clearTimeout((panel as any)._dshHideT)
 			try { probeSse = new EventSource('/api/ego/stream') } catch (e) {}
 			if (probeSse) {
 				probeSse.addEventListener('tool-call', function (ev) {
-					if (probeDisposed || autoOpened) return
+					if (probeDisposed) return
 					try {
 						var m = JSON.parse(ev.data)
 						if (!m || typeof m.count !== 'number') return
+						var sid = typeof m.sessionId === 'string' && m.sessionId !== '' ? m.sessionId : undefined
 						if (baseline === null) {
 							// Event arrived before the baseline fetch resolved —
 							// treat this count as the baseline (it's the first
@@ -3192,18 +3214,10 @@ clearTimeout((panel as any)._dshHideT)
 							// is already >0, the agent has called a tool this
 							// session, so open now.
 							baseline = m.count
-							if (m.count > 0) {
-								autoOpened = true
-								try { betterSidebar.openTab({ type: 'ego-browser:watch' }) } catch (e) {}
-							}
+							if (m.count > 0) openWatchTab(sid)
 							return
 						}
-						if (m.count > baseline) {
-							autoOpened = true
-							try { betterSidebar.openTab({ type: 'ego-browser:watch' }) } catch (e) {}
-							// Auto-opened: close the probe stream (no longer needed).
-							try { probeSse.close() } catch (e) {}
-						}
+						if (m.count > baseline) openWatchTab(sid)
 					} catch (e) {}
 				})
 			}
