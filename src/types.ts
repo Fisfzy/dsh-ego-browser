@@ -121,6 +121,8 @@ export interface EgoContext {
 /** Resolved (post-defaults) runtime config — the canonical key set. */
 export interface ResolvedConfig {
   isolateSpaces: boolean
+  /** Minutes without an ego_* call before the backing browser is auto-stopped. 0 = off. */
+  idleTimeoutMin: number
   chromePath: string
   captureBackend: 'auto' | 'cdp' | 'ffmpeg'
   streamProfile: 'low' | 'balanced' | 'high'

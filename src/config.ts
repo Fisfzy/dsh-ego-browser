@@ -12,6 +12,7 @@ const encoder = z.union([
 // a schema default before the one-release migration runs.
 export const Config = z.object({
   isolateSpaces: z.boolean().description('Space isolation: false = persistent profile (keep logins across restarts); true = isolated sandbox.'),
+  idleTimeoutMin: z.number().min(0).max(1440).step(1).description('Auto-stop the backing browser after N minutes without an ego_* call (0 = off). Relaunches on demand at the next call.'),
   chromePath: z.string().description('Path to Chrome/Chromium. Empty = auto-detect.'),
   captureBackend: backend.description('Capture backend: auto, cdp, or ffmpeg.'),
   streamProfile: profile.description('Capture quality profile.'),
@@ -195,5 +196,6 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     egoCliArgs: typeof config.egoCliArgs === 'string' ? config.egoCliArgs : '',
     chromeArgs: typeof config.chromeArgs === 'string' ? config.chromeArgs : '',
     isolateSpaces: typeof config.isolateSpaces === 'boolean' ? config.isolateSpaces : config.isolateSpaces === 'true' || config.isolateSpaces === '1' || config.isolateSpaces === 1,
+    idleTimeoutMin: finiteIn(config.idleTimeoutMin, 0, 1440) ? config.idleTimeoutMin : 0,
   }
 }

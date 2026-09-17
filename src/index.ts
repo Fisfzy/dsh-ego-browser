@@ -38,7 +38,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { initCastServer, markEgoToolCall } from './cast-server.ts'
+import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs } from './config.ts'
@@ -430,9 +430,19 @@ async function withWarmupRetry(fn: () => Promise<WarmupResult>, { tries = 3, bas
  * id dangles and the runtime hard-fails with "task space not found: N".
  * Reset the tracker to the space's name (useOrCreate recreates it) and retry.
  */
+/**
+ * Idle reaper decision (issue #47), pure for tests. Reaps only when the
+ * feature is on AND at least one ego_* call has ever happened (a never-used
+ * browser is not running anyway).
+ * @internal exported for tests
+ */
+export function shouldReapBrowser(nowMs: number, lastActivityMs: number, idleTimeoutMin: number): boolean {
+  if (!(idleTimeoutMin > 0) || !(lastActivityMs > 0)) return false
+  return nowMs - lastActivityMs > idleTimeoutMin * 60_000
+}
+
 /** @internal exported for tests */
-export async function runWithStaleSpaceRetry(
-  ctx: EgoContext,
+export async function runWithStaleSpaceRetry(  ctx: EgoContext,
   cfg: EgoRuntimeConfig,
   exec: ExecLike,
   buildScript: () => string,
@@ -483,6 +493,7 @@ interface EgoRuntimeConfig {
   readonly ffmpegPath: string
   readonly githubMirror: string
   readonly egoCliArgs: string
+  readonly idleTimeoutMin: number
   readonly chromeArgs: string
   readonly isolateSpaces: boolean
 }
@@ -678,6 +689,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'cdpMaxWidth', 'cdpBackstopIntervalMs', 'ffmpegFps', 'ffmpegMaxWidth', 'ffmpegBitrateKbps',
     'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',
     'castFpsCap', 'screencastQuality', 'screencastMaxWidth', 'backstopIntervalMs',
+    'idleTimeoutMin',
   ]
   const entry = Object.fromEntries(settingKeys.filter((key) => config[key] !== undefined).map((key) => [key, config[key]]))
   const bridge = installEgoBrowserSettings(ctx, entry)
@@ -720,6 +732,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     get egoCliArgs() { return resolveConfig(bridge.source() as RawConfig).egoCliArgs },
     get chromeArgs() { return resolveConfig(bridge.source() as RawConfig).chromeArgs },
     get isolateSpaces() { return resolveConfig(bridge.source() as RawConfig).isolateSpaces },
+    get idleTimeoutMin() { return resolveConfig(bridge.source() as RawConfig).idleTimeoutMin },
   }
   const reg = (tool: ToolHandle): void => {
     const dispose = ctx.tools.register(tool) as unknown as () => void
@@ -765,6 +778,59 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
       )
     }
   })
+  // Idle reaper (issue #47, opt-in via the idleTimeoutMin setting): the
+  // backing Chromium is a singleton that otherwise only stops on --stop or
+  // host teardown — measured at ~425 MB idle. After N minutes without an
+  // ego_* call, gracefully --stop it; the next ego_* call cold-starts it
+  // (2-4s). Watching the panel does NOT count as activity (documented in the
+  // setting hint). Runs on a 60s interval; cleanup clears the timer.
+  ctx.effect?.(() => {
+    if (cfg.idleTimeoutMin <= 0) return
+    let reapedFor = 0 // the activity timestamp we already reaped for
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const last = getLastEgoActivity()
+          if (!shouldReapBrowser(Date.now(), last, cfg.idleTimeoutMin)) return
+          if (last <= reapedFor) return // already reaped for this idle stretch
+          // Only reap when the state file says a browser is up. A stale
+          // browser.json makes --stop a harmless no-op, so no pid liveness
+          // check is needed here.
+          const e = process.env
+          const isWin = process.platform === 'win32'
+          const home = e.HOME || e.USERPROFILE || (isWin ? e.LOCALAPPDATA || '' : homedir())
+          const stateDir =
+            e.EGO_LINUX_STATE_DIR ||
+            (isWin
+              ? (e.LOCALAPPDATA || `${home}\\AppData\\Local`) + '\\ego-lite-linux'
+              : `${e.XDG_STATE_HOME || `${home}/.local/state`}/ego-lite-linux`)
+          const { readFile } = await import('node:fs/promises')
+          try {
+            await readFile(`${stateDir}/browser.json`, 'utf8')
+          } catch {
+            return // no state file → no browser → nothing to reap
+          }
+          reapedFor = last
+          ctx.logger?.info?.(`ego-browser: idle reaper stopping the backing browser after ${cfg.idleTimeoutMin}min without ego_* activity`)
+          const handle = ctx.subprocess.spawn({
+            argv: [process.execPath, cfg.egoBin, '--stop'],
+            cwd: process.cwd(),
+            env: resolveEgoEnv(cfg),
+            stdio: {
+              stdin: { data: '' },
+              stdout: { maxBytes: 1024 },
+              stderr: { maxBytes: 1024 },
+            },
+            graceMs: 8_000,
+          })
+          handle.done.catch(() => null)
+        } catch {
+          // never let the reaper throw
+        }
+      })()
+    }, 60_000)
+    return () => clearInterval(timer)
+  }, 'ego-browser: idle reaper')
   // Graceful teardown: stop the persistent browser when the plugin unmounts.
   // CRITICAL: this must be fire-and-forget, NOT awaited. Awaiting `--stop`
   // (which asks the browser to graceful-close, ~seconds) stalls the host process
@@ -794,8 +860,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
       })
       // Fire and forget: do NOT return this promise from the effect cleanup.
       handle.done.catch(() => {
-        /* ignore */
-      })
+        /* ignore */      })
     } catch {
       // never let teardown throw
     }

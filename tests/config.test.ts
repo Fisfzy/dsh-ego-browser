@@ -7,7 +7,7 @@ describe("dual capture config", () => {
       chromePath: "", captureBackend: "auto", streamProfile: "balanced",
       cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 960, cdpBackstopIntervalMs: 3000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
-      egoCliArgs: "", chromeArgs: "", isolateSpaces: false,
+      egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0,
     });
   });
 
@@ -16,7 +16,7 @@ describe("dual capture config", () => {
       chromePath: "", captureBackend: "auto", streamProfile: "balanced",
       cdpFps: 30, cdpQuality: 70, cdpMaxWidth: 1200, cdpBackstopIntervalMs: 5000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
-      egoCliArgs: "", chromeArgs: "", isolateSpaces: false,
+      egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0,
     });
     expect(resolveConfig({ cdpFps: 15, castFpsCap: 30 }).cdpFps).toBe(15);
   });

@@ -44,8 +44,15 @@ export const EGO_VIDEO_STATUS_ROUTE = '/api/ego/video/status'
 let toolCallCount = 0
 const sseClients = new Set<ServerResponse>()
 
+/** Timestamp of the last ego_* tool call — the idle reaper's activity signal. */
+let lastEgoActivity = 0
+export function getLastEgoActivity(): number {
+  return lastEgoActivity
+}
+
 export function markEgoToolCall(sessionId?: string): void {
   toolCallCount += 1
+  lastEgoActivity = Date.now()
   // Push the new count to every connected SSE client immediately. The event
   // payload carries the counter AND the calling session id (when the caller
   // supplied one): the client scopes its sidebar auto-open to that session, so

@@ -66,6 +66,14 @@
             },
             {
               "path": [
+                "idleTimeoutMin"
+              ],
+              "label": "空闲自动回收 (Idle auto-stop, minutes)",
+              "kind": "number",
+              "hint": "N 分钟没有任何 ego_* 调用后自动关闭后台浏览器进程（0 = 关闭此功能）。下次调用会自动冷启动（约 2-4 秒）。观察窗正在观看不算活动。"
+            },
+            {
+              "path": [
                 "chromePath"
               ],
               "label": "Browser binary path",
