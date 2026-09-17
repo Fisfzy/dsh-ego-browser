@@ -130,6 +130,8 @@ declare function require(id: string): any
 			noActivePages: 'No active browser pages',
 			noActiveHint: 'Pages will appear here as the agent browses with ego_*',
 			openExternal: 'Open real page',
+		raiseWindow: 'Pop out window',
+		raiseWindowHint: 'Raise the agent browser as a real window (a headless instance is replaced by a visible one on the same profile)',
 			noUrl: 'No URL to open',
 			closeTab: 'Close tab',
 			newTab: '(new tab)',
@@ -172,6 +174,8 @@ declare function require(id: string): any
 			noActivePages: '暂无活跃浏览器页',
 			noActiveHint: '当 agent 开始用 ego_* 操作网页时，这里会实时显示',
 			openExternal: '⧉ 打开真实页',
+		raiseWindow: '弹出窗口',
+		raiseWindowHint: '把 agent 浏览器弹出为真实窗口（无头实例会被同 Profile 的有头实例替换，标签页保留）',
 			noUrl: '无可打开的地址',
 			closeTab: '关闭标签',
 			newTab: '(新标签页)',
@@ -1744,6 +1748,19 @@ declare function require(id: string): any
 						else openHere.textContent = wt('noUrl')
 					})
 					badge.appendChild(openHere)
+					// Raise the real agent window (issue #51): headless instances
+					// get replaced by a headed one on the same profile.
+					const raiseBtn = document.createElement('button')
+					raiseBtn.type = 'button'
+					raiseBtn.className = 'dsh-ego-back'
+					raiseBtn.title = wt('raiseWindowHint')
+					raiseBtn.textContent = wt('raiseWindow')
+					raiseBtn.addEventListener('click', () => {
+						fetch('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+							.then((r) => r.json().catch(() => null))
+							.catch(() => null)
+					})
+					badge.appendChild(raiseBtn)
 					const cached = frameCache.get(current.targetId)
 					if (captureBackend === 'ffmpeg' || cached) {
 						const img = makeZoomImage(u, captureBackend === 'ffmpeg' ? 'video' : 'img')
@@ -3162,7 +3179,19 @@ clearTimeout((panel as any)._dshHideT)
 									var url = currentSpace.url
 									if (url && !url.startsWith('about:') && !url.startsWith('chrome://')) window.open(url, '_blank', 'noopener')
 								},
-							}, wt('openExternal'))
+							}, wt('openExternal')),
+							// Raise the real agent window (issue #51): headless
+							// instances get replaced by a headed one on the same
+							// profile; headed ones just pop to the front.
+							h('button', {
+								className: 'dsh-ego-side-back', type: 'button',
+								title: wt('raiseWindowHint'),
+								onClick: function () {
+									fetch('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+										.then(function (r) { return r.json().catch(function () { return null }) })
+										.catch(function () { return null })
+								},
+							}, wt('raiseWindow'))
 						),
 						liveImg,
 						h('div', { className: 'dsh-ego-side-livetitle' }, currentSpace.title || currentSpace.url || wt('newTab')),

@@ -441,6 +441,38 @@ export function shouldReapBrowser(nowMs: number, lastActivityMs: number, idleTim
   return nowMs - lastActivityMs > idleTimeoutMin * 60_000
 }
 
+/**
+ * Pop the agent browser out as a REAL visible window (issue #51). The
+ * runtime's `--open` subcommand replaces a headless instance with a headed
+ * one on the same profile (tabs restore) or just raises the existing window.
+ * `--open` is on the egoCliArgs blocklist only because USER-supplied args
+ * must not steal the window — here it is an explicit user action from the
+ * watch panel. --open stops+relaunches when headless, so give it real time.
+ */
+async function openAgentWindow(ctx: EgoContext, cfg: EgoRuntimeConfig): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const handle = ctx.subprocess.spawn({
+      argv: [process.execPath, cfg.egoBin, '--open'],
+      cwd: process.cwd(),
+      env: resolveEgoEnv(cfg),
+      stdio: {
+        stdin: { data: '' },
+        stdout: { maxBytes: 4096 },
+        stderr: { maxBytes: 4096 },
+      },
+      graceMs: 25_000,
+    })
+    const outcome = await handle.done
+    if (outcome.exitCode !== 0) {
+      const stderr = readAll(handle.collected.stderr).trim()
+      return { ok: false, error: stderr || `ego-browser --open exited with code ${outcome.exitCode}` }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: describeSpawnFailure(err) }
+  }
+}
+
 /** @internal exported for tests */
 export async function runWithStaleSpaceRetry(  ctx: EgoContext,
   cfg: EgoRuntimeConfig,
@@ -760,7 +792,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   // on hosts without a web server (TUI / headless stay tools-only).
   ctx.inject?.(['webServer'], (wctx) => {
     try {
-      initCastServer(wctx as EgoContext, cfg, bridge, ffmpegManager)
+      initCastServer(wctx as EgoContext, cfg, bridge, ffmpegManager, () => openAgentWindow(ctx, cfg))
     } catch (err) {
       ctx.logger?.warn?.(
         `ego-browser: cast server init failed: ${(err as Error)?.message ?? err}`,

@@ -25,6 +25,7 @@ export const EGO_STREAM_ROUTE = '/api/ego/stream'
 export const EGO_HEALTH_ROUTE = '/api/ego/health'
 export const EGO_CLOSE_ROUTE = '/api/ego/close'
 export const EGO_FLUSH_ROUTE = '/api/ego/flush'
+export const EGO_RAISE_ROUTE = '/api/ego/raise'
 export const EGO_INPUT_ROUTE = '/api/ego/input'
 export const EGO_WATCH_START_ROUTE = '/api/ego/watch/start'
 export const EGO_WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
@@ -481,6 +482,7 @@ export function initCastServer(
   cfg: ResolvedConfig,
   bridge: SettingsBridge,
   ffmpegManager: FfmpegInstallationManager | null,
+  openAgentWindow: () => Promise<{ ok: boolean; error?: string }> = async () => ({ ok: false, error: 'raise not supported by this host build' }),
 ): void {
   const ensureWorker = makeEnsureWorker(ctx, cfg, ffmpegManager)
   const pushConfig = makePushConfig(ensureWorker, ffmpegManager)
@@ -628,6 +630,26 @@ export function initCastServer(
     },
   })
 
+  // POST /api/ego/raise — pop the agent browser out as a REAL visible window
+  // (issue #51): when the backing browser runs headless, the runtime's
+  // `ego-browser --open` replaces it with a headed instance on the SAME
+  // profile (tabs restore); when it is already visible, --open just raises
+  // the window. The actual spawn is injected by the host plugin (it owns
+  // egoBin + the env resolution).
+  const disposeRaise = server.register({
+    kind: 'exact',
+    path: EGO_RAISE_ROUTE,
+    handler: async (_req: unknown, resRaw: unknown) => {
+      const res = resRaw as ServerResponse
+      try {
+        const result = await openAgentWindow()
+        return sendJson(res, result.ok ? 200 : 500, result)
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) })
+      }
+    },
+  })
+
   const disposeHealth = server.register({
     kind: 'exact',
     path: EGO_HEALTH_ROUTE,
@@ -693,6 +715,7 @@ export function initCastServer(
     try { disposeInput() } catch { /* ignore */ }
     try { disposeClose() } catch { /* ignore */ }
     try { disposeFlush() } catch { /* ignore */ }
+    try { disposeRaise() } catch { /* ignore */ }
     try { disposeHealth() } catch { /* ignore */ }
     for (const dispose of watchRoutes) try { dispose() } catch { /* ignore */ }
     try { disposeWatchStatus() } catch { /* ignore */ }
