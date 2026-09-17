@@ -3226,14 +3226,10 @@ clearTimeout((panel as any)._dshHideT)
 				title: function () { return wt('title') },
 				order: 70,
 				single: true,
-				// Claim external web links so they route into the ego browser
-				// tab (native better-sidebar urlTarget mechanism; url is a
-				// URL object). Scope to http(s) web pages, leaving documents
-				// for the built-in PDF/text/markdown viewers rather than
-				// shadowing them.
-				urlTarget: function (url) {
-					return /^https?:$/.test(url.protocol) && !/\.(pdf|txt|md|docx?|xlsx?|pptx?)$/i.test(url.pathname)
-				},
+				// No urlTarget: this tab is a live screencast of the AGENT
+				// browser, not a renderer for arbitrary URLs. Claiming http(s)
+				// links here stole every chat link from the built-in browser
+				// tab and dead-ended on the empty state (issue #48).
 				component: EgoBrowserTab,
 			})
 
