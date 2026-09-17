@@ -199,7 +199,7 @@ declare function require(id: string): any
 			settingsHide: '收起设置',
 		}
 		var watchDict = { en: watchEn, zh: watchZh }
-		function wt(key, params) {
+		function wt(key, params = undefined) {
 			var dict = watchDict[_egoLocale] || watchEn
 			var text = dict[key] || watchEn[key] || key
 			if (params) { for (var k in params) { text = text.replace(new RegExp('{' + k + '}', 'g'), String(params[k])) } }
