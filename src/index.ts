@@ -583,6 +583,17 @@ const commonOutputSchema = {
   },
 }
 
+/**
+ * The calling session id — the scope the client's sidebar auto-open binds to.
+ * Read structurally (`exec.agent` is typed `unknown` in this plugin's own
+ * seam); a call with no initiating agent simply leaves the open unscoped.
+ */
+function callingSessionId(exec: ToolExec | undefined): string | undefined {
+  const agent = exec?.agent as { session?: { id?: unknown } } | undefined
+  const id = agent?.session?.id
+  return typeof id === 'string' && id !== '' ? id : undefined
+}
+
 interface EgoToolOptions {
   name: string
   description: string
@@ -608,7 +619,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
         // /api/ego/spaces; the LivePreviewController transitions on 0 → >0 and
         // calls betterSidebar.openTab(). Idempotent: the client's transition
         // guard means only the first call per session opens the Tab.
-        markEgoToolCall()
+        markEgoToolCall(callingSessionId(exec))
         const script = opts.buildScript(args)
         // A first-call cold Chromium can make the spawn fail transiently
         // ("CDP channel is not open" etc.); retry only that case so a warmed
@@ -1821,7 +1832,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         },
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
-          markEgoToolCall()
+          markEgoToolCall(callingSessionId(exec))
           const script = str(args.script, '')
           const result = await withWarmupRetry(() =>
             runEgoScript(ctx.subprocess, script, exec, cfg),
@@ -1873,7 +1884,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       timeoutMs: 15_000,
       execute: async (args: Record<string, unknown>, exec: ToolExec) =>
         withEgoLock(async () => {
-          markEgoToolCall()
+          markEgoToolCall(callingSessionId(exec))
           const result = await withWarmupRetry(() =>
             runEgoScript(
               ctx.subprocess,
@@ -2046,7 +2057,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         },
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
-          markEgoToolCall()
+          markEgoToolCall(callingSessionId(exec))
           const script = str(args.script, '')
           // Honor the documented per-run timeout override (integer ms). Falls
           // back to the plugin's default grace when absent/invalid.

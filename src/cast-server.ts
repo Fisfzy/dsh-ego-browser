@@ -44,12 +44,17 @@ export const EGO_VIDEO_STATUS_ROUTE = '/api/ego/video/status'
 let toolCallCount = 0
 const sseClients = new Set<ServerResponse>()
 
-export function markEgoToolCall(): void {
+export function markEgoToolCall(sessionId?: string): void {
   toolCallCount += 1
   // Push the new count to every connected SSE client immediately. The event
-  // payload is tiny (just the counter); frames and spaces events continue
-  // to flow from the worker as before.
-  const frame = `event: tool-call\ndata: ${JSON.stringify({ count: toolCallCount })}\n\n`
+  // payload carries the counter AND the calling session id (when the caller
+  // supplied one): the client scopes its sidebar auto-open to that session, so
+  // a background conversation's tool call lands in ITS OWN sidebar instead of
+  // the one the user happens to be reading.
+  const payload = sessionId === undefined || sessionId === ''
+    ? { count: toolCallCount }
+    : { count: toolCallCount, sessionId }
+  const frame = `event: tool-call\ndata: ${JSON.stringify(payload)}\n\n`
   for (const res of sseClients) {
     try {
       res.write(frame)
