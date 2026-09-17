@@ -6,6 +6,7 @@ import { writeFile, mkdir, copyFile, rename, unlink, readdir, readFile } from 'n
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { stdout, stderr, stdin } from 'node:process';
+import { captureScreenshotClip } from '../../screenshot-clip.mjs';
 
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SRC_DIR, "..");
@@ -2279,22 +2280,15 @@ async function screenshot(options = {}) {
         if (!pendingDialog()) {
             const dpr = Number(await evaluate("window.devicePixelRatio")) || 1;
             const cssScale = 1 / dpr;
-            if (options.clip) {
-                params.clip = { scale: cssScale, ...options.clip };
+            // CDP clip is document CSS pixels. Viewport shots and locator
+            // bounding boxes are visual-viewport relative — add sx/sy or the
+            // clip lands at document (0,0) and captureBeyondViewport:false
+            // returns a blank PNG after scroll. See screenshot-clip.mjs.
+            const info = await pageInfo();
+            if ("dialog" in info) {
+                return screenshot({ ...options, path, raw: true });
             }
-            else {
-                const info = await pageInfo();
-                if ("dialog" in info) {
-                    return screenshot({ ...options, path, raw: true });
-                }
-                params.clip = {
-                    x: 0,
-                    y: 0,
-                    width: full ? info.pw : info.w,
-                    height: full ? info.ph : info.h,
-                    scale: cssScale,
-                };
-            }
+            params.clip = captureScreenshotClip(info, { full, clip: options.clip, cssScale });
         }
     }
     const result = await cdp("Page.captureScreenshot", params);
