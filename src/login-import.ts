@@ -477,47 +477,70 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
         `| Select-Object -ExpandProperty ProcessId`,
       ].join(' ')
       const drainDeadline = Date.now() + 12_000
+      let leftover: string[] = []
       while (Date.now() < drainDeadline) {
         try {
           const { stdout } = await execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { timeout: 8_000 })
-          if (!String(stdout).trim()) break
+          leftover = String(stdout).split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+          if (leftover.length === 0) break
         } catch { break }
         await sleep(600)
+      }
+      // Headless instances ignore WM_CLOSE (no window) — after the grace
+      // window, force-kill OUR OWN throwaway leftovers so the singleton frees.
+      if (leftover.length > 0) {
+        for (const line of leftover) {
+          const pid = Number(line)
+          if (Number.isInteger(pid) && pid > 0) await execFile('taskkill', ['/PID', String(pid), '/F'], { timeout: 5_000 }).catch(() => null)
+        }
+        await sleep(1500)
       }
     }
     // Clear any stale DevToolsActivePort from previous (normal or crashed)
     // launches so the poll below only ever reads THIS instance's port.
-    const portFile = join(linkDir, 'DevToolsActivePort')
-    await rm(portFile, { force: true }).catch(() => null)
-    srcHandle = deps.subprocess.spawn({
-      argv: [
-        browser.exePath,
-        '--headless=new',
-        `--user-data-dir=${linkDir}`,
-        `--profile-directory=${profile.dirName}`,
-        '--remote-debugging-port=0',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-background-networking',
-        '--disable-sync',
-        '--hide-crash-restore-bubble',
-        'about:blank',
-      ],
-      cwd: browser.userDataDir,
-      env: { ...process.env },
-      stdio: { stdin: { data: '' }, stdout: { maxBytes: 2048 }, stderr: { maxBytes: 4096 } },
-      graceMs: 8_000,
-    })
-    srcHandle.done.catch(() => null)
-
     let port: number | null = null
-    const deadline = Date.now() + timeoutMs
-    while (Date.now() < deadline) {
-      try {
-        port = parseDevToolsActivePort(await readFile(portFile, 'utf8'))
-        if (port !== null) break
-      } catch { /* not written yet */ }
-      await sleep(250)
+    // Back-to-back imports race the PREVIOUS instance's drain (cookie-store
+    // flush can outlive the 12s drain window): a spawn while it still holds
+    // the profile singleton forwards and never opens a port. Retry once with
+    // a fresh junction after a longer drain.
+    for (let attempt = 0; attempt < 2 && port === null; attempt++) {
+      if (attempt > 0) {
+        await sleep(6000)
+        try { await rm(linkDir, { force: true }) } catch { /* ignore */ }
+        linkDir = join(tmpdir(), `ego-login-import-${process.pid}-${Date.now()}-r1`)
+        await symlink(browser.userDataDir, linkDir, process.platform === 'win32' ? 'junction' : 'dir')
+      }
+      const portFile = join(linkDir!, 'DevToolsActivePort')
+      await rm(portFile, { force: true }).catch(() => null)
+      srcHandle = deps.subprocess.spawn({
+        argv: [
+          browser.exePath,
+          '--headless=new',
+          `--user-data-dir=${linkDir}`,
+          `--profile-directory=${profile.dirName}`,
+          '--remote-debugging-port=0',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-background-networking',
+          '--disable-sync',
+          '--hide-crash-restore-bubble',
+          'about:blank',
+        ],
+        cwd: browser.userDataDir,
+        env: { ...process.env },
+        stdio: { stdin: { data: '' }, stdout: { maxBytes: 2048 }, stderr: { maxBytes: 4096 } },
+        graceMs: 8_000,
+      })
+      srcHandle.done.catch(() => null)
+
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        try {
+          port = parseDevToolsActivePort(await readFile(portFile, 'utf8'))
+          if (port !== null) break
+        } catch { /* not written yet */ }
+        await sleep(250)
+      }
     }
     if (port === null) return { ok: false, closedSource, error: `${browser.label} headless instance did not expose a DevTools port within ${timeoutMs}ms (another instance may be holding the profile)` }
 
@@ -585,13 +608,17 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
         try {
           const ps = [
             `Get-CimInstance Win32_Process -Filter "Name='${basename(browser.exePath)}'"`,
-            `| Where-Object { $_.CommandLine -match [regex]::Escape(${JSON.stringify(linkDir)}) -and $_.CommandLine -notmatch '--type=' -and $_.CommandLine -notmatch 'crashpad' }`,
+            `| Where-Object { $_.CommandLine -match 'ego-login-import-' -and $_.CommandLine -notmatch '--type=' -and $_.CommandLine -notmatch 'crashpad' }`,
             `| Select-Object -ExpandProperty ProcessId`,
           ].join(' ')
           const { stdout } = await execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { timeout: 8_000 })
           for (const line of String(stdout).split(/\r?\n/)) {
             const pid = Number(line.trim())
-            if (Number.isInteger(pid) && pid > 0) await execFile('taskkill', ['/PID', String(pid)], { timeout: 5_000 }).catch(() => null)
+            // /F: a HEADLESS instance has no window for WM_CLOSE to reach —
+            // a graceful taskkill is a no-op on it. The cookie store was
+            // already flushed by Browser.close above (or the instance never
+            // answered it, in which case the pre-boot backup has us covered).
+            if (Number.isInteger(pid) && pid > 0) await execFile('taskkill', ['/PID', String(pid), '/F'], { timeout: 5_000 }).catch(() => null)
           }
           if (String(stdout).trim()) await Promise.race([srcHandle.done, sleep(5000)])
         } catch { /* ignore */ }

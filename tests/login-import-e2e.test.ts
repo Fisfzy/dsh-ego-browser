@@ -184,6 +184,30 @@ describe("login-import e2e (synthetic source profile)", () => {
       await cleanup();
     }
   }, 120_000);
+
+  // REAL source browser (the machine's daily Chrome/Edge): gated behind
+  // EGO_E2E_REAL=1. closeSource:true gracefully closes the user's browser —
+  // only run this with the machine owner's consent. Writes into the live ego
+  // browser (requires EGO_E2E_WRITE=1 too) so the transfer is verifiable.
+  const doReal = e2e && process.env.EGO_E2E_REAL === "1";
+  const realDomains = (process.env.EGO_E2E_REAL_DOMAINS || "bilibili.com").split(",").map((s) => s.trim()).filter(Boolean);
+  it.skipIf(!doReal)("REAL: import from the machine's daily browser (closeSource)", async () => {
+    const probe = await importLoginCookies(
+      { source: (process.env.EGO_E2E_SOURCE as never) || "chrome", domains: realDomains, dryRun: true, closeSource: true, timeoutMs: 30_000 },
+      { subprocess: { spawn: spawnShim } },
+    );
+    console.log("[real] probe:", JSON.stringify({ ok: probe.ok, matched: probe.matched, totalRead: probe.totalRead, closedSource: probe.closedSource, error: probe.error, domains: probe.domains }));
+    expect(probe.error).toBeUndefined();
+    expect(probe.ok).toBe(true);
+
+    if (!doWrite) return;
+    const report = await importLoginCookies(
+      { source: (process.env.EGO_E2E_SOURCE as never) || "chrome", domains: realDomains, dryRun: false, closeSource: true, timeoutMs: 30_000 },
+      { subprocess: { spawn: spawnShim } },
+    );
+    console.log("[real] write:", JSON.stringify({ ok: report.ok, written: report.written, matched: report.matched, error: report.error }));
+    expect(report.ok).toBe(true);
+  }, 180_000);
 });
 
 /** SpawnLike shim over node:child_process (mirrors ctx.subprocess semantics). */
