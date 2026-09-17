@@ -5,3 +5,5 @@ pnpm-lock.yaml
 .memory/
 .playwright-mcp/
 PLAN-low-latency-watch-panel.md
+
+.worktrees/
