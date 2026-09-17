@@ -81,6 +81,18 @@ declare function require(id: string): any
 		idleTimeoutMin: 'Idle auto-stop (minutes)',
 		idleTimeoutMinHint: 'Stop the backing browser after N minutes without an ego_* call (0 = off). It cold-starts on the next call (~2-4s). Watching the panel does not count as activity.',
 		minUnit: 'min',
+		loginImportTitle: 'Import logins from system browser',
+		loginImportIntro: 'Copy login cookies from your daily Chrome/Edge/Brave into the agent browser (CDP passthrough — no offline decryption). Probe first, then import with an explicit domain list.',
+		loginImportSource: 'Source',
+		loginImportDomains: 'Domains (comma-separated; empty = ALL)',
+		loginImportDomainsHint: 'e.g. bilibili.com, zhihu.com — subdomains included. Prefer an explicit list over importing everything.',
+		loginImportCloseSource: 'Close the source browser first if it is running (windows restore on next launch)',
+		loginImportProbe: 'Probe',
+		loginImportRun: 'Import',
+		loginImportBusy: 'Working… (a running source browser may need to close first)',
+		loginImportProbeResult: 'Importable: {matched} cookies across {domains} domains (read {total} total) — nothing was written.',
+		loginImportResult: 'Imported {written} cookies across {domains} domains from {source}. They persist across restarts.',
+		loginImportClosed: ' (source browser was closed and can be reopened)',
 			chromePath: 'Browser binary path',
 			chromePathHint: 'Path to the Chrome/Chromium/Edge binary. Empty = auto-detect.',
 			captureBackend: 'Capture backend', streamProfile: 'Quality profile', cdpFps: 'CDP FPS', cdpQuality: 'CDP JPEG quality', cdpMaxWidth: 'CDP max width', cdpBackstopIntervalMs: 'CDP recovery interval', ffmpegFps: 'FFmpeg FPS', ffmpegMaxWidth: 'FFmpeg max width', ffmpegBitrateKbps: 'FFmpeg bitrate', ffmpegEncoder: 'FFmpeg encoder', ffmpegPath: 'FFmpeg binary path', githubMirror: 'GitHub mirror', fpsUnit: 'fps', pxUnit: 'px', kbpsUnit: 'kbps', msUnit: 'ms',
@@ -103,6 +115,18 @@ declare function require(id: string): any
 		idleTimeoutMin: '空闲自动回收（分钟）',
 		idleTimeoutMinHint: 'N 分钟没有任何 ego_* 调用后自动关闭后台浏览器进程（0 = 关闭）。下次调用自动冷启动（约 2-4 秒）。观看观察窗不算活动。',
 		minUnit: '分钟',
+		loginImportTitle: '从系统浏览器导入登录态',
+		loginImportIntro: '把你日常 Chrome/Edge/Brave 里的登录 cookie 复制进 agent 浏览器（CDP 透传，不做离线解密）。建议先「探测」看可导入项，再按域名导入。',
+		loginImportSource: '来源',
+		loginImportDomains: '域名（逗号分隔，留空 = 全部）',
+		loginImportDomainsHint: '例如 bilibili.com, zhihu.com — 含子域名。建议明确列出，不要全量导入。',
+		loginImportCloseSource: '源浏览器运行中则先优雅关闭（窗口下次启动可恢复）',
+		loginImportProbe: '探测',
+		loginImportRun: '导入',
+		loginImportBusy: '正在处理…（运行中的源浏览器可能需要先关闭）',
+		loginImportProbeResult: '可导入 {matched} 条 cookie（{domains} 个域名，共读取 {total} 条）——尚未写入。',
+		loginImportResult: '已从{source}导入 {written} 条 cookie（{domains} 个域名），跨重启保留。',
+		loginImportClosed: '（源浏览器已关闭，可重新打开）',
 			chromePath: '浏览器路径',
 			chromePathHint: 'Chrome/Chromium/Edge 可执行文件路径。留空 = 自动检测。',
 			captureBackend: '捕获后端', streamProfile: '画质档位', cdpFps: 'CDP 帧率', cdpQuality: 'CDP JPEG 质量', cdpMaxWidth: 'CDP 最大宽度', cdpBackstopIntervalMs: 'CDP 恢复截图间隔', ffmpegFps: 'FFmpeg 帧率', ffmpegMaxWidth: 'FFmpeg 最大宽度', ffmpegBitrateKbps: 'FFmpeg 码率', ffmpegEncoder: 'FFmpeg 编码器', ffmpegPath: 'FFmpeg 路径', githubMirror: 'GitHub 镜像源', fpsUnit: 'fps', pxUnit: 'px', kbpsUnit: 'kbps', msUnit: 'ms',
@@ -511,6 +535,79 @@ declare function require(id: string): any
 			)
 		}
 
+		function LoginImportBlock(props) {
+			var t = props.t
+			var useState = React.useState
+			var _source = useState('auto'), source = _source[0], setSource = _source[1]
+			var _domains = useState(''), domains = _domains[0], setDomains = _domains[1]
+			var _close = useState(false), closeSource = _close[0], setCloseSource = _close[1]
+			var _run = useState(false), running = _run[0], setRunning = _run[1]
+			var _res = useState(null), result = _res[0], setResult = _res[1]
+			function run(dryRun) {
+				setRunning(true)
+				setResult(null)
+				fetch('/api/ego/login-import', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						source: source,
+						domains: domains.split(',').map(function (s) { return s.trim() }).filter(Boolean),
+						closeSource: closeSource,
+						dryRun: dryRun,
+					}),
+				})
+					.then(function (r) { return r.json().catch(function () { return null }) })
+					.then(function (j) { setRunning(false); setResult(j || { ok: false, error: 'no response' }) })
+					.catch(function (e) { setRunning(false); setResult({ ok: false, error: String(e) }) })
+			}
+			var resultText = null
+			var resultOk = false
+			if (result) {
+				resultOk = result.ok === true
+				if (resultOk) {
+					var domainCount = (result.domains || []).length
+					var tpl = result.dryRun ? t('loginImportProbeResult') : t('loginImportResult')
+					// Interpolate locally — do not rely on the host locale's
+					// parameter support.
+					resultText = tpl
+						.replace('{matched}', String(result.matched ?? 0))
+						.replace('{written}', String(result.written ?? 0))
+						.replace('{domains}', String(domainCount))
+						.replace('{total}', String(result.totalRead ?? 0))
+						.replace('{source}', String(result.source || ''))
+						+ (result.closedSource ? t('loginImportClosed') : '')
+				} else {
+					resultText = result.error || 'failed'
+				}
+			}
+			return h('div', { className: 'dsh-ego-card__ffmpeg' },
+				h('div', { className: 'dsh-ego-card__ffmpeg-title' }, t('loginImportTitle')),
+				h('div', { className: 'dsh-ego-card__hint' }, t('loginImportIntro')),
+				h('div', { className: 'dsh-ego-card__field-row' },
+					h('select', {
+						className: 'dsh-ego-card__input dsh-ego-card__input--narrow', value: source, disabled: running,
+						onChange: function (e) { setSource(e.target.value) },
+					}, ['auto', 'chrome', 'edge', 'brave'].map(function (v) { return h('option', { key: v, value: v }, v === 'auto' ? t('loginImportSource') + ': auto' : v) })),
+					h('input', {
+						className: 'dsh-ego-card__input', type: 'text', value: domains, disabled: running,
+						placeholder: t('loginImportDomains'),
+						onChange: function (e) { setDomains(e.target.value) },
+					}),
+				),
+				h('div', { className: 'dsh-ego-card__hint' }, t('loginImportDomainsHint')),
+				h('label', { className: 'dsh-ego-card__hint', style: { display: 'flex', gap: '6px', alignItems: 'center', cursor: 'pointer' } },
+					h('input', { type: 'checkbox', checked: closeSource, disabled: running, onChange: function (e) { setCloseSource(e.target.checked) } }),
+					t('loginImportCloseSource'),
+				),
+				h('div', { className: 'dsh-ego-card__ffmpeg-actions' },
+					h('button', { type: 'button', className: 'dsh-ego-card__btn', disabled: running, onClick: function () { run(true) } }, t('loginImportProbe')),
+					h('button', { type: 'button', className: 'dsh-ego-card__btn dsh-ego-card__btn--primary', disabled: running, onClick: function () { run(false) } }, t('loginImportRun')),
+				),
+				running ? h('div', { className: 'dsh-ego-card__ffmpeg-status', role: 'status' }, t('loginImportBusy')) : null,
+				resultText ? h('div', { className: resultOk ? 'dsh-ego-card__saved' : 'dsh-ego-card__failed', role: 'status' }, resultText) : null,
+			)
+		}
+
 		function EgoBrowserCard(props) {
 			var t = props.t
 			var controller = props.controller
@@ -608,6 +705,7 @@ declare function require(id: string): any
 						h(SettingsField, { id: 'plugin-config-ego-browser-ghmirror', label: t('githubMirror'), value: state.draft.githubMirror, hint: t('githubMirrorHint'), placeholder: 'https://gh-proxy.com/github.com', disabled: busy, onEdit: function (v) { controller.edit('githubMirror', v) } }),
 						h(SettingsField, { id: 'plugin-config-ego-browser-ego-cli-args', label: t('egoCliArgs'), value: state.draft.egoCliArgs, hint: t('egoCliArgsHint'), placeholder: '--sdk-path /path/to/harness.js', disabled: busy, onEdit: function (v) { controller.edit('egoCliArgs', v) } }),
 						h(SettingsField, { id: 'plugin-config-ego-browser-chrome-args', label: t('chromeArgs'), value: state.draft.chromeArgs, hint: t('chromeArgsHint'), placeholder: '--disable-features=Translate --window-size=1024,768', disabled: busy, onEdit: function (v) { controller.edit('chromeArgs', v) } }),
+						h(LoginImportBlock, { t: t }),
 						h('div', { className: 'dsh-ego-card__ffmpeg' },
 							h('div', { className: 'dsh-ego-card__ffmpeg-title' }, t('ffmpegTitle')),
 							h('div', { className: 'dsh-ego-card__ffmpeg-status', role: 'status' }, t(ffmpegLabelKey) + (ffmpegStatus.reason ? ': ' + ffmpegStatus.reason : '') + (progressText ? ' ' + progressText : '')),

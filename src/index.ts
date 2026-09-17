@@ -794,7 +794,14 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   // on hosts without a web server (TUI / headless stay tools-only).
   ctx.inject?.(['webServer'], (wctx) => {
     try {
-      initCastServer(wctx as EgoContext, cfg, bridge, ffmpegManager, () => openAgentWindow(ctx, cfg))
+      initCastServer(
+        wctx as EgoContext,
+        cfg,
+        bridge,
+        ffmpegManager,
+        () => openAgentWindow(ctx, cfg),
+        (opts) => importLoginCookies(opts, { subprocess: ctx.subprocess }),
+      )
     } catch (err) {
       ctx.logger?.warn?.(
         `ego-browser: cast server init failed: ${(err as Error)?.message ?? err}`,
