@@ -86,6 +86,8 @@ export interface ActiveSpaceTracker {
   opened(args: { name?: string | number }, result: { id?: string | number; name?: string; done?: boolean; [key: string]: unknown }): void
   selected(space: string | number): void
   closed(space: string | number, done: boolean): void
+  /** Drop a stale numeric id back to the remembered space name (or default). */
+  resetToName(): void
 }
 
 /** Build the script that runs the probe and emits a sentinel payload. */
@@ -118,6 +120,13 @@ export function createActiveSpaceTracker(defaultSpace: string | number = DEFAULT
         activeSpace = defaultSpace
         activeName = typeof defaultSpace === 'string' ? defaultSpace : null
       }
+    },
+    // A browser restart resets the runtime's space table, leaving the
+    // remembered NUMERIC id dangling — the runtime then hard-fails every
+    // tool with "task space not found: N" until the user manually reopens a
+    // space. Falling back to the space's NAME lets useOrCreate recreate it.
+    resetToName: () => {
+      activeSpace = activeName ?? defaultSpace
     },
   }
 }
@@ -415,6 +424,27 @@ async function withWarmupRetry(fn: () => Promise<WarmupResult>, { tries = 3, bas
   }
   return last!
 }
+/**
+ * Run an ego script, recovering once from a stale space pointer: a browser
+ * restart wipes the runtime's space table, so the tracker's remembered numeric
+ * id dangles and the runtime hard-fails with "task space not found: N".
+ * Reset the tracker to the space's name (useOrCreate recreates it) and retry.
+ */
+/** @internal exported for tests */
+export async function runWithStaleSpaceRetry(
+  ctx: EgoContext,
+  cfg: EgoRuntimeConfig,
+  exec: ExecLike,
+  buildScript: () => string,
+  graceOverrideMs?: number,
+): Promise<WarmupResult> {
+  let result = await withWarmupRetry(() => runEgoScript(ctx.subprocess, buildScript(), exec, cfg, graceOverrideMs))
+  if (!result.ok && /task space not found: \d+/.test(result.error ?? '')) {
+    cfg.spaceTracker.resetToName()
+    result = await withWarmupRetry(() => runEgoScript(ctx.subprocess, buildScript(), exec, cfg, graceOverrideMs))
+  }
+  return result
+}
 /** Find the last line carrying the sentinel and JSON-parse its payload. */
 function parseSentinel(stdout: string): Record<string, unknown> | undefined {
   const lines = stdout.split('\n')
@@ -620,13 +650,10 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
         // calls betterSidebar.openTab(). Idempotent: the client's transition
         // guard means only the first call per session opens the Tab.
         markEgoToolCall(callingSessionId(exec))
-        const script = opts.buildScript(args)
-        // A first-call cold Chromium can make the spawn fail transiently
-        // ("CDP channel is not open" etc.); retry only that case so a warmed
-        // browser connects on a later attempt without masking real errors.
-        const result = await withWarmupRetry(() =>
-          runEgoScript(ctx.subprocess, script, exec, cfg),
-        )
+        // Stale-space recovery (browser restart wiped the space table) is
+        // handled inside runWithStaleSpaceRetry; the cold-start retry is one
+        // level deeper.
+        const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => opts.buildScript(args))
         if (!result.ok) throw new Error(result.error)
         if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
         // Value is JSON.parse output of our own payload — fits the tool JSON contract.
@@ -1833,10 +1860,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
           markEgoToolCall(callingSessionId(exec))
-          const script = str(args.script, '')
-          const result = await withWarmupRetry(() =>
-            runEgoScript(ctx.subprocess, script, exec, cfg),
-          )
+          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => str(args.script, ''))
           if (!result.ok) throw new Error(result.error)
           const parsed = parseSentinel(result.stdout)
           return {
@@ -1885,13 +1909,11 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       execute: async (args: Record<string, unknown>, exec: ToolExec) =>
         withEgoLock(async () => {
           markEgoToolCall(callingSessionId(exec))
-          const result = await withWarmupRetry(() =>
-            runEgoScript(
-              ctx.subprocess,
-              humanCheckScript(str(args.space, cfg.defaultSpace)),
-              { signal: exec?.signal },
-              cfg,
-            ),
+          const result = await runWithStaleSpaceRetry(
+            ctx,
+            cfg,
+            { signal: exec?.signal } as ToolExec,
+            () => humanCheckScript(str(args.space, cfg.defaultSpace)),
           )
           if (!result.ok)
             return { ok: false, detected: false, kind: null, error: result.error }
@@ -2058,7 +2080,6 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
           markEgoToolCall(callingSessionId(exec))
-          const script = str(args.script, '')
           // Honor the documented per-run timeout override (integer ms). Falls
           // back to the plugin's default grace when absent/invalid.
           const timeoutMs =
@@ -2066,9 +2087,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
               ? args.timeoutMs
               : undefined
           const start = Date.now()
-          const result = await withWarmupRetry(() =>
-            runEgoScript(ctx.subprocess, script, exec, cfg, timeoutMs),
-          )
+          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => str(args.script, ''), timeoutMs)
           const durationMs = Date.now() - start
           if (!result.ok)
             return { ok: false, stdout: result.stdout, stderr: result.stderr, durationMs, timedOut: false, error: result.error }
