@@ -2,10 +2,21 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [Unreleased]
+## [0.8.5] - 2026-09-18 — 登录态导入 + 空闲回收 + 观察窗修复群
+
+### 新增
+- **从系统浏览器导入登录态（#46）**：新工具 `ego_login_import` + 设置卡「从系统浏览器导入登录态」区块 + `POST /api/ego/login-import` 路由。把日常 Chrome/Edge/Brave 的登录 cookie 按域名复制进 agent 浏览器：真实二进制无头启动真实 Profile（junction 别名绕过 Chromium ≥136 默认目录 CDP 限制，同时满足 App-Bound Encryption 的路径绑定），CDP `Storage.getCookies` 读取、过滤、`Storage.setCookies` 写入持久 Profile。支持 `source/domains/profile/closeSource/dryRun`；源浏览器运行中可优雅关闭后导入（窗口下次启动恢复）；**导入前自动备份源 cookie 库，检测到清空自动还原**；cookie 值不进日志与输出。
+- **空闲自动回收（#47，opt-in）**：新设置 `idleTimeoutMin`（默认 0 关）。N 分钟无 ego_* 调用后优雅 `--stop` 后台浏览器（实测空闲 ~425MB），下次调用 2-4s 冷启动。观看观察窗不算活动（设置文案已注明）。
+- **观察窗「弹出窗口」按钮（#51）**：浮动面板与侧边栏 Tab 新增按钮，调用运行时 `ego-browser --open`——无头实例原地替换为同 Profile 有头窗口（标签页保留），有头则置前。无头模式的 CDP 预览本就可用的结论也已实测确认。
 
 ### 修复
-- **滚动后 viewport 截图全白**：`Page.captureScreenshot` 的 clip 原点是文档坐标，viewport 截图原先固定 `{x:0,y:0}`，滚动后 clip 落在未绘制区域（`captureBeyondViewport: false`）得到空白图。现用 `pageInfo().sx/sy`（`scrollX/scrollY`）作为 clip 原点；locator 的 viewport boundingBox 同样加上滚动偏移，与 `spaces-server` followClip 一致。
+- **滚动后 viewport 截图全白**（PR #50）：`Page.captureScreenshot` 的 clip 原点是文档坐标，viewport 截图原先固定 `{x:0,y:0}`，滚动后 clip 落在未绘制区域（`captureBeyondViewport: false`）得到空白图。现用 `pageInfo().sx/sy`（`scrollX/scrollY`）作为 clip 原点；locator 的 viewport boundingBox 同样加上滚动偏移，与 `spaces-server` followClip 一致。
+- **聊天外链被观察窗抢走且无法渲染（#48）**：侧边栏 Tab 的 `urlTarget` 声明过宽（认领所有 http(s)），但该 Tab 只是推流画面。已移除声明，外链回归内置 browser 标签。
+- **浏览器重启后 ego_* 全部报 task space not found**：插件侧记住的数字空间 id 在重启后悬空。新增 `runWithStaleSpaceRetry`：识别该错误后自动用空间名重建并重试一次（动作工具 + ego_cli/ego_captcha/ego_script 全覆盖）。
+- **多会话时观察窗弹到错误会话（#53，PR #54）**：`markEgoToolCall` 携带调用会话 id，自动打开按会话作用域定位侧边栏；一次性守卫改为按会话，探测流常驻。
+
+### 社区
+- 合并 PR #50（截图修复，hpqc032）、#52（观察窗英文 i18n，M4cd1r；我们补了 `wt()` 默认值修复恢复 typecheck）、#54（会话作用域，xiaochaZ）。
 
 ## [0.8.4] - 2026-09-15 — 观察窗 worker 启动链修复 + 社区 PR 合并
 
