@@ -123,6 +123,8 @@ export interface ResolvedConfig {
   isolateSpaces: boolean
   /** Minutes without an ego_* call before the backing browser is auto-stopped. 0 = off. */
   idleTimeoutMin: number
+  /** True = the live frame relay (ego-cast worker + cast routes) is turned off entirely. */
+  disableFrameRelay: boolean
   chromePath: string
   captureBackend: 'auto' | 'cdp' | 'ffmpeg'
   streamProfile: 'low' | 'balanced' | 'high'

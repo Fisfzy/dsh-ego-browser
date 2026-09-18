@@ -342,6 +342,28 @@ function isProcessAlive(pid: number | null): boolean {
   }
 }
 
+/** Reason string every frame-relay route answers with while the relay is off. */
+export const FRAME_RELAY_DISABLED = 'frame relay disabled'
+
+/**
+ * Stop a running ego-cast worker (SIGTERM). The worker owns the CDP
+ * screencast / WGC capture and the ffmpeg pull, so killing it is what actually
+ * turns the frame relay off when the setting is flipped while it is running —
+ * no HTTP shutdown route exists in bin/ego-cast-worker.mjs (it exits on
+ * SIGTERM/SIGINT). A stale ego-cast.json is harmless: ensureWorker() proves the
+ * pid is alive before trusting the recorded port.
+ */
+export async function stopCastWorker(): Promise<boolean> {
+  const state = await knownWorkerState()
+  if (state.pid === null || !isProcessAlive(state.pid)) return false
+  try {
+    process.kill(state.pid, 'SIGTERM')
+    return true
+  } catch {
+    return false
+  }
+}
+
 interface CaptureConfigPayload {
   captureBackend: ResolvedConfig['captureBackend']
   ffmpegFallbackReason: string
@@ -530,11 +552,38 @@ export function initCastServer(
     }),
   })
 
+  // ── frame-relay switch (settings: disableFrameRelay) ──────────────────────
+  // When the relay is off the plugin must not spawn the ego-cast worker, must
+  // not capture (CDP screencast / WGC) and must not pull ffmpeg, so every
+  // worker-backed route answers a plain JSON refusal instead of bridging a
+  // stream. The switch is read LIVE on each request (cfg is the plugin's
+  // settings-bridge object), so a saved settings change applies immediately.
+  // Routes that do NOT use the worker (raise / login-import) stay functional:
+  // disabling the frame relay is about the picture, not about the tools.
+  const relayDisabled = (): boolean => cfg.disableFrameRelay === true
+  const refuseFrameRelay = (res: ServerResponse, extra: Record<string, unknown> = {}): void => {
+    sendJson(res, 200, { ok: false, reason: FRAME_RELAY_DISABLED, frameRelay: false, ...extra })
+  }
+  // NOTE: mounting with the relay already off does NOT hunt down a worker to
+  // kill. This host has not started one yet (the worker is only ever spawned by
+  // ensureWorker on a request), and an unconditional kill would race with a
+  // freshly written ego-cast.json — it could SIGTERM a worker that a newer
+  // state file (another DSH instance, or a worker started a moment later)
+  // points at. Turning the switch OFF while a worker runs is handled by the
+  // onChange path below, which is the case that actually needs stopping.
+
   // Hot-push config changes to a running worker. The settings bridge fires
   // onChange whenever the user saves a new castFpsCap / screencastQuality /
   // screencastMaxWidth in the settings card.
   if (typeof bridge?.onChange === 'function') {
     const off = bridge.onChange(() => {
+      // Relay off: pushing the config would spawn/keep a worker, so stop it
+      // instead (idempotent — a dead/absent worker is a no-op). Relay back on:
+      // the next request lazily restarts the worker with the current config.
+      if (relayDisabled()) {
+        void stopCastWorker()
+        return
+      }
       pushConfig(cfg)
     })
     if (typeof off === 'function') {
@@ -553,15 +602,18 @@ export function initCastServer(
     path: EGO_SPACES_ROUTE,
     handler: async (_req: unknown, resRaw: unknown) => {
       const res = resRaw as ServerResponse
+      // Keep the tab-list shape (and the auto-open counter) in the refusal so
+      // the client's baseline probe still works while the relay is off.
+      if (relayDisabled()) return refuseFrameRelay(res, { spaces: [], toolCallCount })
       const port = await ensureWorker()
       if (port === null) {
-        return sendJson(res, 200, { ok: false, spaces: [], toolCallCount, reason: 'no live agent browser' })
+        return sendJson(res, 200, { ok: false, spaces: [], toolCallCount, reason: 'no live agent browser', frameRelay: true })
       }
       const data = await proxyFrom(port, '/api/spaces')
-      if (!data) return sendJson(res, 200, { ok: false, spaces: [], toolCallCount, reason: 'worker not ready' })
+      if (!data) return sendJson(res, 200, { ok: false, spaces: [], toolCallCount, reason: 'worker not ready', frameRelay: true })
       // Attach the host-side tool-call counter (the worker doesn't know about
       // tool invocations; only the host's defineEgoTool path does).
-      return sendJson(res, 200, { ...(data as Record<string, unknown>), toolCallCount })
+      return sendJson(res, 200, { ...(data as Record<string, unknown>), toolCallCount, frameRelay: true })
     },
   })
 
@@ -573,6 +625,10 @@ export function initCastServer(
     path: EGO_STREAM_ROUTE,
     handler: async (_req: unknown, resRaw: unknown) => {
       const res = resRaw as ServerResponse
+      // Relay off: never open an event stream. A plain JSON body with an
+      // explicit reason is the answer (no dangling connection, no
+      // reconnect-loop ambiguity once the client honors it).
+      if (relayDisabled()) return refuseFrameRelay(res)
       const port = await ensureWorker()
       if (port === null) {
         proxyWorkerStream(-1, res, '/api/stream')
@@ -591,6 +647,7 @@ export function initCastServer(
     handler: async (reqRaw: unknown, resRaw: unknown) => {
       const req = reqRaw as IncomingMessage
       const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
       const port = await ensureWorker()
       if (port === null) return sendJson(res, 400, { ok: false, error: 'no live agent browser' })
       const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
@@ -607,6 +664,7 @@ export function initCastServer(
     handler: async (reqRaw: unknown, resRaw: unknown) => {
       const req = reqRaw as IncomingMessage
       const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
       const port = await ensureWorker()
       if (port === null) return sendJson(res, 400, { ok: false, error: 'no live agent browser' })
       // Collect the request body (small JSON: { targetId }).
@@ -625,6 +683,7 @@ export function initCastServer(
     path: EGO_FLUSH_ROUTE,
     handler: async (_req: unknown, resRaw: unknown) => {
       const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
       const port = await ensureWorker()
       if (port === null) return sendJson(res, 400, { ok: false, error: 'no live agent browser' })
       const result = await proxyPost(port, '/api/flush', {})
@@ -684,6 +743,7 @@ export function initCastServer(
     path: EGO_HEALTH_ROUTE,
     handler: async (_req: unknown, resRaw: unknown) => {
       const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
       const port = await ensureWorker()
       if (port === null) return sendJson(res, 200, { ok: false })
       const h = await proxyFrom(port, '/api/health')
@@ -700,6 +760,7 @@ export function initCastServer(
     handler: async (reqRaw: unknown, resRaw: unknown) => {
       const req = reqRaw as IncomingMessage
       const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED, state: 'disabled' })
       const port = await ensureWorker()
       if (port === null) return sendJson(res, 409, { ok: false, error: 'worker not ready' })
       const timeoutMs = workerPath === '/api/watch/start' || workerPath === '/api/watch/switch' ? 30000 : 4000
@@ -713,15 +774,19 @@ export function initCastServer(
     kind: 'exact', path: EGO_WATCH_STATUS_ROUTE,
     handler: async (_req: unknown, resRaw: unknown) => {
       const res = resRaw as ServerResponse
+      // The client calls this right before opening the SSE stream; the
+      // `frameRelay: false` flag is what makes it skip the connection entirely.
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED, state: 'disabled' })
       const port = await ensureWorker()
       const result = port === null ? null : await proxyFrom(port, '/api/watch/status')
-      return sendJson(res, 200, result || { ok: false, state: 'idle', reason: 'worker not ready' })
+      return sendJson(res, 200, { ...(result || { ok: false, state: 'idle', reason: 'worker not ready' }), frameRelay: true })
     },
   })
   const disposeVideoStatus = server.register({
     kind: 'exact', path: EGO_VIDEO_STATUS_ROUTE,
     handler: async (_req: unknown, resRaw: unknown) => {
       const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED, state: 'disabled' })
       const port = await ensureWorker()
       const result = port === null ? null : await proxyFrom(port, '/api/video/status')
       return sendJson(res, 200, result || { ok: false, state: 'idle', reason: 'worker not ready' })
@@ -732,6 +797,8 @@ export function initCastServer(
     handler: async (reqRaw: unknown, resRaw: unknown) => {
       const req = reqRaw as IncomingMessage
       const res = resRaw as ServerResponse
+      // Never start the ffmpeg pull / fMP4 bridge while the relay is off.
+      if (relayDisabled()) return refuseFrameRelay(res)
       const port = await ensureWorker()
       if (port === null) return sendJson(res, 502, { ok: false, error: 'worker not ready' })
       proxyWorkerVideo(port, req, res)
