@@ -7,7 +7,7 @@ describe("dual capture config", () => {
       chromePath: "", captureBackend: "auto", streamProfile: "balanced",
       cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 960, cdpBackstopIntervalMs: 3000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
-      egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0,
+      egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
     });
   });
 
@@ -16,7 +16,7 @@ describe("dual capture config", () => {
       chromePath: "", captureBackend: "auto", streamProfile: "balanced",
       cdpFps: 30, cdpQuality: 70, cdpMaxWidth: 1200, cdpBackstopIntervalMs: 5000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
-      egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0,
+      egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
     });
     expect(resolveConfig({ cdpFps: 15, castFpsCap: 30 }).cdpFps).toBe(15);
   });
@@ -36,6 +36,23 @@ describe("dual capture config", () => {
     expect(resolveConfig({ streamProfile: "high", ffmpegBitrateKbps: 6000 }).ffmpegBitrateKbps).toBe(6000);
     expect(resolveConfig({ streamProfile: "high", ffmpegFps: 12 }).ffmpegFps).toBe(12);
     expect(resolveConfig({ backstopIntervalMs: 200 }).cdpBackstopIntervalMs).toBe(1000);
+  });
+});
+
+// ── disableFrameRelay (frame-relay master switch) ───────────────────────────
+
+describe("disableFrameRelay", () => {
+  it("defaults to false (frame relay stays on — unchanged behavior)", () => {
+    expect(resolveConfig({}).disableFrameRelay).toBe(false);
+  });
+
+  it("accepts the boolean and the string/number forms the settings layer may store", () => {
+    expect(resolveConfig({ disableFrameRelay: true }).disableFrameRelay).toBe(true);
+    expect(resolveConfig({ disableFrameRelay: "true" } as any).disableFrameRelay).toBe(true);
+    expect(resolveConfig({ disableFrameRelay: "1" } as any).disableFrameRelay).toBe(true);
+    expect(resolveConfig({ disableFrameRelay: 1 } as any).disableFrameRelay).toBe(true);
+    expect(resolveConfig({ disableFrameRelay: "false" } as any).disableFrameRelay).toBe(false);
+    expect(resolveConfig({ disableFrameRelay: "nonsense" } as any).disableFrameRelay).toBe(false);
   });
 });
 

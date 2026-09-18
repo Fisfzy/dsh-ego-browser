@@ -33,7 +33,7 @@ const API_PREFIX = '/ego/api'
 
 /** Config keys the `set` endpoint accepts (allow-list; unknown keys are dropped). */
 const ALLOWED_KEYS = new Set<string>([
-  'isolateSpaces', 'idleTimeoutMin',
+  'isolateSpaces', 'idleTimeoutMin', 'disableFrameRelay',
   'chromePath', 'captureBackend', 'streamProfile', 'cdpFps', 'cdpQuality',
   'cdpMaxWidth', 'cdpBackstopIntervalMs', 'ffmpegFps', 'ffmpegMaxWidth', 'ffmpegBitrateKbps',
   'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',

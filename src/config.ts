@@ -13,6 +13,7 @@ const encoder = z.union([
 export const Config = z.object({
   isolateSpaces: z.boolean().description('Space isolation: false = persistent profile (keep logins across restarts); true = isolated sandbox.'),
   idleTimeoutMin: z.number().min(0).max(1440).step(1).description('Auto-stop the backing browser after N minutes without an ego_* call (0 = off). Relaunches on demand at the next call.'),
+  disableFrameRelay: z.boolean().description('Disable the live frame relay (watch panel): no ego-cast worker, no screencast capture and no /api/ego stream routes. ego_* tools keep working.'),
   chromePath: z.string().description('Path to Chrome/Chromium. Empty = auto-detect.'),
   captureBackend: backend.description('Capture backend: auto, cdp, or ffmpeg.'),
   streamProfile: profile.description('Capture quality profile.'),
@@ -197,5 +198,7 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     chromeArgs: typeof config.chromeArgs === 'string' ? config.chromeArgs : '',
     isolateSpaces: typeof config.isolateSpaces === 'boolean' ? config.isolateSpaces : config.isolateSpaces === 'true' || config.isolateSpaces === '1' || config.isolateSpaces === 1,
     idleTimeoutMin: finiteIn(config.idleTimeoutMin, 0, 1440) ? config.idleTimeoutMin : 0,
+    // Default false (= frame relay ON, unchanged behavior); the switch is opt-in.
+    disableFrameRelay: typeof config.disableFrameRelay === 'boolean' ? config.disableFrameRelay : config.disableFrameRelay === 'true' || config.disableFrameRelay === '1' || config.disableFrameRelay === 1,
   }
 }

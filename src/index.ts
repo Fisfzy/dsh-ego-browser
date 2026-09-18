@@ -529,6 +529,7 @@ interface EgoRuntimeConfig {
   readonly idleTimeoutMin: number
   readonly chromeArgs: string
   readonly isolateSpaces: boolean
+  readonly disableFrameRelay: boolean
 }
 
 interface ExecLike {
@@ -723,6 +724,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',
     'castFpsCap', 'screencastQuality', 'screencastMaxWidth', 'backstopIntervalMs',
     'idleTimeoutMin',
+    'disableFrameRelay',
   ]
   const entry = Object.fromEntries(settingKeys.filter((key) => config[key] !== undefined).map((key) => [key, config[key]]))
   const bridge = installEgoBrowserSettings(ctx, entry)
@@ -766,6 +768,9 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     get chromeArgs() { return resolveConfig(bridge.source() as RawConfig).chromeArgs },
     get isolateSpaces() { return resolveConfig(bridge.source() as RawConfig).isolateSpaces },
     get idleTimeoutMin() { return resolveConfig(bridge.source() as RawConfig).idleTimeoutMin },
+    // Live getter: cast-server reads this on EVERY /api/ego/* request, so the
+    // settings card toggle takes effect without a host restart.
+    get disableFrameRelay() { return resolveConfig(bridge.source() as RawConfig).disableFrameRelay },
   }
   const reg = (tool: ToolHandle): void => {
     const dispose = ctx.tools.register(tool) as unknown as () => void
