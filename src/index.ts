@@ -727,7 +727,21 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'disableFrameRelay',
   ]
   const entry = Object.fromEntries(settingKeys.filter((key) => config[key] !== undefined).map((key) => [key, config[key]]))
-  const bridge = installEgoBrowserSettings(ctx, entry)
+  // DSH 0.1.7：可注册的 settings 命名空间被换成了 loader 条目上的配置文档，用户
+  // 偏好的活值由 loader 持有并在 volatile 提交后更新，所以读路径必须离开旧的
+  // `ctx.settings.register` 作用域。`ctx.config` 需要 inject 才能访问，取不到就
+  // 用 apply 收到的 config 对象 —— 0.1.7 把 volatile 字段包成引用后，这个对象上
+  // 的引用是「指向活值」的，所以通过 `.get()` 解包（config.ts: unwrapVolatile）
+  // 就能读到提交后的最新值。
+  const bridge = installEgoBrowserSettings(ctx, entry, () => {
+    let live: Record<string, unknown> | undefined
+    try {
+      live = (ctx as unknown as { config?: Record<string, unknown> }).config
+    } catch {
+      live = undefined
+    }
+    return live ?? (config as unknown as Record<string, unknown>)
+  })
   const ffmpegManager = getSharedFfmpegInstallationManager()
   const initialFfmpegConfig = resolveConfig(bridge.source() as RawConfig)
   void ffmpegManager.check({ configuredPath: initialFfmpegConfig.ffmpegPath, requestedEncoder: initialFfmpegConfig.ffmpegEncoder }).catch(() => {

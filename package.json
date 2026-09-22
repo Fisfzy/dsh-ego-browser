@@ -40,6 +40,7 @@
     "build": "tsdown -c tsdown.config.ts"
   },
   "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.3",
     "schemastery": "^3.18.0"
   },
   "peerDependencies": {

@@ -60,16 +60,48 @@ export interface SettingsBridge {
  * `"already registered"` rejection — host composition may mount several
  * concurrent fibers of this plugin, and only the first registration owns the
  * namespace.
+ *
+ * [DSH 0.1.7] The registrable settings namespace was replaced by a forms service
+ * over the profile's own entries: `ctx.settings` still exists (describe/revisions)
+ * but `register` is gone, and the live user values sit on the loader-owned row
+ * config instead. A plugin that keeps reading the mount-time composition snapshot
+ * sees every write as "accepted but unchanged", so when `register` is absent the
+ * bridge switches to the caller-supplied live source.
  */
-export function installEgoBrowserSettings(ctx: EgoContext, entry: Record<string, unknown>): SettingsBridge {
+export function installEgoBrowserSettings(
+  ctx: EgoContext,
+  entry: Record<string, unknown>,
+  /** The row's currently effective config (loader-owned; reflects volatile commits). */
+  live?: () => Record<string, unknown> | undefined,
+): SettingsBridge {
   const listeners = new Set<() => void>()
   let source: () => Record<string, unknown> = () => entry
+  /** 0.1.7 形态：settings 服务不再有 register，活值由 loader 的 config 提供。 */
+  const liveSource = (): Record<string, unknown> => {
+    let values: Record<string, unknown> | undefined
+    try {
+      values = live?.()
+    } catch {
+      values = undefined
+    }
+    if (values === undefined || values === null) return entry
+    return { ...entry, ...values }
+  }
   const notify = (): void => {
     for (const listener of [...listeners]) listener()
   }
   ctx.inject?.(['settings'], (sctx) => {
     const sharedScope = getSharedScope()
     let scope = sharedScope.scope
+    const service = sctx.settings as unknown as Record<string, unknown> | undefined
+    // DSH 0.1.7 把可注册的 settings 命名空间换成了 loader 条目上的配置文档：
+    // 服务仍在（describe/revisions 可用）但 `register` 已移除。此时活值来自
+    // 本插件自己被 loader 更新的 config，读路径必须切过去，否则写的值永远读不到。
+    if (service === undefined || typeof service.register !== 'function') {
+      source = liveSource
+      notify()
+      return
+    }
     if (!scope) {
       try {
         scope = sctx.settings!.register(SETTINGS_NAMESPACE, Config, {

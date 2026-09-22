@@ -1,4 +1,11 @@
-import z from 'schemastery'
+// [DSH 0.1.7] Schemastery MUST come from DSH's own fork rather than the public
+// package: only that build WRAPS a `meta.volatile` field in a cosmokit
+// `Volatile` reference when it parses the config, and the Loader's live-commit
+// path (`volatileEntries` / `updateVolatile`) walks those references. With the
+// public build the write reports success but has nothing to commit — and with
+// NO volatile field at all the host refuses the edit outright with
+// `Plugin entry "ego-browser" has no volatile fields`.
+import z from '@deepseek-ai/schemastery'
 import type { RawConfig, ResolvedConfig } from './types.ts'
 
 const backend = z.union(['auto', 'cdp', 'ffmpeg'])
@@ -8,9 +15,11 @@ const encoder = z.union([
   'h264_videotoolbox', 'h264_vaapi',
 ])
 
-// Defaults live in resolveConfig so a persisted legacy value is not hidden by
-// a schema default before the one-release migration runs.
-export const Config = z.object({
+// User preferences. Every field here is marked `.volatile()` below: the Loader
+// ignores volatile fields when deciding whether an edit needs a remount, takes
+// the live-commit path instead, and the settings form can then write them
+// without restarting the plugin.
+const prefs = {
   isolateSpaces: z.boolean().description('Space isolation: false = persistent profile (keep logins across restarts); true = isolated sandbox.'),
   idleTimeoutMin: z.number().min(0).max(1440).step(1).description('Auto-stop the backing browser after N minutes without an ego_* call (0 = off). Relaunches on demand at the next call.'),
   disableFrameRelay: z.boolean().description('Disable the live frame relay (watch panel): no ego-cast worker, no screencast capture and no /api/ego stream routes. ego_* tools keep working.'),
@@ -31,12 +40,27 @@ export const Config = z.object({
   // control flags are stripped (see EGO_CLI_BLOCKED / CHROME_BLOCKED below).
   egoCliArgs: z.string().description('Extra args appended to `ego-browser nodejs` argv. Takes effect on the next ego_* call.'),
   chromeArgs: z.string().description('Extra args appended to the Chrome launch argv. Takes effect on the next browser cold start (the browser is a singleton).'),
+}
+
+// `.volatile()` RETURNS A COPY (like `extra()`), so the marked schemas must be
+// collected — calling it for its side effect leaves every field non-volatile
+// and the settings service then reports "no volatile fields" for the entry.
+const volatilePrefs = Object.fromEntries(
+  // The fork's public typings do not declare `volatile()`, but the runtime has
+  // it (DSH's own plugins rely on it) — hence the unknown-cast.
+  Object.entries(prefs).map(([key, field]) => [key, (field as unknown as { volatile(): unknown }).volatile()]),
+)
+
+// Defaults live in resolveConfig so a persisted legacy value is not hidden by
+// a schema default before the one-release migration runs.
+export const Config = z.object({
+  ...volatilePrefs,
   // Deprecated read-compatible keys. The settings UI only writes canonical keys.
   castFpsCap: z.number().min(0).max(60).step(1),
   screencastQuality: z.number().min(1).max(100).step(1),
   screencastMaxWidth: z.number().min(320).max(1920).step(40),
   backstopIntervalMs: z.number().min(200).max(10000).step(100),
-})
+}) as unknown as z<Record<string, unknown>>
 
 // ── user-defined extra CLI args ─────────────────────────────────────────────
 /**
@@ -168,7 +192,37 @@ function oneOf<T extends string>(value: unknown, values: readonly T[], fallback:
   return typeof value === 'string' && (values as readonly string[]).includes(value) ? (value as T) : fallback
 }
 
+/**
+ * DSH 0.1.7 wraps a `.volatile()` field in a cosmokit `Volatile` reference: a
+ * plain object exposing `get()` plus a `Symbol(cosmokit.volatile.write)` slot.
+ * `typeof`/`JSON.stringify` see an opaque `{}`, so a raw read would silently
+ * fall back to the default instead of the value the user saved. Reading through
+ * `get()` also picks up later live commits, because the reference stays put and
+ * only its value moves.
+ */
+export function unwrapVolatile<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value
+  const candidate = value as unknown as { get?: unknown }
+  if (typeof candidate.get !== 'function') return value
+  const isVolatile = Object.getOwnPropertySymbols(value).some((symbol) => String(symbol).includes('cosmokit.volatile'))
+  if (!isVolatile) return value
+  try {
+    return (candidate.get as () => T)()
+  } catch {
+    return value
+  }
+}
+
+/** Unwrap every volatile reference so `resolveConfig` sees plain values. */
+function normalizeVolatile(config: RawConfig): RawConfig {
+  const source = config as unknown as Record<string, unknown>
+  const plain: Record<string, unknown> = {}
+  for (const key of Object.keys(source)) plain[key] = unwrapVolatile(source[key])
+  return plain as RawConfig
+}
+
 export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
+  config = normalizeVolatile(config)
   const legacyFps = finiteIn(config.castFpsCap, 0, 60)
     ? (config.castFpsCap === 0 ? 20 : Math.max(5, Math.min(30, config.castFpsCap)))
     : 20

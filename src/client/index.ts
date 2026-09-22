@@ -663,41 +663,19 @@ declare function require(id: string): any
 			)
 		}
 
-		function EgoBrowserCard(props) {
+		function EgoBrowserForm(props) {
 			var t = props.t
 			var controller = props.controller
 			var useSnapshot = props.useSnapshot
 			var state = useSnapshot(function (s) { return s })
 			if (state.status === 'idle') void controller.load()
-			var degraded = state.status === 'ready' && !state.available
-			var open = state._open || degraded
 			var applyState = state.applyState || { kind: 'idle' }
 			var saving = applyState.kind === 'saving'
 			var saved = applyState.kind === 'saved'
 			var errorText = applyState.kind === 'error' ? applyState.message : undefined
 
-			var header = h('button', {
-				type: 'button',
-				className: 'dsh-ego-card__header',
-				'aria-expanded': open,
-				'aria-label': t(open ? 'collapse' : 'expand') + ': ' + t('title'),
-				onClick: function () { if (!degraded) controller.toggle() },
-			},
-				h('span', { className: 'dsh-ego-card__head-text' },
-					h('span', { className: 'dsh-ego-card__name' }, t('title')),
-					h('span', { className: 'dsh-ego-card__desc' }, t('intro')),
-				),
-				state.dirty ? h('span', { className: 'dsh-ego-card__pending' }, t('unsaved')) : null,
-				h('span', {
-					className: 'dsh-ego-card__chevron' + (open ? ' dsh-ego-card__chevron--open' : ''),
-					dangerouslySetInnerHTML: { __html: CHEVRON_SVG },
-				}),
-			)
-
 			var body = null
-			if (!open) {
-				body = null
-			} else if (!state.available) {
+			if (!state.available) {
 				body = h('div', { className: 'dsh-ego-card__body' },
 					h('p', { className: 'dsh-ego-card__notice', role: 'status' }, t('namespaceUnavailable')),
 					h('div', { className: 'dsh-ego-card__footer' },
@@ -803,9 +781,201 @@ declare function require(id: string): any
 				)
 			}
 
+			return body
+		}
+
+		/**
+		 * 设置分区卡片（DSH <= 0.1.6 的 `settings.plugin.item` 视图）：
+		 * 折叠头 + 表单体。0.1.7 起该 slot 退役，此组件仅在宿主仍在声明它时注册。
+		 */
+		function EgoBrowserCard(props) {
+			var t = props.t
+			var controller = props.controller
+			var useSnapshot = props.useSnapshot
+			var state = useSnapshot(function (s) { return s })
+			if (state.status === 'idle') void controller.load()
+			var degraded = state.status === 'ready' && !state.available
+			var open = state._open || degraded
+			var header = h('button', {
+				type: 'button',
+				className: 'dsh-ego-card__header',
+				'aria-expanded': open,
+				'aria-label': t(open ? 'collapse' : 'expand') + ': ' + t('title'),
+				onClick: function () { if (!degraded) controller.toggle() },
+			},
+				h('span', { className: 'dsh-ego-card__head-text' },
+					h('span', { className: 'dsh-ego-card__name' }, t('title')),
+					h('span', { className: 'dsh-ego-card__desc' }, t('intro')),
+				),
+				state.dirty ? h('span', { className: 'dsh-ego-card__pending' }, t('unsaved')) : null,
+				h('span', {
+					className: 'dsh-ego-card__chevron' + (open ? ' dsh-ego-card__chevron--open' : ''),
+					dangerouslySetInnerHTML: { __html: CHEVRON_SVG },
+				}),
+			)
 			return h('li', {
 				className: 'dsh-ego-card' + (open ? ' dsh-ego-card--open' : ''),
-			}, header, open ? body : null)
+			}, header, open ? h(EgoBrowserForm, { t: t, controller: controller, useSnapshot: useSnapshot }) : null)
+		}
+
+		/**
+		 * 插件页的配置视图（DSH 0.1.7+ 的 `plugins.row.config`）：
+		 * `summary` 是行详情缺包描述时的回退；`page` 渲染带保存控件的完整表单。
+		 * 标题、图标与面包屑由页面自绘，所以这里不再画折叠头。
+		 */
+		function EgoBrowserConfigView(props) {
+			if (props.view === 'summary') return props.t('intro')
+			if (props.form) return h(EgoHostConfigForm, { t: props.t, form: props.form })
+			return h(EgoBrowserForm, { t: props.t, controller: props.controller, useSnapshot: props.useSnapshot })
+		}
+
+		// 旧的一次性迁移键：设置页只写规范键，不在宿主表单里暴露。
+		var HOST_FORM_HIDDEN = ['castFpsCap', 'screencastQuality', 'screencastMaxWidth', 'backstopIntervalMs']
+		var HOST_FORM_PLACEHOLDER = {
+			chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+			ffmpegPath: 'ffmpeg',
+			githubMirror: 'https://gh-proxy.com/github.com',
+			egoCliArgs: '--sdk-path /path/to/harness.js',
+			chromeArgs: '--disable-features=Translate --window-size=1024,768',
+		}
+
+		/**
+		 * 由宿主 `ConfigPageForm` 驱动的配置表单（DSH 0.1.7+）。值取自
+		 * `form.state.value`（宿主已接受的那一份），保存时把改动过的字段拼成
+		 * `SettingsPathOpView[]` 交给 `form.mutate(ops, revision)` —— 这条路经
+		 * loader 的 volatile 提交，改完立即生效。自家的 `/ego/api/set` 网关在
+		 * 0.1.7 上只会"报告成功但值不变"，所以只在没有 `form` 时回退到它。
+		 */
+		function EgoHostConfigForm(props) {
+			var t = props.t
+			var form = props.form
+			var snap = form.state
+			var useState = React.useState
+			var useEffect = React.useEffect
+			var _draft = useState(null), draft = _draft[0], setDraft = _draft[1]
+			var _busy = useState(false), busy = _busy[0], setBusy = _busy[1]
+			var _result = useState(null), result = _result[0], setResult = _result[1]
+			// 宿主返回的 `state.value` 只是这一行的原始覆盖值（没有 schema 默认值），
+			// 直接用它渲染会漏掉从未改过的设置项。所以再从自家网关取一份「全字段 +
+			// 默认值」把字段集补齐，缺省值由网关（宿主侧 resolveConfig）给出。
+			var _base = useState(null), base = _base[0], setBase = _base[1]
+			var _reload = useState(0), reload = _reload[0], setReload = _reload[1]
+			useEffect(function () {
+				var alive = true
+				fetch('/ego/api/get', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: '{}',
+				}).then(function (r) { return r.json() }).then(function (json) {
+					if (!alive) return
+					var config = json && json.value && json.value.config
+					if (config) setBase(config)
+				}).catch(function () { /* 网关不可用时只显示宿主已知的字段 */ })
+				return function () { alive = false }
+			}, [reload])
+
+			var hostValues = (snap && snap.value) || {}
+			var values = Object.assign({}, base || {}, hostValues)
+			var ready = !!(snap && (snap.status === 'ready' || base !== null))
+			var writable = !!(snap && snap.writable)
+			var effective = draft === null ? values : draft
+			var keys = Object.keys(values).filter(function (k) { return HOST_FORM_HIDDEN.indexOf(k) === -1 })
+
+			function edit(key, value) {
+				var next = Object.assign({}, effective)
+				next[key] = value
+				setResult(null)
+				setDraft(next)
+			}
+			function changedOps() {
+				var ops = []
+				for (var i = 0; i < keys.length; i++) {
+					var k = keys[i]
+					if (JSON.stringify(effective[k]) !== JSON.stringify(values[k])) ops.push({ op: 'set', path: [k], value: effective[k] })
+				}
+				return ops
+			}
+			function save() {
+				var ops = changedOps()
+				if (ops.length === 0) { setDraft(null); return }
+				setBusy(true)
+				setResult(null)
+				Promise.resolve(form.mutate(ops, snap && snap.revision)).then(function (accepted) {
+					setBusy(false)
+					setDraft(null)
+					setResult({ ok: accepted !== false })
+					setReload(function (n) { return n + 1 })
+				}).catch(function (err) {
+					setBusy(false)
+					setResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
+				})
+			}
+
+			if (!ready) {
+				return h('div', { className: 'dsh-ego-card__body' },
+					h('p', { className: 'dsh-ego-card__notice', role: 'status' },
+						snap && snap.status === 'unavailable' ? t('namespaceUnavailable') : t('saving')),
+				)
+			}
+
+			var fields = keys.map(function (key) {
+				var value = effective[key]
+				var label = t(key)
+				var hint = t(key + 'Hint')
+				var fieldId = 'plugin-config-ego-browser-' + key.toLowerCase()
+				var fieldHint = hint === key + 'Hint' ? undefined : hint
+				if (typeof value === 'boolean') {
+					return h(SettingsField, {
+						id: fieldId, label: label, hint: fieldHint,
+						value: value ? 'true' : 'false',
+						options: [{ value: 'false', label: t('offLabel') }, { value: 'true', label: t('onLabel') }],
+						disabled: busy || !writable,
+						onEdit: function (v) { edit(key, v === 'true') },
+					})
+				}
+				if (typeof value === 'number') {
+					return h(SettingsField, {
+						id: fieldId, label: label, hint: fieldHint,
+						value: String(value), numeric: true, narrow: true,
+						disabled: busy || !writable,
+						onEdit: function (v) { var n = Number(v); edit(key, Number.isFinite(n) ? n : value) },
+					})
+				}
+				return h(SettingsField, {
+					id: fieldId, label: label, hint: fieldHint,
+					value: String(value == null ? '' : value),
+					placeholder: HOST_FORM_PLACEHOLDER[key],
+					disabled: busy || !writable,
+					onEdit: function (v) { edit(key, v) },
+				})
+			})
+
+			var dirty = changedOps().length > 0
+			var status = null
+			if (busy) status = t('saving')
+			else if (result && result.ok) status = t('savedHint')
+			else if (result && result.ok === false) status = result.message || t('saveFailed')
+			else if (!writable) status = t('readOnly')
+			else if (dirty) status = t('unsaved')
+
+			return h('div', { className: 'dsh-ego-card__body' },
+				!writable ? h('p', { className: 'dsh-ego-card__notice', role: 'status' }, t('readOnly')) : null,
+				h('div', { className: 'dsh-ego-card__form' }, fields),
+				h('div', { className: 'dsh-ego-card__footer' },
+					status ? h('p', { className: 'dsh-ego-card__hint', role: 'status' }, status) : null,
+					h('div', { className: 'dsh-ego-card__actions' },
+						h('button', {
+							type: 'button', className: 'dsh-ego-card__btn', disabled: busy || !dirty,
+							onClick: function () { setDraft(null); setResult(null) },
+						}, t('discard')),
+						h('button', {
+							type: 'button', className: 'dsh-ego-card__btn dsh-ego-card__btn--primary',
+							disabled: busy || !dirty || !writable,
+							onClick: save,
+						}, busy ? t('saving') : t('save')),
+					),
+				),
+			)
 		}
 
 		function isFfmpegBusy(state) { return ['checking', 'downloading', 'verifying', 'extracting', 'probing'].includes(state) }
@@ -1254,13 +1424,38 @@ declare function require(id: string): any
 				var dispose = ctx.on('connection/reset', refresh)
 				return function () { dispose() }
 			}, 'ego-browser: settings invalidation')
+			// 配置入口在两个 slot 上各挂一次，由宿主的声明决定哪个真正生效：
+			//   - DSH >= 0.1.7：插件页的行配置页 `plugins.row.config`，键为
+			//     `<包名>#<行 id>`；行 id 取本包 cordis.patch.yml 声明的
+			//     `ego-browser`，即「插件 › dsh-ego-browser › ego-browser 行」。
+			//   - DSH <= 0.1.6：设置 › 插件的 `settings.plugin.item`（折叠卡片）。
+			// `slots.inject` 对未声明的 slot 只是静默等待（声明后才跑回调），
+			// 因此两处注册互不干扰，也无需探测宿主版本。
+			var configFace = { controller: controller, useSnapshot: useSnapshot }
+			// 行配置的键是 `<bundle>#<rowId>`（宿主 config-ledger.rowConfigKey），
+			// 而 bundle 名取的是 profile 的依赖键，随安装方式变化：
+			//   - 本机 junction 安装 → `@dsh-external/ego-browser`（2026-09-23 实测，
+			//     宿主的 [data-plugin-name] 就是它）
+			//   - npm / git 直接依赖 → 包名 `dsh-ego-browser`
+			// 两种都注册：只有匹配上的那个键会让插件页的行变成可导航。
+			ctx.slots.inject('plugins.row.config', function* () {
+				var bundles = ['@dsh-external/ego-browser', 'dsh-ego-browser']
+				for (var bi = 0; bi < bundles.length; bi++) {
+					yield ctx.slots.register({
+						name: 'plugins.row.config',
+						key: bundles[bi] + '#ego-browser',
+						locale: SETTINGS_NS,
+						inject: function () { return configFace },
+					}, EgoBrowserConfigView)
+				}
+			})
 			ctx.slots.inject('settings.plugin.item', function* () {
 				yield ctx.slots.register({
 					name: 'settings.plugin.item',
 					key: SETTINGS_NS,
 					order: 60,
 					locale: SETTINGS_NS,
-					inject: function () { return { controller: controller, useSnapshot: useSnapshot } },
+					inject: function () { return configFace },
 				}, EgoBrowserCard)
 			})
 
