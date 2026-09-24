@@ -99,7 +99,7 @@ export interface SettingsScope {
 }
 
 export interface SettingsService {
-  register(namespace: string, schema: unknown, opts?: { base?: Record<string, unknown> }): SettingsScope
+  register?(namespace: string, schema: unknown, opts?: { base?: Record<string, unknown> }): SettingsScope
   update?(namespace: string, patch: Record<string, unknown>): Promise<void>
 }
 

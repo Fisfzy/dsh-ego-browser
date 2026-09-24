@@ -182,6 +182,7 @@ async function handleSet(
     }
   }
   await settings.update(SETTINGS_NAMESPACE, patch)
+  bridge.noteWrite(patch)
   const ffmpegStatus = Object.hasOwn(patch, 'ffmpegPath') && ffmpegManager
     ? await ffmpegManager.check({ configuredPath: next.ffmpegPath, requestedEncoder: next.ffmpegEncoder })
     : ffmpegManager?.status() || null

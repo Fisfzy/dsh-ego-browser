@@ -49,6 +49,25 @@ function isUnloading(ctx: EgoContext): boolean {
 export interface SettingsBridge {
   source(): Record<string, unknown>
   onChange(cb: () => void): () => void
+  /** Fold a just-written patch into the in-memory view and notify listeners. */
+  noteWrite(patch: Record<string, unknown>): void
+}
+
+function readConfigValue(value: unknown): unknown {
+  if (value !== null && typeof value === 'object' && typeof (value as { get?: unknown }).get === 'function') {
+    return (value as { get: () => unknown }).get()
+  }
+  return value
+}
+
+function readConfigObject(entry: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (entry === null || entry === undefined || typeof entry !== 'object') return out
+  for (const key of Object.keys(entry)) {
+    const value = readConfigValue(entry[key])
+    if (value !== undefined) out[key] = value
+  }
+  return out
 }
 
 /**
@@ -63,17 +82,36 @@ export interface SettingsBridge {
  */
 export function installEgoBrowserSettings(ctx: EgoContext, entry: Record<string, unknown>): SettingsBridge {
   const listeners = new Set<() => void>()
-  let source: () => Record<string, unknown> = () => entry
+  let overlay: Record<string, unknown> = {}
+  let source: () => Record<string, unknown> = () => ({ ...readConfigObject(entry), ...overlay })
   const notify = (): void => {
     for (const listener of [...listeners]) listener()
   }
+  const bridge: SettingsBridge = {
+    source: () => source(),
+    noteWrite(patch) {
+      overlay = { ...overlay, ...patch }
+      notify()
+    },
+    onChange: (cb) => {
+      listeners.add(cb)
+      return () => {
+        listeners.delete(cb)
+      }
+    },
+  }
   ctx.inject?.(['settings'], (sctx) => {
+    if (typeof sctx.settings?.register !== 'function') {
+      source = () => ({ ...readConfigObject(entry), ...overlay })
+      notify()
+      return
+    }
     const sharedScope = getSharedScope()
     let scope = sharedScope.scope
     if (!scope) {
       try {
-        scope = sctx.settings!.register(SETTINGS_NAMESPACE, Config, {
-          base: entry,
+        scope = sctx.settings.register(SETTINGS_NAMESPACE, Config, {
+          base: readConfigObject(entry),
         })
         sharedScope.scope = scope
       } catch (error) {
@@ -99,18 +137,10 @@ export function installEgoBrowserSettings(ctx: EgoContext, entry: Record<string,
       sharedScope.refs = Math.max(0, sharedScope.refs - 1)
       if (sharedScope.refs === 0 && sharedScope.scope === scope) sharedScope.scope = null
       if (isUnloading(ctx)) return
-      source = () => entry
+      source = () => ({ ...readConfigObject(entry), ...overlay })
       notify()
     })
     notify()
   })
-  return {
-    source: () => source(),
-    onChange: (cb) => {
-      listeners.add(cb)
-      return () => {
-        listeners.delete(cb)
-      }
-    },
-  }
+  return bridge
 }
