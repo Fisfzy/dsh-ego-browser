@@ -39,18 +39,6 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { importLoginCookies } from './login-import.ts'
-
-/**
- * [hotfix 2026-09-28] Kill-switch for ego_login_import — issue #61 (data loss).
- * The import pipeline junction-launches a headless instance of the REAL system
- * browser on the SOURCE profile; on Windows + Edge 153 that wiped the source
- * cookie store (413 rows -> 0), and restoreIfWiped built its fallback from an
- * already-empty backup. Until the file-level read fix lands (copy the Cookies
- * SQLite aside, never launch anything on the source profile), both the tool
- * and the /api/ego/login-import route refuse to run.
- */
-const LOGIN_IMPORT_DISABLED =
-  'ego_login_import is temporarily disabled (issue #61: importing can WIPE the source browser cookie store). It will return once the file-level read fix ships. Meanwhile: log in manually in the agent browser, then run ego_auth_flush to persist.'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
@@ -831,8 +819,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
         bridge,
         ffmpegManager,
         () => openAgentWindow(ctx, cfg),
-        // [hotfix 2026-09-28] issue #61 kill-switch — route never reaches the pipeline.
-        (opts) => Promise.resolve({ ok: false, error: LOGIN_IMPORT_DISABLED }),
+        (opts) => importLoginCookies(opts, { subprocess: ctx.subprocess }),
       )
     } catch (err) {
       ctx.logger?.warn?.(
@@ -1074,7 +1061,9 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
               ok: !!jbody.ok,
               total: jbody.total ?? 0,
               flushed: jbody.flushed ?? 0,
-              error: jbody.error,
+              // [#60-3] undefined is not lossless JSON — strict hosts reject
+              // the WHOLE result; omit the key when there is no error.
+              ...(typeof jbody.error === 'string' ? { error: jbody.error } : {}),
             }
           } catch (err) {
             return { ok: false, error: String((err as Error)?.message || err) }
@@ -1095,7 +1084,6 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     defineTool({
       name: 'ego_login_import',
       description:
-        '[DISABLED — issue #61, returns an error without executing] ' +
         'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. Works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
       parameters: {
         source: {
@@ -1134,16 +1122,16 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             matched: { type: 'integer' },
             written: { type: 'integer' },
             domains: { type: 'json' },
+            closedSource: { type: 'boolean' },
+            restoredFromBackup: { type: 'boolean' },
             error: { type: 'string' },
           },
         },
         render: renderText,
       },
       timeoutMs: 60_000,
-      execute: async (args: Record<string, unknown>) => {
-        // [hotfix 2026-09-28] issue #61 kill-switch — never touch the pipeline.
-        if (LOGIN_IMPORT_DISABLED) return { ok: false, error: LOGIN_IMPORT_DISABLED }
-        return withEgoLock(async () => {
+      execute: async (args: Record<string, unknown>) =>
+        withEgoLock(async () => {
           try {
             const domains = Array.isArray(args.domains) ? (args.domains as unknown[]).map(String) : undefined
             const source = typeof args.source === 'string' && args.source !== '' ? args.source : 'auto'
@@ -1163,8 +1151,7 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           } catch (err) {
             return { ok: false, error: String((err as Error)?.message || err) }
           }
-        })
-      },
+        }),
       presentCall: () => ({
         card: 'generic',
         title: 'ego_login_import',

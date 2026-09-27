@@ -317,20 +317,21 @@ async function backupCookieStore(profileDir: string, backupRoot: string): Promis
   }
 }
 
-/** If the store lost its encrypted rows during our session, restore the backup. */
-async function restoreIfWiped(profileDir: string, backup: BackupInfo | null): Promise<boolean> {
-  if (!backup || backup.markers === 0) return false
+/** [#61] Always restore the pre-boot backup, then VERIFY the store's marker count (one retry on mismatch/lock). */
+async function restoreCookieStore(profileDir: string, backup: BackupInfo | null): Promise<boolean> {
+  if (!backup) return false
   const src = join(profileDir, 'Network', 'Cookies')
-  try {
-    const current = countEncryptionMarkers(await readFile(src))
-    if (current > 0) return false
-    const { copyFile } = await import('node:fs/promises')
-    await copyFile(join(backup.dir, 'Cookies'), src)
-    try { await copyFile(join(backup.dir, 'Cookies-journal'), src + '-journal') } catch { /* optional */ }
-    return true
-  } catch {
-    return false
+  const { copyFile } = await import('node:fs/promises')
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await copyFile(join(backup.dir, 'Cookies'), src)
+      try { await copyFile(join(backup.dir, 'Cookies-journal'), src + '-journal') } catch { /* optional */ }
+      const now = countEncryptionMarkers(await readFile(src))
+      if (now >= backup.markers) return true
+    } catch { /* store still locked by a draining process — retry once */ }
+    await sleep(1500)
   }
+  return false
 }
 
 // ── main flow ───────────────────────────────────────────────────────────────
@@ -454,7 +455,8 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
 
     // Insurance: snapshot the cookie store BEFORE booting the real profile.
     // A boot that judges the store corrupt can reset it (observed in the
-    // wild); restoreIfWiped in finally brings it back if that happens.
+    // wild); the finally block hard-kills the instance and restores the backup
+    // unconditionally (see restoreCookieStore).
     backup = await backupCookieStore(profile.dir, join(opts.stateDir || resolveEgoStateDir(), 'login-import-backups'))
 
     // ── boot the genuine binary headless on the REAL profile ───────────────
@@ -549,10 +551,23 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
     // — an immediate Storage.getCookies can legitimately return 0 on a warm
     // profile. Poll briefly; an actually-empty jar just costs a few seconds.
     let all: CdpCookie[] = []
-    for (let attempt = 0; attempt < 8; attempt++) {
+    // [#60-2] Cold start loads the cookie store PROGRESSIVELY — the old
+    // "first non-empty wins" loop exited on a 1-cookie warmup reply and
+    // imported 0 cookies while reporting ok. Exit on a STABLE count instead
+    // (3 consecutive identical reads), bounded by the overall timeout.
+    let stable = 0
+    let lastCount = -1
+    const readDeadline = Date.now() + timeoutMs
+    while (Date.now() < readDeadline) {
       const got = (await tempCdp.client.call('Storage.getCookies')) as { cookies?: CdpCookie[] }
       all = Array.isArray(got.cookies) ? got.cookies : []
-      if (all.length > 0 || attempt === 7) break
+      if (all.length > 0 && all.length === lastCount) {
+        stable += 1
+        if (stable >= 2) break
+      } else {
+        stable = 0
+      }
+      lastCount = all.length
       await sleep(800)
     }
     const matched = all.filter((c) => cookieMatchesDomains(c.domain, opts.domains || []))
@@ -590,13 +605,20 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
   } catch (err) {
     return { ok: false, error: String((err as Error)?.message || err) }
   } finally {
-    // Every exit path: close CDP sockets, gracefully shut down the headless
-    // source instance (Browser.close — no crash-restore mark), then remove
-    // the junction alias. rm() on a junction/symlink removes the LINK only —
-    // the real profile is never touched by cleanup.
+    // Every exit path: drop the CDP sockets, HARD-kill the headless source
+    // instance, remove the junction alias, then unconditionally restore the
+    // pre-boot cookie store and verify it. rm() on a junction/symlink removes
+    // the LINK only — the real profile is never touched by cleanup.
+    //
+    // [#61] Browser.close is deliberately GONE: its shutdown flush writes the
+    // cookie store back asynchronously (10s+ on a warm profile), and on Edge
+    // 153 that flush landed AFTER the old restoreIfWiped — overwriting the restored
+    // backup with a purged (0-row) store. A killed process never flushes: the
+    // on-disk store stays exactly as it was pre-boot, and the backup below is
+    // the only writer. The cost is a one-time "closed incorrectly" bubble on
+    // the user's next real launch — the right trade against silent data loss.
     try { tempCdp?.close() } catch { /* ignore */ }
     try { egoCdp?.close() } catch { /* ignore */ }
-    if (tempCdp) { try { await tempCdp.client.call('Browser.close', {}, undefined, 2000) } catch { /* ignore */ } }
     // Browser.close flushes the cookie store before the process exits — this
     // can take 10s+ on a warm profile, and the singleton is keyed on the
     // RESOLVED profile path, so the NEXT import on the same source blocks
@@ -625,9 +647,18 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
       }
     }
     if (linkDir) { try { await rm(linkDir, { force: true }) } catch { /* ignore */ } }
-    // Restore insurance AFTER the instance is fully closed.
-    if (await restoreIfWiped(profile.dir, backup)) {
-      if (pendingReport) pendingReport.restoredFromBackup = true
+    // [#61] Unconditional restore + verify. The pre-boot backup is the only
+    // writer of the cookie store now; a headless boot on about:blank earns no
+    // cookies, so the source store must end the run byte-equivalent in rows.
+    // (If a source browser process REAPPEARED, the user is using it — skip
+    // the restore rather than fight a live writer; the backup stays on disk.)
+    const stillRunning = await sourceBrowserPids(browser.exePath, opts.browserOverride ? browser.userDataDir : null)
+    if (backup && stillRunning.length === 0) {
+      if (await restoreCookieStore(profile.dir, backup)) {
+        if (pendingReport) pendingReport.restoredFromBackup = true
+      } else if (pendingReport) {
+        pendingReport.error = 'import ran, but the source cookie store could not be verified restored — the pre-boot backup is kept at ' + backup.dir
+      }
     }
   }
 }
