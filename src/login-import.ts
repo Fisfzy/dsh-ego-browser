@@ -595,10 +595,66 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
     egoCdp = await connectCdp(await browserWsUrl(egoPort), 5000)
 
     const params = matched.map(toCookieParam).filter((p): p is Record<string, unknown> => p !== null)
-    let written = 0
-    for (let i = 0; i < params.length; i += BATCH) {
-      await egoCdp.client.call('Storage.setCookies', { cookies: params.slice(i, i + BATCH) })
-      written += Math.min(BATCH, params.length - i)
+    const egoClient = egoCdp.client
+
+    // Every jar the import must reach: the default browser context, PLUS every
+    // live ISOLATED space context. With EGO_ISOLATE_SPACES=1 a space owns a
+    // context seeded from the default jar at CREATION time — a point-in-time
+    // copy (runtime/egolinux/task-spaces.mjs createSeededContext), never live
+    // shared state — so cookies imported later never reach an already-open
+    // space and its pages keep looking logged out. With isolation off (the
+    // default) no extra contexts exist and this list stays `[undefined]`.
+    const jarTargets: (string | undefined)[] = [undefined]
+    try {
+      const spacesRaw = await readFile(join(stateDir, 'task-spaces.json'), 'utf8')
+      const parsed = JSON.parse(spacesRaw) as { spaces?: { browserContextId?: unknown }[] }
+      for (const space of parsed.spaces ?? []) {
+        const id = space?.browserContextId
+        if (typeof id === 'string' && id !== '') jarTargets.push(id)
+      }
+    } catch { /* no space state on disk = no isolated contexts to sync */ }
+
+    // '|' cannot realistically appear inside a cookie name, domain, or path.
+    const jarKey = (domain: unknown, name: unknown, path: unknown): string =>
+      `${String(name)}|${String(domain).replace(/^\./, '')}|${String(path ?? '/')}`
+
+    // [#60] Server-side confirmation: write each jar, then read it back and
+    // count what actually landed. A stale browser.json (dead or replaced agent
+    // instance) otherwise reports success while the user's logins never arrive.
+    const writeJar = async (contextId: string | undefined): Promise<number> => {
+      const scoped = contextId === undefined ? {} : { browserContextId: contextId }
+      for (let i = 0; i < params.length; i += BATCH) {
+        await egoClient.call('Storage.setCookies', { cookies: params.slice(i, i + BATCH), ...scoped })
+      }
+      const back = (await egoClient.call('Storage.getCookies', scoped)) as { cookies?: CdpCookie[] }
+      const have = new Set((back.cookies ?? []).map((c) => jarKey(c.domain, c.name, c.path)))
+      return params.filter((p) => have.has(jarKey(p.domain, p.name, p.path))).length
+    }
+
+    let written: number
+    try {
+      written = await writeJar(undefined)
+      for (const contextId of jarTargets.slice(1)) {
+        // A dead space context must not fail the whole import: the default jar
+        // (what the agent uses with isolation off) already received its copy.
+        try { await writeJar(contextId) } catch { /* space context gone */ }
+      }
+    } catch {
+      written = -1
+    }
+    if (params.length > 0 && written === 0) {
+      return {
+        ok: false,
+        source: browser.label,
+        profile: profile.dirName,
+        dryRun: false,
+        closedSource,
+        totalRead: all.length,
+        matched: matched.length,
+        written: 0,
+        error:
+          'the agent browser accepted no cookies — its CDP endpoint may belong to a stale or replaced instance; restart the agent browser (ego_status after closing it) and retry',
+      }
     }
     pendingReport = { ok: true, source: browser.label, profile: profile.dirName, dryRun: false, closedSource, totalRead: all.length, matched: matched.length, written, domains: domainStats }
     return pendingReport
