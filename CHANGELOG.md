@@ -91,6 +91,9 @@
 
 观察窗落地双画面管线：修复 CDP 协议根因，并加入可选 FFmpeg H.264/fMP4 后端。
 
+### 修复
+- **`dsh-plugin.json` 的 `version` 与 `package.json` 重新对齐**：0.8.5→0.8.6 的发版只改了 `package.json`，已发布的 0.8.6 tarball 里这个字段仍是 `0.8.5`（0.8.4 时犯过同一个错并单独修过）。DSH 0.1.7 的插件管理器读 `package.json` 的 `dsh` 字段、从不读这个文件，所以对运行没有任何影响，纯清单卫生问题。已加 `tests/manifest-consistency.test.ts` 把两者钉死（连同「CHANGELOG 里必须有当前版本号」和「`id` 与包名一致」）。
+
 ### 新增 / 优化
 - **用户自定义启动参数**：设置卡新增 `ego-browser CLI 附加参数` 与 `Chrome 启动附加参数` 两个字段。前者追加到 `ego-browser nodejs` argv，下一次 `ego_*` 工具调用即生效；后者经 `EGO_LINUX_EXTRA_ARGS` 桥接到 vendored runtime 的 `launch()`，仅浏览器下次冷启动生效（浏览器是单例常驻——需 `ego-browser --stop` 或重启 DSH 才会重新启动）。两边都拉黑会破坏插件自管控制面的标志（`--status`/`--stop`/`--help`/`--user-data-dir`/`--remote-debugging-port`/`--headless`/`--proxy-server` 等）；`--proxy-server` 请走 `EGO_LINUX_PROXY`。`ego_doctor` 报告当前生效参数。
 - FFmpeg 改为显式按需安装：CDP 不再依赖或安装 `ffmpeg-static`。设置页优先检测自定义路径、系统 PATH 和托管缓存，兼容性检查完成前禁用 FFmpeg 选项，并提供固定版本、SHA-256 校验的一键下载。
