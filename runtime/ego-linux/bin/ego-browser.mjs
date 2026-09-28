@@ -392,8 +392,21 @@ async function main() {
 }
 
 main()
-  .then((code) => process.exit(code ?? 0))
+  .then((code) => {
+    // [#62] Never process.exit() straight after a CDP teardown: the socket
+    // close is asynchronous, and exiting while a handle is mid-close trips
+    // libuv's `!(handle->flags & UV_HANDLE_CLOSING)` assertion on Windows —
+    // the run succeeds but the process reports exit code 1, so callers
+    // branching on $LASTEXITCODE read it as a failure. Set the code and let
+    // the loop drain; the unref'd guard only fires on a genuine handle leak
+    // (which would otherwise hang --open forever).
+    process.exitCode = code ?? 0;
+    const guard = setTimeout(() => process.exit(process.exitCode ?? 0), 3000);
+    guard.unref();
+  })
   .catch((error) => {
     process.stderr.write(`${error?.stack || error}\n`);
-    process.exit(1);
+    process.exitCode = 1;
+    const guard = setTimeout(() => process.exit(1), 3000);
+    guard.unref();
   });

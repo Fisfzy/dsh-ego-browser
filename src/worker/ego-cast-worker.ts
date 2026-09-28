@@ -46,8 +46,10 @@ try { castConfig = { ...castConfig, ...JSON.parse(process.argv[2] || '{}') } as 
 const HUMAN_PROBE_JS = `(() => {
   const el=document.querySelector('iframe[src*="recaptcha"],.g-recaptcha,.h-captcha,iframe[src*="hcaptcha"],.cf-turnstile,iframe[src*="turnstile"],iframe[src*="cloudflare"],#challenge-form,.challenge-form,#captcha,.captcha');
   if(el)return{detected:true,kind:/recaptcha/i.test(el.outerHTML)?'recaptcha':/hcaptcha/i.test(el.outerHTML)?'hcaptcha':/turnstile/i.test(el.outerHTML)?'turnstile':'captcha'};
+  const h=String(location.hostname||'');
+  if(h==='localhost'||h==='127.0.0.1'||h==='::1'||h==='[::1]'||/\.localhost$/.test(h))return{detected:false,kind:null};
   const t=((document.body&&document.body.innerText)||'').slice(0,120000).toLowerCase();
-  return /verify you are human|your activity looks unusual|captcha|i.?m not a robot|人机验证|安全验证|我是人类|验证码|滑块验证/.test(t)?{detected:true,kind:'captcha'}:{detected:false,kind:null};
+  return /verify (that )?you are (a )?human|your activity looks unusual|i.?m not a robot|confirm you.?re human|人机验证|安全验证|我是人类|滑块验证|拖动滑块|点击.{0,8}验证/.test(t)?{detected:true,kind:'captcha'}:{detected:false,kind:null};
 })()`
 
 interface SseClient {
