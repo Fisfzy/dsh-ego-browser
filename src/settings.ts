@@ -99,6 +99,33 @@ export function installEgoBrowserSettings(
     // 本插件自己被 loader 更新的 config，读路径必须切过去，否则写的值永远读不到。
     if (service === undefined || typeof service.register !== 'function') {
       source = liveSource
+      // [0.1.7] The forms service persists through configEditor and then calls
+      // describe(), which emits `settings/document-updated` for the entry whose
+      // raw config moved (settings/src/index.ts write() → describe()). The
+      // legacy register path had `scope.watch(...)`; without an equivalent
+      // signal here the bridge never notified, so push consumers (the cast
+      // worker's hot config push in cast-server) only saw saves after the next
+      // spawn. Both write paths converge on that event: the plugin-page form
+      // (remote settings.mutate) and this plugin's own /ego/api/set gateway
+      // (settings.update) — so one subscription covers both.
+      const subscribe = (sctx as unknown as {
+        on?: (name: string, cb: (ns: string, revision: number) => void) => (() => void) | undefined
+      }).on
+      const offUpdate = typeof subscribe === 'function'
+        ? subscribe.call(sctx, 'settings/document-updated', (ns: string) => {
+            if (ns !== SETTINGS_NAMESPACE || isUnloading(ctx)) return
+            notify()
+          })
+        : undefined
+      if (typeof offUpdate === 'function') {
+        sctx.effect?.(() => () => {
+          try {
+            offUpdate()
+          } catch {
+            /* ignore */
+          }
+        })
+      }
       notify()
       return
     }
