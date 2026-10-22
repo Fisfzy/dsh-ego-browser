@@ -186,6 +186,7 @@ declare function require(id: string): any
 			sizePresets: 'Size presets',
 			sizePresetsHint: 'Set the agent browser window to a fixed aspect ratio',
 			resizeHint: 'Drag to resize the agent browser window',
+			sizeApiOutdated: 'Size API not loaded — restart DSH to pick up the new host build',
 			noUrl: 'No URL to open',
 			closeTab: 'Close tab',
 			newTab: '(new tab)',
@@ -238,6 +239,7 @@ declare function require(id: string): any
 			sizePresets: '尺寸预设',
 			sizePresetsHint: '按固定比例设置 agent 浏览器窗口',
 			resizeHint: '拖动调整 agent 浏览器窗口大小',
+			sizeApiOutdated: '尺寸接口未就绪：请重启 DSH 以加载最新 host 构建',
 			noUrl: '无可打开的地址',
 			closeTab: '关闭标签',
 			newTab: '(新标签页)',
@@ -2865,7 +2867,7 @@ clearTimeout((panel as any)._dshHideT)
 .dsh-ego-side-livebadge {
   font-size: 10.5px; opacity: .6; letter-spacing: .2px;
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  position: relative;
+  position: relative; z-index: 40;
 }
 .dsh-ego-side-badgeline {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; position: relative;
@@ -2894,11 +2896,21 @@ clearTimeout((panel as any)._dshHideT)
 }
 .dsh-ego-side-preset-item:hover { background: rgba(128,128,128,.2); }
 .dsh-ego-side-stage { position: relative; display: block; min-height: 0; }
-.dsh-ego-side-resize { position: absolute; z-index: 6; }
-.dsh-ego-side-resize-right { top: 0; bottom: 0; right: 0; width: 10px; cursor: col-resize; }
-.dsh-ego-side-resize-bottom { left: 0; right: 0; bottom: 0; height: 10px; cursor: row-resize; }
-.dsh-ego-side-resize-corner { right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; }
-.dsh-ego-side-resize:hover { background: rgba(217,119,87,.22); }
+.dsh-ego-side-resize { position: absolute; z-index: 10; }
+.dsh-ego-side-resize-right {
+  top: 0; bottom: 0; right: 0; width: 14px; cursor: col-resize;
+  background: linear-gradient(to left, rgba(217,119,87,.35), rgba(217,119,87,0));
+}
+.dsh-ego-side-resize-bottom {
+  left: 0; right: 0; bottom: 0; height: 14px; cursor: row-resize;
+  background: linear-gradient(to top, rgba(217,119,87,.35), rgba(217,119,87,0));
+}
+.dsh-ego-side-resize-corner {
+  right: 0; bottom: 0; width: 22px; height: 22px; cursor: nwse-resize;
+  background: rgba(217,119,87,.35);
+  border-bottom-right-radius: 9px;
+}
+.dsh-ego-side-resize:hover { background: rgba(217,119,87,.55); }
 .dsh-ego-side-state-dot {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: #30d158; box-shadow: 0 0 5px #30d15888; flex-shrink: 0;
@@ -3691,6 +3703,9 @@ clearTimeout((panel as any)._dshHideT)
 			var presetState = React.useState(false)
 			var presetOpen = presetState[0]
 			var setPresetOpen = presetState[1]
+			var noticeState = React.useState('')
+			var sizeNotice = noticeState[0]
+			var setSizeNotice = noticeState[1]
 			var presetRef = React.useRef(null)
 			var PRESETS = [
 				{ label: '16:9', ratio: 16 / 9 },
@@ -3699,14 +3714,24 @@ clearTimeout((panel as any)._dshHideT)
 				{ label: '1:1', ratio: 1 },
 				{ label: '9:16', ratio: 9 / 16 },
 			]
+			// Surface a host/client version mismatch instead of failing silently:
+			// the client bundle can be newer than the running host process.
+			var noteSizeResult = function (status, parsed) {
+				if (status === 400 || status === 404) setSizeNotice(wt('sizeApiOutdated'))
+				else if (parsed && parsed.ok === true) setSizeNotice('')
+			}
 			var applyPreset = function (ratio) {
 				setPresetOpen(false)
 				fetch('/api/ego/window-size', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({ aspect: ratio }),
-				}).then(function (r) { return r.json().catch(function () { return null }) })
-					.catch(function () { return null })
+				}).then(function (r) {
+					return r.json().catch(function () { return null }).then(function (parsed) {
+						noteSizeResult(r.status, parsed)
+						return parsed
+					})
+				}).catch(function () { return null })
 			}
 			React.useEffect(function () {
 				if (!presetOpen) return
@@ -3719,10 +3744,11 @@ clearTimeout((panel as any)._dshHideT)
 				return function () { document.removeEventListener('pointerdown', onDoc, true) }
 			}, [presetOpen])
 			// Resize handles over the live stage: dragging the right/bottom edge or
-			// the corner resizes the REAL browser window (only while unlocked).
+			// the corner resizes the REAL browser window. They work regardless of
+			// the size-sync lock; the lock only governs whether sidebar-width
+			// changes follow the window.
 			var beginResize = function (axis) {
 				return function (event) {
-					if (!sizeSyncOn) return
 					event.preventDefault()
 					event.stopPropagation()
 					var startX = event.clientX
@@ -3740,8 +3766,12 @@ clearTimeout((panel as any)._dshHideT)
 							method: 'POST',
 							headers: { 'content-type': 'application/json' },
 							body: JSON.stringify(payload),
-						}).then(function (r) { return r.json().catch(function () { return null }) })
-							.catch(function () { return null })
+						}).then(function (r) {
+							return r.json().catch(function () { return null }).then(function (parsed) {
+								noteSizeResult(r.status, parsed)
+								return parsed
+							})
+						}).catch(function () { return null })
 							.finally(function () { inFlight = false })
 					}
 					var onMove = function (ev) {
@@ -4018,14 +4048,14 @@ clearTimeout((panel as any)._dshHideT)
 							// title first, then the URL (or the transient zoom hint).
 							h('div', { className: 'dsh-ego-side-pageinfo' },
 								h('span', { className: 'dsh-ego-side-livetitle', title: currentSpace.title || currentSpace.url || '' }, currentSpace.title || currentSpace.url || wt('newTab')),
-								h('span', { className: 'dsh-ego-side-liveurl' + (state.zoomHint ? ' dsh-ego-side-hint' : '') }, state.zoomHint || currentSpace.url || '')
+								h('span', { className: 'dsh-ego-side-liveurl' + ((state.zoomHint || sizeNotice) ? ' dsh-ego-side-hint' : '') }, sizeNotice || state.zoomHint || currentSpace.url || '')
 							)
 						),
 						h('div', { className: 'dsh-ego-side-stage' },
 							liveImg,
-							sizeSyncOn ? h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-right', title: wt('resizeHint'), onPointerDown: beginResize('x') }) : null,
-							sizeSyncOn ? h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-bottom', title: wt('resizeHint'), onPointerDown: beginResize('y') }) : null,
-							sizeSyncOn ? h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-corner', title: wt('resizeHint'), onPointerDown: beginResize('xy') }) : null
+							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-right', title: wt('resizeHint'), onPointerDown: beginResize('x') }),
+							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-bottom', title: wt('resizeHint'), onPointerDown: beginResize('y') }),
+							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-corner', title: wt('resizeHint'), onPointerDown: beginResize('xy') })
 						)
 					)
 				)
