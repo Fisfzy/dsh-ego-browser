@@ -153,19 +153,29 @@ dshx list                                                # 应显示：[on] ego-
 
 无需宿主侧任何配置：`resolveEgoEnv` 自动探测 root / 无显示器并兜底。观察窗 host 路由（`/api/ego/spaces` 等）仅在有 HTTP server 时注册，headless 是安全 no-op。
 
-## TUI：设置与工具状态
+## 在 dsh-TUI 中
 
 提供可选 `tuiSettingsSections`、`tuiStatus`、`tuiToast` 服务的 DSH TUI 宿主会按能力启用以下功能：
 
-- **设置页**：`Agent Browser / Agent 浏览器` 页面实际注册八项设置：空间隔离、空闲回收分钟数、常驻执行器、常驻空闲分钟数、浏览器路径、采集后端、画质预设和 FFmpeg 路径。字段标签与说明提供中英文；画质值为 `low / balanced / high`，与运行时配置一致。配置保存与校验仍由宿主设置服务负责。
+- **设置页**：`Agent Browser / Agent 浏览器` 页面实际注册九项设置：空间隔离、空闲回收分钟数、常驻执行器、常驻空闲分钟数、浏览器路径、采集后端、画质预设、FFmpeg 路径和默认关闭的面板自动打开开关。字段标签与说明提供中英文；画质值为 `low / balanced / high`，与运行时配置一致。配置保存与校验仍由宿主设置服务负责。
 - **状态栏**：在 `right-head` 显示 `◎ ego_click` 等当前工具，空闲时显示 `◎ idle`，最多占 24 个终端单元。详情包含当前动作和最近错误；动作定位摘要按终端显示宽度截断。执行计时从取得已有浏览器锁后开始；独立工具也记录开始与完成。
-- **精简通知**：只在确认空闲回收实际停止了浏览器，或浏览器冷启动重试最终失败时显示 toast。每次插件激活最多每分钟 20 条；普通工具成功、普通页面错误不会弹通知。
+- **精简通知**：在确认空闲回收实际停止了浏览器、浏览器冷启动重试最终失败，或侧栏首次检测到人机验证时显示 toast。每次插件激活最多每分钟 20 条；普通工具成功、普通页面错误不会弹通知。
 
 工具卡标题在 Web 与 TUI 共用：例如 `ego_navigate · github.com/foo`、`ego_fill · #email`。摘要只读取允许的定位字段，不显示填入文本、键盘输入、HTTP 请求头或请求体、JS/script/CLI 源码；URL 去掉用户名、密码、查询串及 fragment，终端控制序列被清理。动作历史在内存中保留最近十项，不写入文件。
 
-这些服务各自可选并独立注入。没有相应服务时不会因 TUI 集成新增文件读取、轮询或 worker 启动；卸载时清理状态订阅与注册项。本阶段提供设置与状态信息，不声明尚未实现的 Scene，也不自动打开浏览器窗口。已有 Web 观察窗、侧边栏及其启动逻辑保持原样。
+这些服务各自可选并独立注入。缺席服务的对应功能静默跳过；所有 TUI 服务都缺席时不会因 TUI 集成新增文件读取、轮询或 worker 启动。卸载时清理状态订阅与注册项；不声明未实现的 Scene，也不自动打开浏览器窗口。已有 Web 观察窗、侧边栏及其启动逻辑保持原样。
 
 离线验证覆盖类型、行为测试与构建；真实 DSH TUI 视觉效果及 Chrome 人工接管仍需在安装环境验证。
+
+### 浏览器侧栏面板
+
+提供 `tuiPanels` 的宿主会注册 **◎ Agent Browser** 面板（最窄 28 列）。它展示浏览器运行/无头状态、活动页标题与 URL、标签列表、人机验证提示，以及最近最多 5 次工具调用的结果与耗时。浏览器状态是**所有会话共享的全局状态**；现有 worker 提供平铺标签；面板只读同目录的 `task-spaces.json`，按持久化 `targetIds` 与实时标签精确匹配到真实空间名称。未归属标签列在 `Unassigned / global`；元数据缺失、损坏或没有匹配时使用 `Global/default group`，不按 URL 猜测、不调用有清理副作用的空间协调方法。长 URL、中文标题、组合字符按终端显示宽度截断。
+
+面板有焦点时：`↑/↓` 选择标签，`o` 通过现有入口打开浏览器窗口接管，`x` 关闭所选标签，`f` 刷新落盘 cookies，`r` 立即刷新状态。关闭标签优先使用宿主确认对话框；宿主未提供对话框时，需要连续按两次 `x`，选择变化或其他按键会取消待确认状态。分屏操作不依赖鼠标事件。
+
+默认首次 `ego_*` 调用只增加提示角标，**不会自动打开面板**。设置 `tuiAutoOpenPanel=true` 可选择自动打开；面板打开请求至少间隔 5 秒。人机验证首次出现时增加 warning 角标并显示按 `o` 接管的通知，底栏状态变为 warning，点击可打开面板；持续验证不会重复通知。下载完成通知暂未实现，因为当前 worker 没有下载事件数据。
+
+面板可见时约每 2 秒读取状态，隐藏或卸载立即停止定时轮询；工具完成可触发一次刷新。`disableFrameRelay=true` 时不读取浏览器进程状态、不启动 worker，也不请求标签；面板仍显示工具活动及禁用原因。无 `tuiPanels` 服务时不创建面板控制器或新增轮询。宿主 React 通过面板 props 提供，插件宿主包不引入 React 运行时。真实 DSH TUI 和 Chrome 的显示、窗口接管仍需在目标环境验证。
 
 ## 工具清单（33 个，前缀 `ego_`，完整索引见 `ego_help`）
 
@@ -259,13 +269,3 @@ pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-ca
   <a href="https://dshfind.com/zh/plugins/Nagi-ovo/dsh-ads?ref=badge"><img src="https://dshfind.com/api/badge/Nagi-ovo/dsh-ads?lang=zh" alt="dshfind - dsh-ads"></a>
   <a href="https://dshfind.com/zh/plugins/Nagi-ovo/dsh-ads"><img src="https://dshfind.com/api/card/Nagi-ovo/dsh-ads?lang=zh" alt="dsh-ads card"></a>
 </p>
-
-### TUI 浏览器侧面板（PR2）
-
-提供 `tuiPanels` 的宿主会注册 **◎ Agent Browser** 面板（最窄 28 列）。它展示浏览器运行/无头状态、活动页标题与 URL、标签列表、人机验证提示，以及最近最多 5 次工具调用的结果与耗时。浏览器状态是**所有会话共享的全局状态**；现有 worker 提供平铺标签；面板只读同目录的 `task-spaces.json`，按持久化 `targetIds` 与实时标签精确匹配到真实空间名称。未归属标签列在 `Unassigned / global`；元数据缺失、损坏或没有匹配时使用 `Global/default group`，不按 URL 猜测、不调用有清理副作用的空间协调方法。长 URL、中文标题、组合字符按终端显示宽度截断。
-
-面板有焦点时：`↑/↓` 选择标签，`o` 通过现有入口打开浏览器窗口接管，`x` 关闭所选标签，`f` 刷新落盘 cookies，`r` 立即刷新状态。关闭标签优先使用宿主确认对话框；宿主未提供对话框时，需要连续按两次 `x`，选择变化或其他按键会取消待确认状态。分屏操作不依赖鼠标事件。
-
-默认首次 `ego_*` 调用只增加提示角标，**不会自动打开面板**。设置 `tuiAutoOpenPanel=true` 可选择自动打开；面板打开请求至少间隔 5 秒。人机验证首次出现时增加 warning 角标并显示按 `o` 接管的通知，底栏状态变为 warning，点击可打开面板；持续验证不会重复通知。下载完成通知暂未实现，因为当前 worker 没有下载事件数据。
-
-面板可见时约每 2 秒读取状态，隐藏或卸载立即停止定时轮询；工具完成可触发一次刷新。`disableFrameRelay=true` 时不读取浏览器进程状态、不启动 worker，也不请求标签；面板仍显示工具活动及禁用原因。无 `tuiPanels` 服务时不创建面板控制器或新增轮询。宿主 React 通过面板 props 提供，插件宿主包不引入 React 运行时。真实 DSH TUI 和 Chrome 的显示、窗口接管仍需在目标环境验证。
