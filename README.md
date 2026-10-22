@@ -14,7 +14,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license MIT"></a>
 </p>
 
-> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.0**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
+> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.1**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
 
 ### 版本兼容矩阵
 
@@ -25,7 +25,7 @@
 | **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、侧栏面板与缩略图；缺席时静默跳过，无额外 I/O |
 | **Node.js** | `22` | — | harness 环境自带 |
 
-**DSH 全版本适配说明**：v0.9.0 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
+**DSH 全版本适配说明**：v0.9.1 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
 
 **dsh-better-sidebar 适配说明**：ego-browser 通过 `ctx.betterSidebar` 服务（try-catch 防御性获取）注册侧边栏 Tab 并监听外部链接。关键 API 引入版本：
 
@@ -59,7 +59,7 @@
 
 ```sh
 # 安装（任选一种；桌面端也可以走 插件 → 添加插件）
-dsh plugin --profile desktop add dsh-ego-browser@0.9.0
+dsh plugin --profile desktop add dsh-ego-browser@0.9.1
 ```
 
 1. 在 DSH 会话里说一句让 agent 用浏览器的话，例如：
@@ -124,6 +124,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.0
 
 ## ✨ 近期亮点
 
+- **v0.9.1**：**观察窗尺寸同步真实窗口**——面板「打开真实页 / 弹出窗口」行新增 **🔒/🔓 尺寸同步** 开关：解锁后拖动侧边栏宽度、或直接拖画面右侧/底部/右下角手柄，会按拖动**增量** 1:1 缩放 agent 浏览器真实窗口；**尺寸预设**（16:9 / 4:3 / 21:9 / 1:1 / 9:16）一键设定窗口比例；页面标题与 URL 移入实时状态栏。**帧链路性能**：按 `cdpFps` 做源端抽帧、采集宽度跟随面板尺寸、窗口隐藏/最小化自动停流、TUI 设置新增「关闭实时画面传输」，实测总 CPU 约减半。**输入与稳定性修复**：窗口缩放后点击坐标不再偏移；拖动缩放不再卡顿；面板先于浏览器打开时 SSE 会自动重连接上。
 - **v0.9.0**：**dsh-TUI 支持**——在 dsh-TUI 宿主中可选注册 Agent Browser 设置页、工具活动状态栏与有限通知；右侧栏面板展示浏览器状态、按任务空间分组的标签、人机验证提示与最近动作，并支持键盘操作（选标签、弹出真实窗口、关标签、落盘登录态、刷新）；选中标签时通过 worker 的独立截图端点显示页面缩略图与捕获状态（不占用工具锁、不启动直播订阅，终端无图形协议时回退文字）。所有 TUI 服务缺席时静默降级，Web/桌面端行为不变。合并社区 PR #74/#75/#76（ccch1mneyyy）。
 - **v0.8.8**：**原生右侧边栏**——观察窗优先注册进 DSH 自带的右侧边栏（`sidebar.right.pane.tab` + guide 入口 + 自绘图标），`dsh-better-sidebar` 与浮动球依次回退；服务晚于插件就绪时用 `ctx.inject` 等待。**常驻执行器（可选）**——`ego_*` 调用复用同一个 `ego-browser --serve` 进程，首次启动后每次 ~1–2 ms（一次性 spawn 约 340 ms）；浏览器被停/崩溃后自动回退一次性 spawn 恢复，再回到常驻；已写出的请求不重试。**稳定性**——`reconcile()` 清扫不属于任何 space 的孤儿标签（#67），冷启动不再堆积标签；Windows 上浏览器启动失败不再空等 Xvfb。**登录导入**——`ego_login_import` 从"全禁"改为仅 Windows + Chrome ≥155 拒绝（#69）。
 - **v0.8.7**：**工具语义修复**——`ego_wait_for_url` 先比对当前 URL 再等未来导航（带 `matchedCurrent`）、`ego_wait_for_response` 超时不再抛错、`ego_dialog` 失败时给出可执行提示、`ego_script`/`ego_cli` 文档写明 `@@DSH_RESULT@@` 哨兵并支持最后一行 JSON 兜底。**Windows 稳定性**——`clearProfileLock()` 在 win32 上真正清理孤儿 Chrome（此前是永久 no-op，一次非优雅退出会让 agent 浏览器再也打不开）。**安全**——`ego_login_import` 默认禁用（fail-closed，`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 才放行）。**回收器**——`--stop` 后清理 `Default/Sessions/`，冷启动不再静默复活旧标签。**观感**——光标箭头与手形不再重叠；CDP 预览默认宽度 960 → 1280。合并 PR #63（`--serve` 常驻传输，默认仍走 spawn 路径）。
@@ -154,7 +155,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.0
 **方式 B：命令行（npm，推荐）**：
 
 ```sh
-dsh plugin --profile <profile> add dsh-ego-browser@0.9.0
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.1
 dsh plugin --profile <profile> list                 # 应看到 dsh-ego-browser
 # 升级
 dsh plugin --profile <profile> add dsh-ego-browser@latest
@@ -164,7 +165,7 @@ dsh plugin --profile <profile> add dsh-ego-browser@latest
 
 ```sh
 dsh plugin --profile <profile> add https://github.com/Fisfzy/dsh-ego-browser.git
-dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.0.tgz
+dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.1.tgz
 ```
 
 > **从旧版本升级（DSH Desktop 2.0.5+）**：本插件包名是 **`dsh-ego-browser`**（非 `@dsh-external/ego-browser`）。DSH Desktop 2.0.5 起增加了「profile 依赖名 == 包实际 name」的一致性校验，若 profile 仍用旧名 `@dsh-external/ego-browser` 引用，启动会挂进恢复模式（`profile package identity is invalid for @dsh-external/ego-browser`）。升级到 2.0.5 后请把 profile 的 `package.json` 依赖键 **和** `dsh.profile.bundles` 条目**两处**都改为 `dsh-ego-browser`：
