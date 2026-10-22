@@ -2,12 +2,16 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [Unreleased]
+## [0.9.0] - 2026-10-22 — dsh-TUI 支持（设置页 / 状态栏 / 侧栏面板 / 页面缩略图）
+
+TUI 集成全部通过**可选服务独立注入**：宿主没有对应服务时静默跳过，不新增文件读取、轮询或 worker 启动。合并社区 PR #74、#75、#76（ccch1mneyyy）。
 
 ### 新增
 - TUI 通过独立可选注入注册真实的 Agent Browser 设置页、工具活动状态栏和有限通知；缺席服务时不新增 TUI I/O 或后台轮询。
 - 不可变浏览器状态快照记录当前工具与最近十次完成结果，包含执行耗时和截短错误；锁内工具从实际取得锁后开始计时。
 - Web/TUI 共用安全的工具卡标题：只显示允许的定位摘要，按终端单元截断，隐藏输入值、HTTP 头/正文以及可执行源码。
+- 侧栏面板（PR #75）：可选 28 列 Agent Browser 面板，展示浏览器运行/无头状态、活动页标题与 URL、按任务空间分组的标签列表、人机验证提示、最近 3–5 次动作；面板聚焦时支持 `↑/↓` 选标签、`o` 弹出真实窗口、`x` 关闭标签（有对话框服务时确认，否则双按）、`f` 落盘登录态、`r` 刷新；可见时约 2 秒刷新、隐藏即停、并发合并。新增 `tuiAutoOpenPanel`（默认关）。
+- 页面缩略图（PR #76）：worker 新增本机回环 `GET /api/snapshot?targetId=…&maxWidth=…`（不占插件全局锁、不启动直播订阅），终端用宿主 `ui.Image` 显示；选中标签/工具结束/`r` 时各截一帧，隐藏时不请求，无拖影；PNG 用 Node `zlib` 自解（含大小/尺寸/解压上限，无新依赖），终端不支持图形协议时回退为一行文字；`disableFrameRelay` 时不截图。另显示既有的捕获后端/状态行。
 
 ### 修复
 - 删除未实现的 TUI Scene 清单声明，Notification fallback 改为无 toast 服务时省略通知、保留工具结果。
@@ -15,18 +19,7 @@
 
 ### 验证范围
 - 增加可选服务、真实注册、设置一致性、隐私、Unicode 宽度、不可变快照、锁内执行、重试通知、空闲回收成功与生命周期清理测试。
-- 尚未在真实 DSH TUI 或 Chrome 环境验证视觉布局与人工接管。
-
-### Added — TUI thumbnail (PR3)
-- Display one-shot browser PNGs through the host `ui.Image` as fresh RGBA buffers, with terminal-cell sizing, preview presentation, and a text fallback.
-- Refresh on visible tab selection, tool completion, or `r`; stop requesting frames while hidden and discard stale responses. No continuous screenshot loop is introduced.
-- Show the existing capture backend/state in a bounded text row without additional requests, and include an English companion to the TUI guide.
-
-### Added — TUI side panel (PR2)
-- Register an optional 28-column Agent Browser panel with global browser state, tab selection, recent tool results, and keyboard controls.
-- Group live targets by read-only task-space membership metadata, with explicit fallback groups for unknown targets.
-- Add opt-in `tuiAutoOpenPanel`, human-verification warnings, host-dialog or double-press close confirmation, and lifecycle-bound visible polling.
-- Share the existing lazy worker client with the panel without changing web routes or worker startup policy.
+- 合并后在本地通过 `typecheck` / `vitest`（234 passed, 5 skipped）/ `build`；尚未在真实 DSH TUI 或 Chrome 环境验证视觉布局与人工接管。
 
 ## [0.8.8] - 2026-10-22 — 原生右侧边栏 + 常驻执行器 + 孤儿标签清扫 + 登录导入定向放行
 
