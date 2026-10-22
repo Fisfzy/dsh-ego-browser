@@ -23,11 +23,12 @@ export function installTui(ctx: EgoContext, store: BrowserStateStore): TuiBridge
     const render = (): void => {
       const snapshot = store.getSnapshot()
       const active = snapshot.activeTool
+      const lastError = snapshot.lastError ?? snapshot.recent.findLast(result => result.error)?.error
       const text = override?.text ?? (active ? `◎ ${active.name}` : '◎ idle')
       const tone = override?.tone ?? (active ? 'accent' : 'dim')
       const detail = truncateCells(override?.detail ?? (active
-        ? [[active.name, active.summary].filter(Boolean).join(' · '), snapshot.lastError].filter(Boolean).join(' | ')
-        : snapshot.lastError ?? 'Agent Browser is idle'), 160)
+        ? [[active.name, active.summary].filter(Boolean).join(' · '), lastError].filter(Boolean).join(' | ')
+        : lastError ?? 'Agent Browser is idle'), 160)
       const key = JSON.stringify([text, tone, detail])
       if (key === previous && previousClick === override?.onClick) return
       previous = key

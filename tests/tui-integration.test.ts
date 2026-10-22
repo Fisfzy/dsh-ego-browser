@@ -28,7 +28,7 @@ describe('optional TUI integration', () => {
     expect(register).toHaveBeenCalledWith(tuiSettingsSection)
     expect(tuiSettingsSection).toMatchObject({ ns: 'ego-browser', title: 'Agent Browser', page: { id: 'ego-browser' } })
     expect(manifestSettingsFields).toEqual(manifest.contributes['x-dsh-tui'].find(section => section.kind === 'SettingsSection')!.spec.fields)
-    expect(tuiSettingsFields.map(field => field.path[0])).toEqual(['isolateSpaces', 'idleTimeoutMin', 'residentExecutor', 'residentIdleMin', 'chromePath', 'captureBackend', 'streamProfile', 'ffmpegPath'])
+    expect(tuiSettingsFields.map(field => field.path[0])).toEqual(['isolateSpaces', 'idleTimeoutMin', 'residentExecutor', 'residentIdleMin', 'chromePath', 'captureBackend', 'streamProfile', 'ffmpegPath', 'tuiAutoOpenPanel'])
     for (const field of tuiSettingsFields) {
       expect(field.descriptions?.zh).toBeTruthy()
       expect(field.hintDescriptions?.zh).toBeTruthy()
@@ -77,4 +77,16 @@ describe('optional TUI integration', () => {
     tui.toast('ignored', 'warning'); expect(show).toHaveBeenCalledTimes(21)
     now.mockRestore()
   })
+})
+
+
+it('retains the latest tool error after a successful panel refresh clears transient errors', () => {
+  const setField = vi.fn((_key: string, _text: string, _options: unknown) => () => {})
+  const h = host({ tuiStatus: { setField } }), store = new BrowserStateStore()
+  installTui(h.ctx, store)
+  const token = store.startTool('ego_click', '#submit')
+  store.finishTool(token, { ok: false, error: 'Click target was not found' })
+  store.update({ browser: { running: true }, spaces: [], lastError: undefined })
+  expect(setField.mock.lastCall?.[2]).toMatchObject({ detail: 'Click target was not found' })
+  h.cleanup()
 })

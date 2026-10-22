@@ -32,3 +32,37 @@ export interface TuiSettingsSection {
   fields: readonly TuiSettingsField[]
 }
 export interface TuiSettingsSectionsService { register(section: TuiSettingsSection): () => void }
+
+/** Minimal panel contracts: dsh-tui-ref/src/dsh-adapter/panels.ts, lines 223–337. */
+export interface TuiPanelKeyEvent {
+  readonly input: string
+  readonly key: { readonly upArrow?: boolean; readonly downArrow?: boolean; readonly ctrl?: boolean; readonly meta?: boolean }
+  preventDefault(): void
+}
+export interface TuiPanelHost {
+  notify(level: 'info' | 'warning' | 'error', unread?: number): void
+  onKey(listener: (event: TuiPanelKeyEvent) => void): () => void
+}
+export interface TuiPanelProps {
+  readonly React: Pick<typeof import('react'), 'createElement' | 'useState' | 'useRef' | 'useEffect'>
+  readonly ui: {
+    readonly Box: import('react').ElementType
+    readonly Text: import('react').ElementType
+  }
+  readonly host: TuiPanelHost
+  readonly width: number
+  readonly height: number
+  readonly visible: boolean
+  readonly focused: boolean
+  readonly mode: 'split' | 'zoom' | 'fullscreen'
+}
+export interface TuiPanelsService {
+  register(descriptor: { apiVersion: 1; id: string; title: string; icon: string; minColumns: number; component: (props: TuiPanelProps) => import('react').ReactNode }): (() => void) | undefined
+  list(): readonly { id: string; title: string }[]
+  open(id: string): boolean
+  badge(id: string, badge: { level: 'info' | 'warning' | 'error'; unread: number } | null): boolean
+}
+/** dsh-tui-ref/tui-profile/docs/plugin-admission-and-development.md, lines 1042–1085. */
+export interface TuiDialogsService {
+  confirm(options: { title: string; message?: string; confirmLabel?: string; cancelLabel?: string }): Promise<boolean>
+}

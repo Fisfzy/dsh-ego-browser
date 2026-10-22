@@ -17,6 +17,12 @@
 - 增加可选服务、真实注册、设置一致性、隐私、Unicode 宽度、不可变快照、锁内执行、重试通知、空闲回收成功与生命周期清理测试。
 - 尚未在真实 DSH TUI 或 Chrome 环境验证视觉布局与人工接管。
 
+### Added — TUI side panel (PR2)
+- Register an optional 28-column Agent Browser panel with global browser state, tab selection, recent tool results, and keyboard controls.
+- Group live targets by read-only task-space membership metadata, with explicit fallback groups for unknown targets.
+- Add opt-in `tuiAutoOpenPanel`, human-verification warnings, host-dialog or double-press close confirmation, and lifecycle-bound visible polling.
+- Share the existing lazy worker client with the panel without changing web routes or worker startup policy.
+
 ## [0.8.8] - 2026-10-22 — 原生右侧边栏 + 常驻执行器 + 孤儿标签清扫 + 登录导入定向放行
 
 ### 新增

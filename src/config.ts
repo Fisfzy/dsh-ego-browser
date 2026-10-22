@@ -20,6 +20,7 @@ const encoder = z.union([
 // the live-commit path instead, and the settings form can then write them
 // without restarting the plugin.
 const prefs = {
+  tuiAutoOpenPanel: z.boolean().description('Open the TUI Agent Browser panel on the first ego_* call. Default off; activity still appears in the badge and status.'),
   isolateSpaces: z.boolean().description('Space isolation: false = persistent profile (keep logins across restarts); true = isolated sandbox.'),
   idleTimeoutMin: z.number().min(0).max(1440).step(1).description('Auto-stop the backing browser after N minutes without an ego_* call (0 = off). Relaunches on demand at the next call.'),
   disableFrameRelay: z.boolean().description('Disable the live frame relay (watch panel): no ego-cast worker, no screencast capture and no /api/ego stream routes. ego_* tools keep working.'),
@@ -263,6 +264,7 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     // behavior). 30 minutes idle is long enough to cover a session without
     // leaving a Node process around forever.
     residentExecutor: typeof config.residentExecutor === 'boolean' ? config.residentExecutor : config.residentExecutor === 'true' || config.residentExecutor === '1' || config.residentExecutor === 1,
+    tuiAutoOpenPanel: typeof config.tuiAutoOpenPanel === 'boolean' ? config.tuiAutoOpenPanel : config.tuiAutoOpenPanel === 'true' || config.tuiAutoOpenPanel === '1' || config.tuiAutoOpenPanel === 1,
     residentIdleMin: finiteIn(config.residentIdleMin, 0, 1440) ? config.residentIdleMin : 30,
   }
 }

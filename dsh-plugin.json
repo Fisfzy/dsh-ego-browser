@@ -207,6 +207,22 @@
                 "en": "Path to FFmpeg. Empty means auto-detect or on-demand installation.",
                 "zh": "FFmpeg 路径；留空自动检测或按需安装。"
               }
+            },
+            {
+              "path": [
+                "tuiAutoOpenPanel"
+              ],
+              "label": "Auto-open TUI browser panel",
+              "titles": {
+                "en": "Auto-open TUI browser panel",
+                "zh": "自动打开 TUI 浏览器面板"
+              },
+              "kind": "boolean",
+              "hint": "Off by default. Open the panel on the first ego_* call; otherwise show a badge and status only.",
+              "hintTitles": {
+                "en": "Off by default. Open the panel on the first ego_* call; otherwise show a badge and status only.",
+                "zh": "默认关闭。开启后首次 ego_* 调用打开面板；关闭时仅显示角标和状态。"
+              }
             }
           ]
         }

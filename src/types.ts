@@ -130,6 +130,8 @@ export interface ResolvedConfig {
   idleTimeoutMin: number
   /** True = the live frame relay (ego-cast worker + cast routes) is turned off entirely. */
   disableFrameRelay: boolean
+  /** Opt in to opening the TUI browser panel on the first browser tool call. */
+  tuiAutoOpenPanel: boolean
   /** True = reuse a resident `ego-browser --serve` process across ego_* calls (issue #56). */
   residentExecutor: boolean
   /** Minutes without an ego_* call before the resident process is stopped. 0 = keep until unmount. */
