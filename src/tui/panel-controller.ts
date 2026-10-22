@@ -1,6 +1,6 @@
 import type { BrowserSnapshot, BrowserStateStore, BrowserTab } from '../browser-state.ts'
 import type { TaskSpaceGroup } from '../worker-client.ts'
-import { sanitizeText } from './text.ts'
+import { sanitizeText, truncateCells } from './text.ts'
 
 export interface PanelTransport {
   readTaskSpaceGroups?(): Promise<readonly TaskSpaceGroup[]>
@@ -35,6 +35,17 @@ export function parseSpaces(value: unknown, groups: readonly TaskSpaceGroup[] = 
   return spaces
 }
 
+/** Optional capture status comes from the existing spaces response, never a new request. */
+export function parseCapture(value: unknown): BrowserSnapshot['capture'] {
+  if (!value || typeof value !== 'object') return undefined
+  const capture = (value as { capture?: unknown }).capture
+  if (!capture || typeof capture !== 'object') return undefined
+  const fields = capture as Record<string, unknown>
+  if (typeof fields.backend !== 'string' || typeof fields.state !== 'string') return undefined
+  return { backend: truncateCells(sanitizeText(fields.backend), 40), state: truncateCells(sanitizeText(fields.state), 40),
+    ...(typeof fields.code === 'string' ? { code: truncateCells(sanitizeText(fields.code), 40) } : {}) }
+}
+
 export interface PanelController {
   setVisible(visible: boolean): void
   refresh(): Promise<void>
@@ -54,7 +65,7 @@ export function createPanelController(store: BrowserStateStore, config: { readon
   const refresh = (): Promise<void> => {
     if (disposed) return Promise.resolve()
     if (config.disableFrameRelay) {
-      store.update({ frameRelayDisabled: true, spaces: [], lastError: undefined })
+      store.update({ frameRelayDisabled: true, spaces: [], capture: undefined, lastError: undefined })
       return Promise.resolve()
     }
     if (pending) { queued = true; return pending }
@@ -63,7 +74,7 @@ export function createPanelController(store: BrowserStateStore, config: { readon
       const browser = await transport.readBrowserState()
       if (disposed || epoch !== generation || config.disableFrameRelay) return
       store.update({ browser, frameRelayDisabled: false })
-      if (!browser.running) { store.update({ spaces: [] }); return }
+      if (!browser.running) { store.update({ spaces: [], capture: undefined }); return }
       const port = await transport.ensureWorker()
       if (disposed || epoch !== generation || config.disableFrameRelay) return
       if (!port) { store.update({ lastError: 'Browser worker unavailable' }); return }
@@ -71,7 +82,7 @@ export function createPanelController(store: BrowserStateStore, config: { readon
       if (disposed || epoch !== generation || config.disableFrameRelay) return
       const groups = payload ? await transport.readTaskSpaceGroups?.() ?? [] : []
       if (disposed || epoch !== generation || config.disableFrameRelay) return
-      store.update(payload ? { spaces: parseSpaces(payload, groups), lastError: undefined } : { lastError: 'Could not refresh browser tabs' })
+      store.update(payload ? { spaces: parseSpaces(payload, groups), capture: parseCapture(payload), lastError: undefined } : { lastError: 'Could not refresh browser tabs' })
     })().catch(error => {
       if (!disposed && epoch === generation) store.update({ lastError: sanitizeText(String(error)) })
     }).finally(() => {

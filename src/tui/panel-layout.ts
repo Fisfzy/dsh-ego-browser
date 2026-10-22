@@ -34,6 +34,10 @@ export function layoutPanel(snapshot: BrowserSnapshot, width: number, height: nu
   add('Browser: global (all sessions)', 'dim')
   if (snapshot.frameRelayDisabled) add('Preview disabled by settings', 'warning')
   else add(snapshot.browser?.running ? `◎ running${snapshot.browser.headless === undefined ? '' : snapshot.browser.headless ? ' · headless' : ' · windowed'}` : snapshot.browser ? '◎ stopped' : '◎ browser state unavailable', snapshot.browser?.running ? 'success' : 'dim')
+  if (!snapshot.frameRelayDisabled && snapshot.capture) {
+    const { backend, state, code } = snapshot.capture
+    add(`Capture ${backend} · ${state}${code ? ` · ${code}` : ''}`, state === 'failed' ? 'warning' : 'dim')
+  }
   if (active) {
     add(active.title || '(untitled)', 'accent')
     add(active.url, 'dim')
