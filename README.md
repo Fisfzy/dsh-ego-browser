@@ -185,6 +185,16 @@ dshx list                                                # 应显示：[on] ego-
 
 图像使用 `presentation: 'preview'`，可由宿主选择 Kitty 或 Sixel；不支持图形的终端、截图不可用或 PNG 解码失败时显示 `alt` 和子文本后备内容，标签列表与快捷键仍可使用。这里只验证了像素解码、刷新生命周期和宿主组件参数；尚未在真实终端图形协议或真实 DSH/Chrome 环境验证观感。
 
+### In dsh-TUI (English)
+
+Each integration is enabled only when its optional host service is available. `tuiSettingsSections` registers the bilingual Agent Browser page with the eight existing browser/capture settings and the default-off `tuiAutoOpenPanel` setting. `tuiStatus` shows the current tool or idle state in a 24-cell footer field, with action/error detail. `tuiToast` reports confirmed idle shutdown, final cold-start failure and newly detected human verification, with a shared limit of twenty notices per minute. Tool-card titles expose only short, sanitized locator summaries; input values, request headers/bodies and executable source are excluded.
+
+`tuiPanels` adds the **◎ Agent Browser** panel, using the host's React and UI components. The browser is global across sessions. The panel shows running/headless state, the active page, real task-space groups joined by persisted target ids, verification warnings and recent action results. Missing membership metadata falls back to an explicitly labeled global group; unassigned tabs remain visible. With focus, use `↑/↓` to select a tab, `o` to open the existing browser takeover window, `x` to close the selected tab, `f` to flush cookies, and `r` to refresh. `tuiDialogs` provides close confirmation when present; otherwise press `x` twice consecutively. The first browser-tool call adds a badge without opening the panel unless auto-open is explicitly enabled.
+
+Metadata polling runs about every two seconds only while the panel is visible; tool completion may request one refresh while hidden. When there is enough vertical space, a selected-page thumbnail refreshes on visible selection changes, tool completion and `r`. It uses a one-shot worker PNG capture through the existing CDP session, independent of the tool execution lock. Fresh RGBA pixels are passed to `ui.Image` with terminal-cell dimensions, `presentation: 'preview'`, alt text and a text fallback. No continuous screenshot mode is enabled. Pixel width is estimated from columns using an eight-pixel cell; the host handles terminal graphics rendering.
+
+`disableFrameRelay` suppresses TUI browser/membership reads, worker startup and screenshot requests while retaining tool activity and an explanation. Missing services silently omit their contributions; if all TUI services are absent, this integration adds no I/O or polling. Hide/unmount and plugin teardown release the relevant timers and subscriptions. The existing web/desktop watch routes and worker policy are unchanged; shared safe tool-card titles apply to both surfaces. Real DSH/dsh-TUI, Chrome takeover and Kitty/Sixel rendering still require verification on the target installation.
+
 ## 工具清单（33 个，前缀 `ego_`，完整索引见 `ego_help`）
 
 | 类别 | 工具 |
