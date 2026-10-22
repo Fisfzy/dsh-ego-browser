@@ -101,9 +101,17 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
  * markEgoToolCall() can inject `tool-call` events directly into the live
  * stream (the sidebar auto-open signal), without the client polling.
  */
-export function proxyWorkerStream(port: number, res: ServerResponse, path: string): () => void {
+export function proxyWorkerStream(
+  port: number,
+  res: ServerResponse,
+  path: string,
+  retry?: () => Promise<number | null>,
+  retryDelayMs = 1500,
+): () => void {
   let cancelled = false
   let ended = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let upstream: ClientRequest | null = null
   const endOnce = (): void => {
     if (ended) return
     ended = true
@@ -122,17 +130,52 @@ export function proxyWorkerStream(port: number, res: ServerResponse, path: strin
   })
   res.write(':ok\n\n')
   sseClients.add(res)
-  // No worker to bridge (ensureWorker() returned null and the handler passed
-  // the -1 sentinel): keep the SSE connection open and quiet so
-  // markEgoToolCall() can still push `tool-call` events and EventSource does
-  // not reconnect-loop. request() below would synchronously throw
-  // ERR_SOCKET_BAD_PORT on port -1 and leave the response dangling, which the
-  // webserver's last-resort guard turns into a bare connection destroy —
-  // the browser then reports net::ERR_EMPTY_RESPONSE.
+  // Declared before the retry branch: the late-attach path returns from this
+  // function, so anything defined after it would be in the temporal dead zone
+  // when the retry callback fires.
+  const onClose = (): void => {
+    cancelled = true
+    sseClients.delete(res)
+    try {
+      upstream?.destroy()
+    } catch {
+      /* ignore */
+    }
+  }
+  // No worker to bridge (ensureWorker() returned null): keep the SSE open and
+  // quiet so markEgoToolCall() can still push events, but when a `retry`
+  // provider is supplied also re-check periodically. The browser may be
+  // started AFTER the panel: without this the panel's stream stayed a dead
+  // `:ok` forever, so it never received a single frame/spaces event and the
+  // sidebar showed "未接管 / 暂无截图" even though the worker was streaming.
   if (!Number.isInteger(port) || port <= 0) {
     res.on('close', () => {
+      cancelled = true
+      if (timer !== null) { clearTimeout(timer); timer = null }
       sseClients.delete(res)
     })
+    if (retry) {
+      const attempt = (): void => {
+        if (cancelled || ended) return
+        retry().then((next) => {
+          if (cancelled || ended) return
+          if (typeof next === 'number' && next > 0) {
+            res.on('close', onClose)
+            attach(next)
+          } else {
+            timer = setTimeout(attempt, Math.max(20, retryDelayMs))
+          }
+        }).catch(() => {
+          if (!cancelled && !ended) timer = setTimeout(attempt, Math.max(20, retryDelayMs))
+        })
+      }
+      timer = setTimeout(attempt, Math.max(20, retryDelayMs))
+      return () => {
+        cancelled = true
+        if (timer !== null) { clearTimeout(timer); timer = null }
+        sseClients.delete(res)
+      }
+    }
     return () => {
       sseClients.delete(res)
     }
@@ -141,52 +184,47 @@ export function proxyWorkerStream(port: number, res: ServerResponse, path: strin
   // chunked responses in a way that delays/interleaves the first data chunks
   // under Node's undici, which the real-time frame pipeline cannot tolerate —
   // http.request streams them as they arrive and frames forward immediately.
-  const up: ClientRequest = request(
-    { host: '127.0.0.1', port, path, method: 'GET', headers: { accept: 'text/event-stream' } },
-    (upRes: IncomingMessage) => {
-      upRes.on('data', (chunk: Buffer) => {
-        if (cancelled || ended) return
-        try {
-          if (!res.write(chunk)) {
-            upRes.pause()
-            res.once('drain', () => {
-              if (!cancelled && !ended) upRes.resume()
-            })
+  function attach(workerPort: number): void {
+    upstream = request(
+      { host: '127.0.0.1', port: workerPort, path, method: 'GET', headers: { accept: 'text/event-stream' } },
+      (upRes: IncomingMessage) => {
+        upRes.on('data', (chunk: Buffer) => {
+          if (cancelled || ended) return
+          try {
+            if (!res.write(chunk)) {
+              upRes.pause()
+              res.once('drain', () => {
+                if (!cancelled && !ended) upRes.resume()
+              })
+            }
+          } catch {
+            cancelled = true
+            endOnce()
           }
-        } catch {
-          cancelled = true
-          endOnce()
-        }
-      })
-      upRes.on('end', endOnce)
-      upRes.on('error', endOnce)
-    },
-  )
-  up.on('error', endOnce)
-  up.setTimeout(5000, () => {
-    try {
-      up.destroy()
-    } catch {
-      /* ignore */
-    }
-    endOnce()
-  })
-  up.end()
-  const onClose = (): void => {
-    cancelled = true
-    sseClients.delete(res)
-    try {
-      up.destroy()
-    } catch {
-      /* ignore */
-    }
-  } // don't end res here; let worker stream close it
+        })
+        upRes.on('end', endOnce)
+        upRes.on('error', endOnce)
+      },
+    )
+    upstream.on('error', endOnce)
+    upstream.setTimeout(5000, () => {
+      try {
+        upstream?.destroy()
+      } catch {
+        /* ignore */
+      }
+      endOnce()
+    })
+    upstream.end()
+  }
+  // don't end res here; let worker stream close it
   res.on('close', onClose)
+  attach(port)
   return () => {
     cancelled = true
     sseClients.delete(res)
     try {
-      up.destroy()
+      upstream?.destroy()
     } catch {
       /* ignore */
     }
@@ -451,11 +489,10 @@ export function initCastServer(
       // reconnect-loop ambiguity once the client honors it).
       if (relayDisabled()) return refuseFrameRelay(res)
       const port = await ensureWorker()
-      if (port === null) {
-        proxyWorkerStream(-1, res, '/api/stream')
-        return
-      }
-      proxyWorkerStream(port, res, '/api/stream')
+      // Pass ensureWorker as the retry provider: if the panel opens before the
+      // browser/worker exists (typical right after a DSH restart), the stream
+      // must attach once they appear instead of staying a dead `:ok`.
+      proxyWorkerStream(port ?? -1, res, '/api/stream', ensureWorker)
     },
   })
 
