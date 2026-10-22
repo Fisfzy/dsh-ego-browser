@@ -30,7 +30,7 @@ import { STATE_DIR, TASK_SPACE_FILE } from "./paths.mjs";
  * Each heredoc is a fresh Node process, so state lives in a file, not memory.
  */
 
-const EMPTY = { spaces: [], selectedId: null, nextId: 1, closedSpaces: [] };
+const EMPTY = { spaces: [], selectedId: null, nextId: 1, closedSpaces: [], orphans: {} };
 
 /**
  * How many idle-closed spaces to remember.
@@ -39,6 +39,52 @@ const EMPTY = { spaces: [], selectedId: null, nextId: 1, closedSpaces: [] };
  * enough that the state file cannot grow without bound.
  */
 const REMEMBERED_CLOSURES = 20;
+
+/**
+ * How long a page target must stay unclaimed before it is treated as an orphan.
+ *
+ * reconcile() runs before most space operations, so a target created by a tool
+ * exists for a moment before its space registers it. The same window covers a
+ * person opening a tab by hand in the agent window. Two minutes is the same
+ * patience pruneAbandoned gives a just-created space.
+ */
+const ORPHAN_GRACE_MS = 120000;
+
+/**
+ * Which live page targets belong to no space.
+ *
+ * Two-phase deliberately: a target seen orphaned once is remembered in
+ * `seenAt`, and only closed once it has STAYED orphaned past a grace period.
+ * The grace covers the window between a tool creating a tab and registering it
+ * in a space, and the window where a person opened a tab by hand to take a look
+ * at something. Blank and chrome:// targets are never candidates — a tab is
+ * about:blank for a moment on every navigation.
+ *
+ * This is the reconcile half of issue #67: the reaper no longer resurrects old
+ * tabs (stopBrowser drops Default/Sessions), and tabs that still slip in
+ * through a crash-restore or a hand-opened window are eventually swept.
+ *
+ * Exported for tests; reconcile() is the only production caller.
+ */
+export function selectOrphans(live, spaces, seenAt, now, graceMs) {
+  const claimed = new Set();
+  for (const space of spaces) {
+    for (const id of space.targetIds || []) claimed.add(id);
+  }
+  const orphans = [];
+  const next = {};
+  for (const [targetId, target] of live) {
+    if (claimed.has(targetId)) continue;
+    const url = target && typeof target.url === "string" ? target.url : "";
+    if (url === "" || url === "about:blank") continue;
+    if (url.startsWith("chrome://") || url.startsWith("devtools://")) continue;
+    const firstSeen =
+      typeof seenAt[targetId] === "number" ? seenAt[targetId] : now;
+    next[targetId] = firstSeen;
+    if (now - firstSeen >= graceMs) orphans.push(targetId);
+  }
+  return { orphans, next };
+}
 
 export function createTaskSpacesApi(cdp) {
   /**
@@ -292,6 +338,42 @@ export function createTaskSpacesApi(cdp) {
     if (readoptRestoredPages(state, live)) changed = true;
     if (await pruneAbandoned(state, live)) changed = true;
     if (await pruneIdle(state)) changed = true;
+
+    // Orphan tabs (issue #67): page targets no space claims — crash-restored
+    // pages, or tabs opened by hand in the agent window. Two-phase with a grace
+    // period, so a tab that is mid-creation or being inspected is not closed on
+    // sight. Closed ids leave a trail in closedSpaces like idle-closed spaces do.
+    const orphanNow = Date.now();
+    const orphanPlan = selectOrphans(
+      live,
+      state.spaces,
+      state.orphans || {},
+      orphanNow,
+      ORPHAN_GRACE_MS,
+    );
+    if (orphanPlan.orphans.length > 0) {
+      const urls = orphanPlan.orphans
+        .map((id) => live.get(id)?.url)
+        .filter(Boolean);
+      for (const id of orphanPlan.orphans) {
+        await cdp.call("Target.closeTarget", { targetId: id }).catch(() => {});
+      }
+      const closures = state.closedSpaces || [];
+      closures.unshift({
+        name: "(orphan tab)",
+        urls,
+        closedAt: orphanNow,
+        idleMinutes: 0,
+      });
+      state.closedSpaces = closures.slice(0, REMEMBERED_CLOSURES);
+      changed = true;
+    }
+    const nextOrphans = { ...orphanPlan.next };
+    for (const id of orphanPlan.orphans) delete nextOrphans[id];
+    if (JSON.stringify(nextOrphans) !== JSON.stringify(state.orphans || {})) {
+      state.orphans = nextOrphans;
+      changed = true;
+    }
 
     const surviving = state.spaces.filter((space) => space.targetIds.length > 0);
     if (surviving.length !== state.spaces.length) {
