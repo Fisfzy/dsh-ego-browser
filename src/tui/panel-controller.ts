@@ -50,13 +50,14 @@ export function createPanelController(store: BrowserStateStore, config: { readon
   let generation = 0
   let timer: ReturnType<typeof setInterval> | undefined
   let pending: Promise<void> | undefined
+  let queued = false
   const refresh = (): Promise<void> => {
     if (disposed) return Promise.resolve()
     if (config.disableFrameRelay) {
       store.update({ frameRelayDisabled: true, spaces: [], lastError: undefined })
       return Promise.resolve()
     }
-    if (pending) return pending
+    if (pending) { queued = true; return pending }
     const epoch = generation
     pending = (async () => {
       const browser = await transport.readBrowserState()
@@ -73,7 +74,10 @@ export function createPanelController(store: BrowserStateStore, config: { readon
       store.update(payload ? { spaces: parseSpaces(payload, groups), lastError: undefined } : { lastError: 'Could not refresh browser tabs' })
     })().catch(error => {
       if (!disposed && epoch === generation) store.update({ lastError: sanitizeText(String(error)) })
-    }).finally(() => { pending = undefined })
+    }).finally(() => {
+      pending = undefined
+      if (queued) { queued = false; void refresh() }
+    })
     return pending
   }
   const post = async (path: string, body: unknown): Promise<void> => {
@@ -99,6 +103,7 @@ export function createPanelController(store: BrowserStateStore, config: { readon
     setVisible(next) {
       if (disposed || next === visible) return
       visible = next
+      if (!visible) queued = false
       generation++
       if (timer) clearInterval(timer)
       timer = undefined
@@ -112,6 +117,7 @@ export function createPanelController(store: BrowserStateStore, config: { readon
     flush: () => post('/api/flush', {}).catch(error => { if (!disposed) store.update({ lastError: sanitizeText(String(error)) }) }),
     dispose() {
       disposed = true
+      queued = false
       generation++
       if (timer) clearInterval(timer)
       unsubscribe()
