@@ -874,7 +874,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
         // Value is JSON.parse output of our own payload — fits the tool JSON contract.
         return result.value
       })),
-    presentCall: (args: Record<string, unknown>) => ({
+    presentCall: (args: unknown) => ({
       card: 'generic',
       title: toolCallTitle(opts.name, args),
       kind: 'other',
@@ -1206,7 +1206,7 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
             }
           }
         })),
-      presentCall: (args: Record<string, unknown>) => ({
+      presentCall: (args: unknown) => ({
         card: 'generic',
         title: toolCallTitle('ego_status', args),
         kind: 'other',
@@ -1288,7 +1288,7 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
             return { ok: false, error: String((err as Error)?.message || err) }
           }
         })),
-      presentCall: (args: Record<string, unknown>) => ({
+      presentCall: (args: unknown) => ({
         card: 'generic',
         title: toolCallTitle('ego_auth_flush', args),
         kind: 'other',
@@ -1454,7 +1454,7 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             return { ok: false, error: String((err as Error)?.message || err) }
           }
         })),
-      presentCall: (args: Record<string, unknown>) => ({
+      presentCall: (args: unknown) => ({
         card: 'generic',
         title: toolCallTitle('ego_login_import', args),
         kind: 'other',
@@ -2407,7 +2407,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             result: parsed ?? result.value ?? null,
           }
         },
-        presentCall: (args: Record<string, unknown>) => ({
+        presentCall: (args: unknown) => ({
           card: 'generic',
           title: toolCallTitle('ego_cli', args),
           kind: 'other',
@@ -2462,7 +2462,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
             kind: hc?.kind ?? null,
           }
         })),
-      presentCall: (args: Record<string, unknown>) => ({ card: 'generic', title: toolCallTitle('ego_captcha', args), kind: 'other', rawInput: null }),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_captcha', args), kind: 'other', rawInput: null }),
     } as unknown as DefineToolOpts),
   )
   reg(
@@ -2505,7 +2505,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
               : EGO_HELP_INDEX.overview)
         return { ok: true, topic: q || 'overview', text }
       },
-      presentCall: (args: Record<string, unknown>) => ({ card: 'generic', title: toolCallTitle('ego_help', args), kind: 'other', rawInput: null }),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_help', args), kind: 'other', rawInput: null }),
     } as unknown as DefineToolOpts),
   )
   reg(
@@ -2580,7 +2580,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         lines.push('npm/node: ' + process.version)
         return { ok: true, report: lines.join('\n') }
       },
-      presentCall: (args: Record<string, unknown>) => ({ card: 'generic', title: toolCallTitle('ego_doctor', args), kind: 'other', rawInput: null }),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_doctor', args), kind: 'other', rawInput: null }),
     } as unknown as DefineToolOpts),
   )
   reg(
@@ -2640,7 +2640,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
             timedOut: false,
           }
         },
-        presentCall: (args: Record<string, unknown>) => ({ card: 'generic', title: toolCallTitle('ego_script', args), kind: 'other', rawInput: null }),
+        presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_script', args), kind: 'other', rawInput: null }),
       } as unknown as DefineToolOpts)
       return def
     })(),

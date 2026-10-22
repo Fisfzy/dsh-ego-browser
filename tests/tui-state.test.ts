@@ -13,6 +13,9 @@ describe('safe tool presentation', () => {
     }
     expect(toolCallTitle('ego_download', { triggerSelector: '#download', triggerScript: 'SECRET', savePath: 'SECRET' })).toBe('ego_download · #download')
     expect(safeLocatorSummary('ego_navigate', { url: 'javascript:SECRET' })).toBe('')
+    for (const invalid of [null, undefined, 42, true, 'SECRET', []]) {
+      expect(toolCallTitle('ego_click', invalid)).toBe('ego_click')
+    }
   })
   it('removes terminal escapes and respects display cells and graphemes', () => {
     expect(sanitizeText('\x1b[31mred\x1b[0m\n\x1b]8;;https://secret\x07link\x1b]8;;\x07')).toBe('red link')
