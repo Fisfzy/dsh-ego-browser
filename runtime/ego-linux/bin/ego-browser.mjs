@@ -437,6 +437,24 @@ async function serve({ harness, headless }) {
       }
 
       const id = request?.id ?? null;
+      // A resident outlives the browser: the idle reaper (or a crash, or a
+      // desktop restart) stops Chrome between two requests and closes the CDP
+      // socket. Relaunching Chrome from inside this long-lived process is
+      // unreliable (the previous instance may still be exiting, and the
+      // launch wait outlives the caller's grace), so the resident does not try:
+      // it reports the transport failure immediately. "browser is not
+      // reachable" is a cold-start signature the plugin retries through a
+      // fresh one-shot process, and the next call starts a new resident.
+      if (!shim.cdp.isOpen()) {
+        writeLine({
+          id,
+          ok: false,
+          error: "browser is not reachable: CDP channel is closed (the browser stopped)",
+          stdout: "",
+          stderr: "",
+        });
+        continue;
+      }
       const snapshot = snapshotGlobals();
       const out = createCapture();
       const err = createCapture();

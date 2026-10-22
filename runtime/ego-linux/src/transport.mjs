@@ -207,6 +207,18 @@ export async function connectCdp(wsUrl) {
   }
 
   return {
+    /**
+     * Is the CDP socket still usable?
+     *
+     * A resident `--serve` process outlives the browser: the idle reaper (or a
+     * crash, or a desktop restart) closes the socket between two requests, and
+     * the cached transport then fails every later request with "CDP channel is
+     * not open". The serve loop reads this to rebuild the shim instead.
+     */
+    isOpen() {
+      return !closed && socket.readyState === WebSocket.OPEN;
+    },
+
     /** Raw passthrough for harness-authored payloads (ids below the shim's base). */
     sendRaw(payload) {
       assertOpen();

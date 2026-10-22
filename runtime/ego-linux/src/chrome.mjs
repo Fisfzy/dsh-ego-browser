@@ -788,6 +788,16 @@ async function launch({ headless }) {
   let xvfb = plan?.launched ? plan : null;
 
   if (!result && plan && !plan.launched) {
+    // Windows has no X server and no Xvfb: the "virtual framebuffer" fallback
+    // below can only fail there, and it fails slowly (spawnXvfb waits for a
+    // socket that never appears). Fail fast with the real launch error instead;
+    // the caller retries the launch (the usual cause is the previous Chrome
+    // still exiting and holding the profile).
+    if (process.platform === "win32") {
+      throw new Error(
+        `browser failed to come up on display ${plan.display}: ${lastError.error?.message ?? "unknown error"}`,
+      );
+    }
     // The environment display did not bring the browser up. Retry right away
     // on a virtual framebuffer — never hand the same broken display back.
     process.stderr.write(

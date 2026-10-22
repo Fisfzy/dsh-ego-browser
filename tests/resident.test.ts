@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { ResidentProcess, ResidentNotRunningError } from "../src/resident.ts";
+import { isColdStartError } from "../src/index.ts";
 
 /** Minimal `--serve`-shaped peer: echoes each request back as a frame. */
 const ECHO = `
@@ -95,5 +96,23 @@ describe("ResidentProcess (#56)", () => {
     expect(resident.alive).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(resident.alive).toBe(false);
+  });
+});
+
+// The runtime's `--serve` loop reports a dead CDP channel with this exact
+// wording; the plugin must classify it as a cold-start failure so it can park
+// the resident and recover through the one-shot path (#56).
+describe("resident transport error contract (#56)", () => {
+  it("classifies the runtime's dead-CDP resident error as retryable", () => {
+    expect(
+      isColdStartError(
+        "ego-browser script failed: browser is not reachable: CDP channel is closed (the browser stopped)",
+      ),
+    ).toBe(true);
+    expect(isColdStartError("ego-browser script failed: CDP channel is not open")).toBe(true);
+  });
+
+  it("does not classify ordinary script failures as transport failures", () => {
+    expect(isColdStartError("ego-browser script failed: element not found")).toBe(false);
   });
 });

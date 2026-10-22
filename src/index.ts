@@ -397,7 +397,8 @@ const COLD_START_SIGNS = [
   /target.*(closed|not found|detached|crashed)/i,
   /ECONNREFUSED/i,
 ]
-function isColdStartError(message: string): boolean {
+/** @internal exported for tests (also the contract the resident error relies on) */
+export function isColdStartError(message: string): boolean {
   return COLD_START_SIGNS.some((re) => re.test(message))
 }
 interface WarmupResult {
@@ -576,12 +577,20 @@ interface ExecLike {
 // only cost latency, never a failed tool.
 let residentTransport: ResidentProcess | null = null
 let residentTransportKey = ''
+/**
+ * While a resident's CDP channel is dead (browser stopped, relaunch still
+ * settling), this timestamp parks the resident and lets the one-shot path do
+ * the call — it carries the launch retries. Without it every retry would spawn
+ * another doomed resident before the browser is back.
+ */
+let residentCooldownUntil = 0
 
 /** @internal exported for tests */
 export function resetResidentTransportForTests(): void {
   const transport = residentTransport
   residentTransport = null
   residentTransportKey = ''
+  residentCooldownUntil = 0
   transport?.stop()
 }
 
@@ -651,7 +660,7 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
   // Resident path (opt-in, issue #56). Only a request that was never written
   // falls back to the one-shot spawn below: once written, a retry could
   // double-execute a click/fill, so the resident reports the failure instead.
-  if (cfg.residentExecutor) {
+  if (cfg.residentExecutor && Date.now() >= residentCooldownUntil) {
     let transport: ResidentProcess | null = null
     try {
       transport = ensureResidentTransport(cfg)
@@ -664,7 +673,14 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
           ...(exec.signal !== undefined ? { signal: exec.signal } : {}),
           ...(Number.isFinite(graceOverrideMs) && graceOverrideMs! > 0 ? { graceMs: graceOverrideMs! } : {}),
         })
-        return residentFrameToResult(frame)
+        const result = residentFrameToResult(frame)
+        if (result.ok || !isColdStartError(result.error ?? '')) return result
+        // Cold-start failure: the script never reached the browser (dead CDP
+        // channel, or a relaunch that has not settled). Safe to retry — park
+        // the resident and let the one-shot path below (with its launch
+        // retries) run this call; a later call starts a fresh resident.
+        residentCooldownUntil = Date.now() + 10_000
+        stopResidentTransport()
       } catch (err) {
         if (!(err instanceof ResidentNotRunningError)) {
           return {
@@ -677,7 +693,7 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
         // not written → retry through the one-shot path
       }
     }
-  } else if (residentTransport !== null) {
+  } else if (!cfg.residentExecutor && residentTransport !== null) {
     stopResidentTransport()
   }
   let handle
