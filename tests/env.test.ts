@@ -259,6 +259,56 @@ describe("resolveEgoEnv (headless detection)", () => {
   });
 });
 
+// ─── resolveEgoEnv: macOS (#65 / #68) ──────────────────────────────────────
+// These run on any host: the platform is injected, so the darwin branches are
+// exercised from a Linux/Windows CI too. The one assertion that needs real
+// `.app` bundles is skipped elsewhere.
+
+describe("resolveEgoEnv (macOS)", () => {
+  it("never marks macOS headless, even without DISPLAY (#16)", () => {
+    const env = resolveEgoEnv(
+      {},
+      { platform: "darwin", baseEnv: { HOME: "/Users/test" } },
+    );
+    // macOS GUI is Aqua/Quartz and never exports $DISPLAY; treating that as
+    // headless would re-introduce #16 (no real window for scan-code login).
+    expect(env.EGO_LINUX_HEADLESS).toBe(undefined);
+  });
+
+  it("injects the detected Chrome binary into EGO_LINUX_CHROME (#68)", () => {
+    // Needs a real macOS host with Chrome/Chromium/Edge/Brave installed.
+    if (process.platform !== "darwin") return;
+    const env = resolveEgoEnv(
+      {},
+      { platform: "darwin", baseEnv: { HOME: process.env.HOME } },
+    );
+    expect(env.EGO_LINUX_CHROME).toBeTruthy();
+    expect(
+      env.EGO_LINUX_CHROME?.includes(".app/Contents/MacOS/"),
+    ).toBeTruthy();
+    // The wrapper only exists to add --no-sandbox for root on Linux.
+    expect(env.EGO_LINUX_CHROME?.includes("ego-chrome-wrapper")).toBe(false);
+  });
+
+  it("never overrides a user-set EGO_LINUX_CHROME on macOS", () => {
+    const userSet = "/opt/custom/Google Chrome";
+    const env = resolveEgoEnv(
+      {},
+      { platform: "darwin", baseEnv: { EGO_LINUX_CHROME: userSet, HOME: "/Users/test" } },
+    );
+    expect(env.EGO_LINUX_CHROME).toBe(userSet);
+  });
+
+  it("honours cfg.chromePath over auto-detection on macOS", () => {
+    const configured = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    const env = resolveEgoEnv(
+      { chromePath: configured },
+      { platform: "darwin", baseEnv: { HOME: "/Users/test" } },
+    );
+    expect(env.EGO_LINUX_CHROME).toBe(configured);
+  });
+});
+
 // ─── resolveEgoEnv: chromeArgs → EGO_LINUX_EXTRA_ARGS bridge ────────────────
 
 describe("resolveEgoEnv (chromeArgs bridge)", () => {
@@ -387,6 +437,29 @@ describe("runtime paths.mjs (platform-aware)", () => {
     expect(
       mod.STATE_DIR.includes("ego-lite-linux"),
     ).toBeTruthy();
+  });
+});
+
+// ─── runtime/ego-linux/src/chrome.mjs (macOS X display) ────────────────────
+
+describe("runtime chrome.mjs (macOS X display)", () => {
+  it("returns a pseudo display on darwin instead of requiring Xvfb (#65)", async () => {
+    // Xvfb is an X11 tool; it simply does not exist on macOS. Must not throw
+    // "no X display ... no Xvfb binary on PATH" on a desktop macOS session.
+    if (process.platform !== "darwin") return;
+    // @ts-ignore — runtime .mjs is excluded from tsconfig
+    const mod = await import("../runtime/ego-linux/src/chrome.mjs");
+    const saved = process.env.DISPLAY;
+    delete process.env.DISPLAY;
+    try {
+      expect(await mod.ensureXDisplay()).toEqual({
+        display: "darwin-desktop",
+        pid: null,
+        launched: false,
+      });
+    } finally {
+      if (saved !== undefined) process.env.DISPLAY = saved;
+    }
   });
 });
 
