@@ -43,6 +43,8 @@ import { fileURLToPath } from 'node:url'
 import { importLoginCookies } from './login-import.ts'
 import { BrowserStateStore } from './browser-state.ts'
 import { installTui } from './tui/integration.ts'
+import { installBrowserPanel } from './tui/panel.ts'
+import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState } from './worker-client.ts'
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
@@ -566,6 +568,7 @@ interface EgoRuntimeConfig {
   readonly chromeArgs: string
   readonly isolateSpaces: boolean
   readonly disableFrameRelay: boolean
+  readonly tuiAutoOpenPanel: boolean
   /** Reuse a resident `ego-browser --serve` process across ego_* calls (issue #56). */
   readonly residentExecutor: boolean
   /** Minutes without an ego_* call before the resident process is stopped. 0 = keep until unmount. */
@@ -895,6 +898,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'castFpsCap', 'screencastQuality', 'screencastMaxWidth', 'backstopIntervalMs',
     'idleTimeoutMin',
     'disableFrameRelay',
+    'tuiAutoOpenPanel',
     'residentExecutor',
     'residentIdleMin',
   ]
@@ -957,6 +961,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // Live getter: cast-server reads this on EVERY /api/ego/* request, so the
     // settings card toggle takes effect without a host restart.
     get disableFrameRelay() { return resolveConfig(bridge.source() as RawConfig).disableFrameRelay },
+    get tuiAutoOpenPanel() { return resolveConfig(bridge.source() as RawConfig).tuiAutoOpenPanel },
     // #56: resident executor (opt-in) and its idle window. Both are read on
     // every call, so toggling the setting takes effect on the next ego_* call.
     get residentExecutor() { return resolveConfig(bridge.source() as RawConfig).residentExecutor },
@@ -964,6 +969,10 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   }
   const browserState = new BrowserStateStore()
   const tui = installTui(ctx, browserState)
+  installBrowserPanel(ctx, cfg, browserState, tui, {
+    createTransport: () => ({ readBrowserState, ensureWorker: makeEnsureWorker(ctx, cfg, ffmpegManager), get: proxyFrom, post: proxyPost }),
+    openAgentWindow: () => openAgentWindow(ctx, cfg),
+  })
   cfg.onColdStartFailure = () => tui.toast('Agent Browser could not start after retrying. Run ego_doctor for details.', 'error')
   cfg.observeTool = async (name, args, run) => {
     const token = browserState.startTool(name, safeLocatorSummary(name, args))

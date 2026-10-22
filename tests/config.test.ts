@@ -8,7 +8,7 @@ describe("dual capture config", () => {
       cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 1280, cdpBackstopIntervalMs: 3000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
-      residentExecutor: false, residentIdleMin: 30,
+      residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
     });
   });
 
@@ -18,7 +18,7 @@ describe("dual capture config", () => {
       cdpFps: 30, cdpQuality: 70, cdpMaxWidth: 1200, cdpBackstopIntervalMs: 5000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
-      residentExecutor: false, residentIdleMin: 30,
+      residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
     });
     expect(resolveConfig({ cdpFps: 15, castFpsCap: 30 }).cdpFps).toBe(15);
   });
@@ -165,5 +165,14 @@ describe("filterArgs", () => {
 
   it("returns [] when all args are blocked", () => {
     expect(filterArgs("--status --stop --help", EGO_CLI_BLOCKED)).toEqual([]);
+  });
+});
+
+
+describe("TUI panel preference", () => {
+  it("is opt-in and accepts stored boolean forms", () => {
+    expect(resolveConfig({}).tuiAutoOpenPanel).toBe(false);
+    expect(resolveConfig({ tuiAutoOpenPanel: true }).tuiAutoOpenPanel).toBe(true);
+    expect(resolveConfig({ tuiAutoOpenPanel: "1" } as any).tuiAutoOpenPanel).toBe(true);
   });
 });

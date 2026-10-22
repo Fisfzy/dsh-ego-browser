@@ -259,3 +259,13 @@ pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-ca
   <a href="https://dshfind.com/zh/plugins/Nagi-ovo/dsh-ads?ref=badge"><img src="https://dshfind.com/api/badge/Nagi-ovo/dsh-ads?lang=zh" alt="dshfind - dsh-ads"></a>
   <a href="https://dshfind.com/zh/plugins/Nagi-ovo/dsh-ads"><img src="https://dshfind.com/api/card/Nagi-ovo/dsh-ads?lang=zh" alt="dsh-ads card"></a>
 </p>
+
+### TUI 浏览器侧面板（PR2）
+
+提供 `tuiPanels` 的宿主会注册 **◎ Agent Browser** 面板（最窄 28 列）。它展示浏览器运行/无头状态、活动页标题与 URL、标签列表、人机验证提示，以及最近最多 5 次工具调用的结果与耗时。浏览器状态是**所有会话共享的全局状态**；现有 worker 只提供平铺标签，因此面板明确使用 `Global/default group`，不会把标签伪装成任务空间。长 URL、中文标题、组合字符按终端显示宽度截断。
+
+面板有焦点时：`↑/↓` 选择标签，`o` 通过现有入口打开浏览器窗口接管，`x` 关闭所选标签，`f` 刷新落盘 cookies，`r` 立即刷新状态。关闭标签优先使用宿主确认对话框；宿主未提供对话框时，需要连续按两次 `x`，选择变化或其他按键会取消待确认状态。分屏操作不依赖鼠标事件。
+
+默认首次 `ego_*` 调用只增加提示角标，**不会自动打开面板**。设置 `tuiAutoOpenPanel=true` 可选择自动打开；面板打开请求至少间隔 5 秒。人机验证首次出现时增加 warning 角标并显示按 `o` 接管的通知，底栏状态变为 warning，点击可打开面板；持续验证不会重复通知。下载完成通知暂未实现，因为当前 worker 没有下载事件数据。
+
+面板可见时约每 2 秒读取状态，隐藏或卸载立即停止定时轮询；工具完成可触发一次刷新。`disableFrameRelay=true` 时不读取浏览器进程状态、不启动 worker，也不请求标签；面板仍显示工具活动及禁用原因。无 `tuiPanels` 服务时不创建面板控制器或新增轮询。宿主 React 通过面板 props 提供，插件宿主包不引入 React 运行时。真实 DSH TUI 和 Chrome 的显示、窗口接管仍需在目标环境验证。
