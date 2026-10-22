@@ -17,6 +17,10 @@
 - 增加可选服务、真实注册、设置一致性、隐私、Unicode 宽度、不可变快照、锁内执行、重试通知、空闲回收成功与生命周期清理测试。
 - 尚未在真实 DSH TUI 或 Chrome 环境验证视觉布局与人工接管。
 
+### Added — TUI thumbnail (PR3)
+- Display one-shot browser PNGs through the host `ui.Image` as fresh RGBA buffers, with terminal-cell sizing, preview presentation, and a text fallback.
+- Refresh on visible tab selection, tool completion, or `r`; stop requesting frames while hidden and discard stale responses. No continuous screenshot loop is introduced.
+
 ### Added — TUI side panel (PR2)
 - Register an optional 28-column Agent Browser panel with global browser state, tab selection, recent tool results, and keyboard controls.
 - Group live targets by read-only task-space membership metadata, with explicit fallback groups for unknown targets.

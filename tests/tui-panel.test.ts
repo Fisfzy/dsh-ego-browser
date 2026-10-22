@@ -233,7 +233,7 @@ it('uses host keys for selection, takeover, refresh, flush, and double-press clo
   const renderer = hookHost()
   let listener: ((event: TuiPanelKeyEvent) => void) | undefined
   const off = vi.fn(() => { listener = undefined })
-  const props = { ui: { Box: 'div' as const, Text: 'span' as const }, host: { notify: vi.fn(), onKey: (handler: typeof listener) => { listener = handler; return off } }, width: 28, height: 18, visible: true, focused: true, mode: 'split' as const }
+  const props = { ui: { Box: 'div' as const, Text: 'span' as const, Image: 'img' as const }, host: { notify: vi.fn(), onKey: (handler: typeof listener) => { listener = handler; return off } }, width: 28, height: 10, visible: true, focused: true, mode: 'split' as const }
   const component = panels.register.mock.calls[0]![0].component
   const render = () => renderer.render(component, props)
   const key = (input: string, flags: TuiPanelKeyEvent['key'] = {}) => { const preventDefault = vi.fn(); listener?.({ input, key: flags, preventDefault }); return preventDefault }
@@ -266,7 +266,7 @@ it('requires the available host dialog confirmation before closing a tab', async
   h.store.update({ spaces: [{ name: 'Global', tabs }] })
   const renderer = hookHost()
   let listener: ((event: TuiPanelKeyEvent) => void) | undefined
-  const props = { ui: { Box: 'div' as const, Text: 'span' as const }, host: { notify: vi.fn(), onKey: (handler: typeof listener) => { listener = handler; return () => { listener = undefined } } }, width: 28, height: 18, visible: true, focused: true, mode: 'split' as const }
+  const props = { ui: { Box: 'div' as const, Text: 'span' as const, Image: 'img' as const }, host: { notify: vi.fn(), onKey: (handler: typeof listener) => { listener = handler; return () => { listener = undefined } } }, width: 28, height: 10, visible: true, focused: true, mode: 'split' as const }
   renderer.render(panels.register.mock.calls[0]![0].component, props)
   listener?.({ input: 'x', key: {}, preventDefault: vi.fn() })
   await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -282,4 +282,39 @@ it('maps row tones to dsh-TUI theme keys and dimColor', () => {
   expect(rowTextProps({ text: 'a', tone: 'accent' })).toEqual({ dimColor: false, color: 'accent', wrap: 'truncate' })
   expect(rowTextProps({ text: 'a', tone: 'dim' })).toEqual({ dimColor: true, wrap: 'truncate' })
   expect(rowTextProps({ text: 'a' })).toEqual({ dimColor: false, wrap: 'truncate' })
+})
+
+vi.mock('../src/worker-client.ts', () => ({
+  requestSnapshot: vi.fn(async () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAGklEQVR4nGPgEpH7b2Ok0cBwYssCBxGNAAYAL2AFOuzF1YgAAAAASUVORK5CYII=', 'base64')),
+}))
+
+it('renders decoded RGBA through the host Image with terminal-cell dimensions and a text fallback', async () => {
+  const panels = { register: vi.fn((descriptor: { component: (props: TuiPanelProps) => unknown }) => vi.fn()), list: () => [{ id: 'owned:browser', title: 'Agent Browser' }], open: vi.fn(), badge: vi.fn() }
+  const h = installHarness({ tuiPanels: panels })
+  installBrowserPanel(h.ctx, { disableFrameRelay: false, tuiAutoOpenPanel: false }, h.store, h.bridge, h.dependencies)
+  h.store.update({ spaces: [{ name: 'Global', tabs }] })
+  const renderer = hookHost()
+  const props = { ui: { Box: 'div' as const, Text: 'span' as const, Image: 'img' as const }, host: { notify: vi.fn(), onKey: () => () => {} }, width: 28, height: 20, visible: true, focused: true, mode: 'split' as const }
+  const component = panels.register.mock.calls[0]![0].component
+  const originalSubscribe = h.store.subscribe
+  const unsubscribe = vi.fn()
+  h.store.subscribe = vi.fn(listener => { const off = originalSubscribe(listener); return () => { unsubscribe(); off() } })
+  type Element = { type: string; props: Record<string, any>; children: Element[] }
+  let tree = renderer.render(component, props) as Element
+  await vi.waitFor(() => {
+    tree = renderer.render(component, props) as Element
+    expect(tree.children[0]?.props.source?.data).toBeInstanceOf(Uint8Array)
+  })
+  const image = tree.children[0]!
+  expect(image.type).toBe('img')
+  expect(image.props).toMatchObject({ width: 28, height: 5, presentation: 'preview', source: { width: 2, height: 2 } })
+  expect(image.props.alt).toContain('preview')
+  expect(image.children[0]?.type).toBe('span')
+  props.visible = false
+  renderer.render(component, props)
+  expect(unsubscribe).toHaveBeenCalledOnce()
+  props.visible = true
+  renderer.render(component, props)
+  expect(h.store.subscribe).toHaveBeenCalledTimes(2)
+  renderer.unmount(); h.dispose()
 })
