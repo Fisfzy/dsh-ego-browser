@@ -1869,7 +1869,7 @@ declare function require(id: string): any
 				const watchClientId = 'floating-' + Math.random().toString(36).slice(2)
 				let watchStarted = false, watchTargetId = null, watchRenewTimer = null, watchStopTimer = null, watchRequest = null
 				let captureBackend = 'cdp', streamGeneration = 0, streamState = 'idle', streamMessage = '', streamMime = 'video/mp4; codecs="avc1.42E01E"', videoCleanup = null
-				const effectiveVisible = () => !panel.hidden
+				const effectiveVisible = () => !panel.hidden && !document.hidden
 				const stopVideo = () => { if (videoCleanup) try { videoCleanup() } catch {}; videoCleanup = null }
 				const applyCaptureStatus = (status) => {
 					if (!status || typeof status !== 'object') return
@@ -1978,7 +1978,7 @@ declare function require(id: string): any
 				const makeZoomImage = (urlEl, tagName = 'img') => {
 					const img = document.createElement(tagName) as any
 					img.className = 'dsh-ego-liveimg'
-					if (tagName === 'img') img.draggable = false
+					if (tagName === 'img') { img.draggable = false; img.decoding = 'async' }
 					else { img.muted = true; img.autoplay = true; img.playsInline = true }
 					img.title = '滚轮缩放 · 按住拖动平移 · 缩小到最小或双击复位'
 					// Hint swap: remember the real URL, show a tip while operating,
@@ -2736,7 +2736,12 @@ clearTimeout((panel as any)._dshHideT)
 				panel.hidden = true
 				fab.classList.remove('on')
 				refresh()
-				const onVisibility = () => { if (document.visibilityState !== 'hidden' && !panel.hidden) { if (!sse) openStream(); syncWatch(selectedTabId || currentActiveId) } }
+				const onVisibility = () => {
+					// Hidden/minimized: release the screencast; it is the bulk of the
+					// CPU cost and nothing is visible. Restored below on return.
+					if (document.visibilityState === 'hidden') { stopVideo(); stopWatch(false); return }
+					if (!panel.hidden) { if (!sse) openStream(); syncWatch(selectedTabId || currentActiveId) }
+				}
 				document.addEventListener('visibilitychange', onVisibility)
 
 				// Settings switch, live: turning the relay off tears every pull stream of
@@ -3700,6 +3705,8 @@ clearTimeout((panel as any)._dshHideT)
 		// cadence without triggering React re-renders per frame.
 		function EgoBrowserTab(props) {
 			var visible = props.visible
+			var visibleRef = React.useRef(visible)
+			visibleRef.current = visible
 			var ctx = props.ctx
 			var controllerRef = React.useRef(null)
 			if (controllerRef.current === null) controllerRef.current = new LivePreviewController(ctx)
@@ -3870,8 +3877,17 @@ clearTimeout((panel as any)._dshHideT)
 			}, [controller])
 
 			React.useEffect(function () {
-				controller.setVisible(visible)
+				controller.setVisible(visible && !document.hidden)
 			}, [visible, controller])
+
+			// Minimizing the DSH window (or hiding it) must stop the screencast:
+			// there is nothing to look at, and continuous capture is the bulk of
+			// the CPU cost. Coming back restores the watch and stream.
+			React.useEffect(function () {
+				var onVisibility = function () { controller.setVisible(!!visibleRef.current && !document.hidden) }
+				document.addEventListener('visibilitychange', onVisibility)
+				return function () { document.removeEventListener('visibilitychange', onVisibility) }
+			}, [controller])
 
 			// Reattach the size observer when the panel becomes visible or the shown
 			// tab changes; a hidden panel must not keep reporting sizes.
@@ -4022,6 +4038,7 @@ clearTimeout((panel as any)._dshHideT)
 						src: currentSpace.thumbnail,
 						alt: 'live',
 						draggable: false,
+						decoding: 'async',
 						onPointerDown: function (e) { controller.handlePointerDown(e) },
 						onPointerMove: function (e) { controller.handlePointerMove(e) },
 						onPointerUp: function (e) { controller.handlePointerUp(e) },

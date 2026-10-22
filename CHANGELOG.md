@@ -22,6 +22,9 @@
   - **按源取帧**：`Page.startScreencast` 的 `everyNthFrame` 现在按 `cdpFps` 计算（20fps → 每 3 帧取 1 帧），Chrome 不再编码 ~100 帧/秒再丢掉 80%；实测源帧 ~100/s → ~33/s。
   - **采集宽度跟随面板**：客户端把面板实际显示宽度（× devicePixelRatio，含余量）通过 `watch/start` 的 `maxWidth` 上报，worker 取配置上限与面板宽度的较小值。面板约 550px 时采集从 1280 宽降到 ~654 宽，编码/传输/解码像素约降 4 倍；全屏面板时仍会按需放大。
   - 实测（Windows，面板开启、视频页面）：总 CPU 约占 **196% 单核 → 72% 单核**（Chrome ~170% → ~63%，worker ~20% → ~4%）；实际下发帧率 ~19/s → ~17/s。
+- **窗口隐藏/最小化时停止串流**：面板监听到 `visibilitychange` 后会停掉 watch、关闭 SSE 与画面（恢复窗口时自动重新 watch/串流）。实测：最小化后 watchers 2 → 1，采集侧 CPU 降到约 6%；恢复后自动回到 2 并继续出帧。纯静态页面本来就只在内容变化时出帧。
+- **TUI/无头环境可不传画面**：TUI 设置新增「关闭实时画面传输」（`disableFrameRelay`）开关；开启后不启动 cast worker、不做 screencast、不发帧，TUI 面板仅保留文字状态，`ego_*` 工具不受影响。TUI 面板本身只是事件驱动地按需取一张快照（maxWidth 320），没有连续串流。
+- 画面 `<img>` 使用 `decoding="async"`，减少主线程解码阻塞。
 
 ## [0.9.0] - 2026-10-22 — dsh-TUI 支持（设置页 / 状态栏 / 侧栏面板 / 页面缩略图）
 
