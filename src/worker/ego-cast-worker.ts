@@ -11,7 +11,7 @@ import { TargetSessions, CdpCaptureBackend } from './capture-cdp.ts'
 import { CaptureManager } from './capture-manager.ts'
 import { captureSnapshot } from './snapshot.ts'
 import { FfmpegCaptureBackend } from './capture-ffmpeg.ts'
-import { computeWindowBounds } from './window-size.ts'
+import { computeWindowBounds, widthWithDelta } from './window-size.ts'
 
 const SENTINEL = '@@DSH_RESULT@@'
 const HOME = homedir() || process.env.HOME || process.env.USERPROFILE || '/root'
@@ -430,32 +430,58 @@ async function main(): Promise<void> {
       }
       if (req.method === 'POST' && url.pathname === '/api/window-size') {
         const body = await readJson(req)
-        const width = Math.round(Number(body.width))
-        if (!Number.isFinite(width) || width < 200) {
-          return sendJson(res, 400, { ok: false, error: 'width must be an integer of at least 200' })
+        const requestedWidth = Number(body.width)
+        const requestedDelta = Number(body.delta)
+        const hasWidth = Number.isFinite(requestedWidth) && requestedWidth >= 200
+        const hasDelta = Number.isFinite(requestedDelta) && requestedDelta !== 0
+        if (!hasWidth && !hasDelta) {
+          return sendJson(res, 400, { ok: false, error: 'width or delta is required' })
         }
         if (!active) return sendJson(res, 409, { ok: false, code: 'browser-disconnected', error: 'no live browser' })
+        // Capture the browser for the whole request: `active` can go null while
+        // a CDP round-trip is in flight, and a closure would lose the narrowing.
+        const browser = active
         const targetId = typeof body.targetId === 'string' && body.targetId ? body.targetId : await activeTargetId()
         if (!targetId) return sendJson(res, 409, { ok: false, error: 'no active target' })
         try {
-          // Height is optional: the panel only knows its width. Deriving the
-          // height from the page's current viewport keeps the page's aspect and
-          // avoids feeding the resized frame back into the measurement.
-          let height = Math.round(Number(body.height))
-          if (!Number.isFinite(height) || height < 120) {
-            const viewport = await measureViewport(active, targetId)
-            height = viewport !== null
-              ? Math.max(120, Math.round(width * viewport.height / viewport.width))
-              : Math.max(120, Math.round(width * 2 / 3))
-          }
-          const { windowId } = await active.cdp.call('Browser.getWindowForTarget', { targetId }) as { windowId?: number }
+          const { windowId } = await browser.cdp.call('Browser.getWindowForTarget', { targetId }) as { windowId?: number }
           if (typeof windowId !== 'number') {
             return sendJson(res, 409, { ok: false, code: 'headless', error: 'the browser has no window (headless); use the pop-out button first' })
           }
-          const current = await active.cdp.call('Browser.getWindowBounds', { windowId }) as { bounds?: { left?: number; top?: number } }
-          const chromeFrame = await measureChromeFrame(active, targetId)
+          const current = await browser.cdp.call('Browser.getWindowBounds', { windowId }) as { bounds?: { left?: number; top?: number; width?: number; height?: number } }
+          const chromeFrame = await measureChromeFrame(browser, targetId)
+          let viewport: { width: number; height: number } | null = null
+          const readViewport = async (): Promise<{ width: number; height: number } | null> => {
+            if (viewport === null) viewport = await measureViewport(browser, targetId)
+            return viewport
+          }
+          // Absolute width (tests/tools) or a drag delta relative to the page's
+          // current viewport (the panel's size-sync toggle).
+          let width: number
+          if (hasWidth) {
+            width = Math.round(requestedWidth)
+          } else {
+            const measured = await readViewport()
+            const currentViewportWidth = measured !== null
+              ? measured.width
+              : Math.max(0, (current?.bounds?.width ?? 0) - chromeFrame.width)
+            if (currentViewportWidth <= 0) {
+              return sendJson(res, 409, { ok: false, error: 'could not determine the current viewport width' })
+            }
+            width = widthWithDelta(currentViewportWidth, requestedDelta)
+          }
+          // Height is optional: the panel only knows a width; deriving the
+          // height from the page's current viewport keeps its aspect and avoids
+          // feeding the resized frame back into the measurement.
+          let height = Math.round(Number(body.height))
+          if (!Number.isFinite(height) || height < 120) {
+            const measured = await readViewport()
+            height = measured !== null
+              ? Math.max(120, Math.round(width * measured.height / measured.width))
+              : Math.max(120, Math.round(width * 2 / 3))
+          }
           const bounds = computeWindowBounds({ width, height }, chromeFrame, current?.bounds ?? {})
-          await active.cdp.call('Browser.setWindowBounds', { windowId, bounds })
+          await browser.cdp.call('Browser.setWindowBounds', { windowId, bounds })
           return sendJson(res, 200, { ok: true, windowId, bounds })
         } catch (error) {
           return sendJson(res, 503, { ok: false, code: 'window-resize-failed', error: (error as Error).message || String(error) })

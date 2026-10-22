@@ -5049,6 +5049,20 @@ var FfmpegCaptureBackend = class {
 		this.offDestroyed = null;
 	}
 };
+/** A sanity ceiling; the OS clamps to the display anyway. */
+const MAX_VIEWPORT_WIDTH = 3840;
+/**
+* Apply a drag delta to the current viewport width.
+*
+* The panel's size-sync toggle maps the user's drag on the sidebar edge to a
+* window-width change, not to an absolute width: the panel is much narrower
+* than the browser window, so absolute mapping would shrink the window to the
+* sidebar on the very first frame.
+*/
+function widthWithDelta(currentWidth, delta) {
+	const next = Math.round(currentWidth + delta);
+	return Math.min(MAX_VIEWPORT_WIDTH, Math.max(320, next));
+}
 /**
 * Compute CDP `Browser.setWindowBounds` bounds for a desired page viewport.
 *
@@ -5564,40 +5578,59 @@ async function main() {
 			}
 			if (req.method === "POST" && url.pathname === "/api/window-size") {
 				const body = await readJson(req);
-				const width = Math.round(Number(body.width));
-				if (!Number.isFinite(width) || width < 200) return sendJson(res, 400, {
+				const requestedWidth = Number(body.width);
+				const requestedDelta = Number(body.delta);
+				const hasWidth = Number.isFinite(requestedWidth) && requestedWidth >= 200;
+				if (!hasWidth && !(Number.isFinite(requestedDelta) && requestedDelta !== 0)) return sendJson(res, 400, {
 					ok: false,
-					error: "width must be an integer of at least 200"
+					error: "width or delta is required"
 				});
 				if (!active) return sendJson(res, 409, {
 					ok: false,
 					code: "browser-disconnected",
 					error: "no live browser"
 				});
+				const browser = active;
 				const targetId = typeof body.targetId === "string" && body.targetId ? body.targetId : await activeTargetId();
 				if (!targetId) return sendJson(res, 409, {
 					ok: false,
 					error: "no active target"
 				});
 				try {
-					let height = Math.round(Number(body.height));
-					if (!Number.isFinite(height) || height < 120) {
-						const viewport = await measureViewport(active, targetId);
-						height = viewport !== null ? Math.max(120, Math.round(width * viewport.height / viewport.width)) : Math.max(120, Math.round(width * 2 / 3));
-					}
-					const { windowId } = await active.cdp.call("Browser.getWindowForTarget", { targetId });
+					const { windowId } = await browser.cdp.call("Browser.getWindowForTarget", { targetId });
 					if (typeof windowId !== "number") return sendJson(res, 409, {
 						ok: false,
 						code: "headless",
 						error: "the browser has no window (headless); use the pop-out button first"
 					});
-					const current = await active.cdp.call("Browser.getWindowBounds", { windowId });
-					const chromeFrame = await measureChromeFrame(active, targetId);
+					const current = await browser.cdp.call("Browser.getWindowBounds", { windowId });
+					const chromeFrame = await measureChromeFrame(browser, targetId);
+					let viewport = null;
+					const readViewport = async () => {
+						if (viewport === null) viewport = await measureViewport(browser, targetId);
+						return viewport;
+					};
+					let width;
+					if (hasWidth) width = Math.round(requestedWidth);
+					else {
+						const measured = await readViewport();
+						const currentViewportWidth = measured !== null ? measured.width : Math.max(0, (current?.bounds?.width ?? 0) - chromeFrame.width);
+						if (currentViewportWidth <= 0) return sendJson(res, 409, {
+							ok: false,
+							error: "could not determine the current viewport width"
+						});
+						width = widthWithDelta(currentViewportWidth, requestedDelta);
+					}
+					let height = Math.round(Number(body.height));
+					if (!Number.isFinite(height) || height < 120) {
+						const measured = await readViewport();
+						height = measured !== null ? Math.max(120, Math.round(width * measured.height / measured.width)) : Math.max(120, Math.round(width * 2 / 3));
+					}
 					const bounds = computeWindowBounds({
 						width,
 						height
 					}, chromeFrame, current?.bounds ?? {});
-					await active.cdp.call("Browser.setWindowBounds", {
+					await browser.cdp.call("Browser.setWindowBounds", {
 						windowId,
 						bounds
 					});

@@ -21,6 +21,21 @@ export interface WindowBoundsTarget {
 /** Chrome refuses slivers; below this a resize is not worth sending. */
 export const MIN_VIEWPORT_WIDTH = 320
 export const MIN_VIEWPORT_HEIGHT = 200
+/** A sanity ceiling; the OS clamps to the display anyway. */
+export const MAX_VIEWPORT_WIDTH = 3840
+
+/**
+ * Apply a drag delta to the current viewport width.
+ *
+ * The panel's size-sync toggle maps the user's drag on the sidebar edge to a
+ * window-width change, not to an absolute width: the panel is much narrower
+ * than the browser window, so absolute mapping would shrink the window to the
+ * sidebar on the very first frame.
+ */
+export function widthWithDelta(currentWidth: number, delta: number): number {
+  const next = Math.round(currentWidth + delta)
+  return Math.min(MAX_VIEWPORT_WIDTH, Math.max(MIN_VIEWPORT_WIDTH, next))
+}
 
 /**
  * Compute CDP `Browser.setWindowBounds` bounds for a desired page viewport.

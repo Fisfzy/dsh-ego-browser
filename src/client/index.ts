@@ -328,37 +328,52 @@ declare function require(id: string): any
 			var observer = null
 			var timer = null
 			var inFlight = false
-			var lastW = 0
+			var baseWidth = 0     // panel width at the last applied window size
+			var pointerDown = false
+			var dragUntil = 0     // pointer-drag grace after the last pointerup
 			var lastAt = 0
+			function onPointerDown() { pointerDown = true }
+			function onPointerUp() {
+				if (!pointerDown) return
+				pointerDown = false
+				dragUntil = Date.now() + 350
+				if (enabled) schedule()
+			}
+			function panelWidth() {
+				return Math.round((element && element.clientWidth) || 0)
+			}
 			function send() {
 				timer = null
 				if (!enabled || !element) return
-				// Width only: the worker derives the height from the page's real
-				// viewport aspect. The element box cannot be used for height (CSS
-				// max-height and the thumbnail branch distort it), and feeding the
-				// resulting frame back in would shrink the window step by step.
-				var w = Math.round(element.clientWidth || 0)
-				if (w < 200) return
-				if (Math.abs(w - lastW) <= 6) return
+				var w = panelWidth()
+				if (w < 120) return
 				var now = Date.now()
-				if (now - lastAt < 250) { schedule(); return }
+				// Only the user's own drag may change the browser window. Layout
+				// changes that follow our own request (or a DSH window resize) are
+				// absorbed as the new baseline — otherwise the window would chase
+				// the sidebar width and shrink to nothing.
+				if (!pointerDown && now > dragUntil) { baseWidth = w; return }
+				var delta = w - baseWidth
+				if (Math.abs(delta) < 12) return
+				if (now - lastAt < 200) { schedule(); return }
 				if (inFlight) { schedule(); return }
 				inFlight = true
 				lastAt = now
+				var sentBase = w
 				fetch('/api/ego/window-size', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ width: w }),
+					body: JSON.stringify({ delta: delta }),
 				}).then(function (r) { return r.json().catch(function () { return null }) })
 					.then(function (parsed) {
-						if (parsed && parsed.ok === true) { lastW = w }
+						if (parsed && parsed.ok === true) baseWidth = sentBase
 					})
 					.catch(function () { return null })
 					.finally(function () { inFlight = false })
 			}
 			function schedule() {
 				if (timer !== null) return
-				timer = setTimeout(send, 200)
+				timer = setTimeout(send, 180)
 			}
 			function attach(el) {
 				element = el || null
@@ -370,7 +385,7 @@ declare function require(id: string): any
 						observer.observe(element)
 					} catch (e) { observer = null }
 				}
-				schedule()
+				if (baseWidth === 0) baseWidth = panelWidth()
 			}
 			function setEnabled(next) {
 				enabled = next === true
@@ -378,15 +393,24 @@ declare function require(id: string): any
 				if (!enabled) {
 					if (timer !== null) { clearTimeout(timer); timer = null }
 					if (observer !== null) { observer.disconnect(); observer = null }
+					document.removeEventListener('pointerdown', onPointerDown, true)
+					document.removeEventListener('pointerup', onPointerUp, true)
 					return
 				}
-				lastW = 0
+				// Unlocking must NOT resize anything by itself: it only arms the
+				// drag mapping. The window keeps its current size until the user
+				// drags the sidebar edge.
+				baseWidth = panelWidth()
 				lastAt = 0
+				document.addEventListener('pointerdown', onPointerDown, true)
+				document.addEventListener('pointerup', onPointerUp, true)
 				if (element) attach(element)
 			}
 			function dispose() {
 				if (timer !== null) { clearTimeout(timer); timer = null }
 				if (observer !== null) { observer.disconnect(); observer = null }
+				document.removeEventListener('pointerdown', onPointerDown, true)
+				document.removeEventListener('pointerup', onPointerUp, true)
 				element = null
 			}
 			return {

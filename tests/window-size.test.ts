@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { computeWindowBounds, MIN_VIEWPORT_HEIGHT, MIN_VIEWPORT_WIDTH } from '../src/worker/window-size.ts'
+import { computeWindowBounds, widthWithDelta, MIN_VIEWPORT_HEIGHT, MIN_VIEWPORT_WIDTH } from '../src/worker/window-size.ts'
+
+describe('widthWithDelta', () => {
+  it('moves the viewport width by the drag delta', () => {
+    expect(widthWithDelta(1264, 100)).toBe(1364)
+    expect(widthWithDelta(1264, -200)).toBe(1064)
+  })
+
+  it('clamps to the sane range so a drag cannot produce a sliver or an absurd window', () => {
+    expect(widthWithDelta(400, -1000)).toBe(MIN_VIEWPORT_WIDTH)
+    expect(widthWithDelta(3000, 5000)).toBe(3840)
+  })
+
+  it('rounds fractional deltas', () => {
+    expect(widthWithDelta(1000, 12.6)).toBe(1013)
+  })
+})
 
 describe('computeWindowBounds', () => {
   it('adds the measured Chrome frame to the requested viewport', () => {

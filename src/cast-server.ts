@@ -492,14 +492,16 @@ export function initCastServer(
       if (port === null) return sendJson(res, 400, { ok: false, error: 'no live agent browser' })
       const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
       const width = Number(body.width)
-      if (!Number.isFinite(width)) {
-        return sendJson(res, 400, { ok: false, error: 'width is required' })
+      const delta = Number(body.delta)
+      if (!Number.isFinite(width) && !Number.isFinite(delta)) {
+        return sendJson(res, 400, { ok: false, error: 'width or delta is required' })
       }
       const height = Number(body.height)
       const result = await proxyPost(port, '/api/window-size', {
-        width,
-        // The panel knows only its width; the worker derives the height from the
-        // page's real viewport aspect when it is absent.
+        ...(Number.isFinite(width) ? { width } : {}),
+        // The panel's toggle sends a drag delta; the worker applies it to the
+        // page's current viewport width.
+        ...(Number.isFinite(delta) ? { delta } : {}),
         ...(Number.isFinite(height) && height > 0 ? { height } : {}),
         ...(typeof body.targetId === 'string' && body.targetId ? { targetId: body.targetId } : {}),
       })
