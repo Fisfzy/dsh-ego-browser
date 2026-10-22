@@ -1459,33 +1459,49 @@ declare function require(id: string): any
 				}, EgoBrowserCard)
 			})
 
-		// ── Watch panel: sidebar tab & floating watch ─────────────────────
-		// betterSidebar is an OPTIONAL service and is intentionally absent from
-		// the static inject list (see its declaration above): on hosts without
-		// dsh-better-sidebar the module loader would otherwise keep this row
-		// pending forever and block the whole web boot (issue #29, reproduced
-		// on DSH 0.1.2-rc.1). Probe with ctx.get; when absent, mount the
-		// floating watch panel immediately and upgrade to the sidebar tab if
-		// the service appears later (dynamic ctx.inject, same pattern as PR #45).
-		var betterSidebarService
-		try { betterSidebarService = typeof ctx.get === 'function' ? ctx.get('betterSidebar') : undefined } catch (e) { betterSidebarService = undefined }
+		// ── Watch panel: native right sidebar > betterSidebar > floating ────
+		// Priority follows issue #64: when DSH provides its own right Sidebar
+		// (`@deepseek-ai/dsh-client-ui-sidebar-right`), register the watch panel
+		// there and skip betterSidebar (two competing tab hosts would show the
+		// panel twice). The services are OPTIONAL and — crucially — they may be
+		// provided AFTER this row applies, so they are awaited with ctx.inject
+		// (the same pattern dsh-better-sidebar uses) rather than probed once with
+		// ctx.get. A ctx.get-only probe silently missed them and fell back to
+		// betterSidebar, whose guide entry for our tab carries no icon (#64).
+		var getOptionalService = function (name) {
+			try { return typeof ctx.get === 'function' ? ctx.get(name) : undefined } catch (e) { return undefined }
+		}
+		var betterSidebarService = getOptionalService('betterSidebar')
+		// The one live panel. Replacing it disposes the previous mount, so the
+		// fallback can be upgraded to the native sidebar when its services appear.
+		var disposeActive = null
+		var activatePanel = function (effectCtx, kind, factory) {
+			if (disposeActive) { var old = disposeActive; disposeActive = null; try { old() } catch (e) {} }
+			disposeActive = effectCtx.effect(function () { return factory() }, 'ego-browser watch panel (' + kind + ')')
+		}
+		// Fallback first: the native inject below may fire synchronously.
 		if (betterSidebarService !== undefined) {
-			ctx.effect(() => mountSidebarTab(ctx, betterSidebarService), 'ego-browser sidebar tab')
+			activatePanel(ctx, 'betterSidebar', function () { return mountSidebarTab(ctx, betterSidebarService) })
 		} else {
-			var disposeFloating = null
-			ctx.effect(() => {
-				disposeFloating = mountFloatingWatch(ctx)
-				return function () { if (disposeFloating) { var d = disposeFloating; disposeFloating = null; d() } }
-			}, 'ego-browser watch panel')
+			activatePanel(ctx, 'floating', function () { return mountFloatingWatch(ctx) })
 			if (typeof ctx.inject === 'function') {
 				ctx.inject(['betterSidebar'], function (sidebarCtx) {
 					var svc
 					try { svc = typeof sidebarCtx.get === 'function' ? sidebarCtx.get('betterSidebar') : sidebarCtx.betterSidebar } catch (e) { svc = undefined }
 					if (!svc) return
-					if (disposeFloating) { var d2 = disposeFloating; disposeFloating = null; d2() }
-					sidebarCtx.effect(function () { return mountSidebarTab(sidebarCtx, svc) }, 'ego-browser sidebar tab')
+					activatePanel(sidebarCtx, 'betterSidebar', function () { return mountSidebarTab(sidebarCtx, svc) })
 				})
 			}
+		}
+		// Native upgrade path: wait for the right Sidebar's two services, then
+		// take over the panel and dispose whichever fallback was mounted.
+		if (typeof ctx.inject === 'function') {
+			ctx.inject(['sidebarRight', 'sidebarRightTabs'], function (nativeCtx) {
+				var sidebar = typeof nativeCtx.get === 'function' ? nativeCtx.get('sidebarRight') : undefined
+				var tabs = typeof nativeCtx.get === 'function' ? nativeCtx.get('sidebarRightTabs') : undefined
+				if (!sidebar || !tabs) return
+				activatePanel(nativeCtx, 'native', function () { return mountNativeSidebarTab(nativeCtx, sidebar, tabs) })
+			})
 		}
 	}
 
@@ -3710,6 +3726,83 @@ clearTimeout((panel as any)._dshHideT)
 			)
 		}
 
+		// ── startWatchProbe: SSE-driven first-tool-call detector ─────────────
+		// Shared by the betterSidebar tab and the native right Sidebar tab.
+		// Listens for `tool-call` events on the SSE stream to detect when the
+		// agent first calls an ego_* tool, then asks the host to open the watch
+		// panel. No polling: the host-side markEgoToolCall() pushes the event
+		// into the SSE stream the moment a tool runs.
+		//
+		// Why "increase beyond baseline" not "0 → >0": toolCallCount is a
+		// host-process counter that persists across page reloads. The baseline is
+		// fetched ONCE at mount; after that, only a NEW tool call opens the
+		// panel. The one-shot guard lives with the caller (per session).
+		function startWatchProbe(openWatchTab) {
+			var probeDisposed = false
+			var baseline = null // null = not yet observed; set on first fetch
+			// One-shot baseline fetch (NOT a polling loop). After this, the
+			// SSE `tool-call` event is the sole signal.
+			void (async function () {
+				if (probeDisposed) return
+				try {
+					var res = await fetch(SPACES_ROUTE, { cache: 'no-store' })
+					if (!res.ok) return
+					var data = await res.json()
+					// The host marks the payload when the frame relay is off; the
+					// probe must not hold a push channel in that case.
+					if (data && data.frameRelay === false) { frameRelaySet(true); closeProbeSse() }
+					if (data && typeof data.toolCallCount === 'number') {
+						baseline = data.toolCallCount
+					}
+				} catch (e) {}
+			})()
+			// Listen for tool-call events on the shared SSE stream. The probe
+			// opens its OWN EventSource so it works even before the panel is
+			// mounted. While the frame relay is disabled there is no push
+			// channel at all, so the probe stays CLOSED rather than opening a
+			// stream the host refuses to serve.
+			var probeSse = null
+			var openProbeSse = function () {
+				if (probeDisposed || probeSse || frameRelayDisabled) return
+				try { probeSse = new EventSource('/api/ego/stream') } catch (e) { probeSse = null; return }
+				probeSse.addEventListener('tool-call', onProbeToolCall)
+			}
+			var closeProbeSse = function () {
+				try { if (probeSse) probeSse.close() } catch (e) {}
+				probeSse = null
+			}
+			var onProbeToolCall = function (ev) {
+				if (probeDisposed) return
+				try {
+					var m = JSON.parse(ev.data)
+					if (!m || typeof m.count !== 'number') return
+					var sid = typeof m.sessionId === 'string' && m.sessionId !== '' ? m.sessionId : undefined
+					if (baseline === null) {
+						// Event arrived before the baseline fetch resolved —
+						// treat this count as the baseline (it's the first
+						// we've seen) and open on the NEXT one. But if count
+						// is already >0, the agent has called a tool this
+						// session, so open now.
+						baseline = m.count
+						if (m.count > 0) openWatchTab(sid)
+						return
+					}
+					if (m.count > baseline) openWatchTab(sid)
+				} catch (e) {}
+			}
+			openProbeSse()
+			// The settings switch can also flip at runtime; mirror it here.
+			var offProbeRelay = frameRelaySubscribe(function (disabled) {
+				if (disabled) closeProbeSse()
+				else openProbeSse()
+			})
+			return function () {
+				probeDisposed = true
+				if (offProbeRelay) { try { offProbeRelay() } catch (e) {} }
+				closeProbeSse()
+			}
+		}
+
 		// ── mountSidebarTab: register the ego-browser watch tab ────────────────
 		function mountSidebarTab(ctx, betterSidebar) {
 			if (!betterSidebar) return function () {}
@@ -3730,26 +3823,6 @@ clearTimeout((panel as any)._dshHideT)
 				component: EgoBrowserTab,
 			})
 
-			// ── Auto-open probe (SSE-driven, no polling) ─────────────────────
-			// Listens for `tool-call` events on the SSE stream to detect when
-			// the agent first calls an ego_* tool, then opens the sidebar Tab.
-			// No /api/ego/spaces polling — the host-side markEgoToolCall()
-			// pushes the event into the SSE stream the moment a tool runs.
-			//
-			// Why "increase beyond baseline" not "0 → >0": toolCallCount is a
-			// host-process counter that persists across page reloads. The
-			// baseline is fetched ONCE at mount via a single /api/ego/spaces
-			// request; after that, only a NEW tool call (count goes up)
-			// triggers the open.
-			//
-			// Per-session scope: the event carries the CALLING session id, so the
-			// Tab opens with that session's scope — a background conversation's
-			// tool call lands in ITS OWN sidebar instead of the sidebar the user
-			// happens to be looking at. The one-shot guard is therefore per
-			// session, and the probe stream stays open (a later session must
-			// still be able to auto-open).
-			var probeDisposed = false
-			var baseline = null // null = not yet observed; set on first fetch
 			// Sessions whose sidebar already auto-opened this page load. Keyed PER
 			// SESSION: each conversation gets its own one-shot, and the open is scoped to
 			// the CALLING session, so a background conversation's tool call opens the Tab
@@ -3765,72 +3838,125 @@ clearTimeout((panel as any)._dshHideT)
 					betterSidebar.openTab({ type: 'ego-browser:watch' }, sessionId ? { sessionId: sessionId } : undefined)
 				} catch (e) {}
 			}
-			// One-shot baseline fetch (NOT a polling loop). After this, the
-			// SSE `tool-call` event is the sole signal.
-			void (async function () {
-				if (probeDisposed) return
-				try {
-					var res = await fetch(SPACES_ROUTE, { cache: 'no-store' })
-					if (!res.ok) return
-					var data = await res.json()
-					// The host marks the payload when the frame relay is off; the
-					// probe must not hold a push channel in that case.
-					if (data && data.frameRelay === false) { frameRelaySet(true); closeProbeSse() }
-					if (data && typeof data.toolCallCount === 'number') {
-						baseline = data.toolCallCount
-					}
-				} catch (e) {}
-			})()
-			// Listen for tool-call events on the shared SSE stream. The probe
-			// opens its OWN EventSource so it works even before the Tab is
-			// mounted (the Tab's controller only connects after the Tab opens).
-			// While the frame relay is disabled there is no push channel at all,
-			// so the probe stays CLOSED rather than opening a stream the host
-			// refuses to serve.
-			var probeSse = null
-			var openProbeSse = function () {
-				if (probeDisposed || probeSse || frameRelayDisabled) return
-				try { probeSse = new EventSource('/api/ego/stream') } catch (e) { probeSse = null; return }
-				probeSse.addEventListener('tool-call', onProbeToolCall)
-			}
-			var closeProbeSse = function () {
-				try { if (probeSse) probeSse.close() } catch (e) {}
-				probeSse = null
-			}
-			var onProbeToolCall = function (ev) {
-					if (probeDisposed) return
-					try {
-						var m = JSON.parse(ev.data)
-						if (!m || typeof m.count !== 'number') return
-						var sid = typeof m.sessionId === 'string' && m.sessionId !== '' ? m.sessionId : undefined
-						if (baseline === null) {
-							// Event arrived before the baseline fetch resolved —
-							// treat this count as the baseline (it's the first
-							// we've seen) and open on the NEXT one. But if count
-							// is already >0, the agent has called a tool this
-							// session, so open now.
-							baseline = m.count
-							if (m.count > 0) openWatchTab(sid)
-							return
-						}
-						if (m.count > baseline) openWatchTab(sid)
-					} catch (e) {}
-			}
-			openProbeSse()
-			// The settings switch can also flip at runtime; mirror it here.
-			var offProbeRelay = frameRelaySubscribe(function (disabled) {
-				if (disabled) closeProbeSse()
-				else openProbeSse()
-			})
+			var closeProbe = startWatchProbe(openWatchTab)
 
 			return function () {
-				probeDisposed = true
-				if (offProbeRelay) { try { offProbeRelay() } catch (e) {} }
-				closeProbeSse()
+				closeProbe()
 				disposeTab()
 				styleEl.remove()
 			}
 		}
+
+		// ── mountNativeSidebarTab: register into DSH's own right Sidebar (#64) ─
+		// DSH ships @deepseek-ai/dsh-client-ui-sidebar-right as a base package. A
+		// tab type registers in two stages: the static type into ctx.sidebarRightTabs,
+		// then the body into the keyed `sidebar.right.pane.tab` slot under the same
+		// definition id. The body receives the framework's `useTabInfo` hook and any
+		// extra props from our inject face (here: the client ctx, which EgoBrowserTab
+		// needs to build LivePreviewController).
+		var NATIVE_WATCH_ID = 'dsh-ego-browser:watch'
+		var NATIVE_WATCH_KIND = 'ego-browser:watch'
+
+		function EgoNativeWatchBody(props) {
+			var info = props.useTabInfo()
+			var visible = !!(info && info.tab && info.tab.visible)
+			return React.createElement(EgoBrowserTab, { visible: visible, ctx: props.ctx })
+		}
+
+		// Sidebar guide glyph: a browser window with the agent's cursor inside.
+		// Self-contained (no import from the host icon set) so the entry can never
+		// fail on a host whose primitives package is not resolvable for this row;
+		// monochrome via currentColor so it follows the guide's own icon colour
+		// like every neighbour. IconProps shape: { size, className }.
+		function EgoWatchIcon(props) {
+			var size = props && typeof props.size === 'number' ? props.size : 16
+			var h = React.createElement
+			return h('svg', {
+				width: size,
+				height: size,
+				viewBox: '0 0 16 16',
+				fill: 'none',
+				xmlns: 'http://www.w3.org/2000/svg',
+				className: props && props.className,
+				'aria-hidden': 'true',
+			},
+				// window frame
+				h('rect', {
+					x: 1.2, y: 2.4, width: 13.6, height: 11.2, rx: 2.4,
+					stroke: 'currentColor', strokeWidth: 1.2,
+				}),
+				// title bar
+				h('path', {
+					d: 'M1.4 5.9h13.2',
+					stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round',
+				}),
+				// window dots
+				h('circle', { cx: 3.7, cy: 4.15, r: 0.6, fill: 'currentColor' }),
+				h('circle', { cx: 5.5, cy: 4.15, r: 0.6, fill: 'currentColor' }),
+				// the agent's cursor, aimed into the page
+				h('path', {
+					d: 'M8.2 7.0L12.6 10.6L10.6 10.9L11.7 13.2L10.6 13.8L9.5 11.5L8.0 13.1Z',
+					fill: 'currentColor',
+				})
+			)
+		}
+
+		function mountNativeSidebarTab(ctx, sidebar, tabs) {
+			if (!sidebar || !tabs) return function () {}
+			// Inject Tab CSS once (cleaned up on dispose)
+			var styleEl = document.createElement('style')
+			styleEl.textContent = TAB_CSS
+			document.head.appendChild(styleEl)
+
+			var disposeType = tabs.register({
+				id: NATIVE_WATCH_ID,
+				kind: NATIVE_WATCH_KIND,
+				keepMounted: true,
+				priority: 'extension',
+				title: function () { return wt('title') },
+				guide: [{
+					id: 'ego-watch',
+					order: 90,
+					title: function () { return wt('title') },
+					icon: EgoWatchIcon,
+				}],
+			})
+
+			var disposeBody = ctx.slots.register({
+				name: 'sidebar.right.pane.tab',
+				key: NATIVE_WATCH_ID,
+				inject: function () { return { ctx: ctx } },
+			}, EgoNativeWatchBody)
+
+			// Sessions whose native sidebar already auto-opened this page load.
+			var autoOpened = {}
+			var openWatchTab = function (sessionId) {
+				var key = sessionId || ''
+				if (autoOpened[key] === true) return
+				// Navigation commands act on the mounted seat's session; opening
+				// from a background session would throw (or open in the wrong
+				// column), so require a match when the mounted session is known.
+				var showing
+				try {
+					var m = sidebar.mounted
+					showing = m && typeof m.getSnapshot === 'function' ? m.getSnapshot() : undefined
+				} catch (e) { showing = undefined }
+				if (sessionId && showing !== undefined && showing !== sessionId) return
+				try {
+					sidebar.openTab(NATIVE_WATCH_KIND)
+					autoOpened[key] = true
+				} catch (e) {}
+			}
+			var closeProbe = startWatchProbe(openWatchTab)
+
+			return function () {
+				closeProbe()
+				try { disposeBody() } catch (e) {}
+				try { disposeType() } catch (e) {}
+				styleEl.remove()
+			}
+		}
+
 
 		function escapeHtml(s) {
 			return String(s).replace(/[&<>"']/g, (c) => ({
