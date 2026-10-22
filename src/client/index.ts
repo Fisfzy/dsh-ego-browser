@@ -180,6 +180,9 @@ declare function require(id: string): any
 			openExternal: 'Open real page',
 		raiseWindow: 'Pop out window',
 		raiseWindowHint: 'Raise the agent browser as a real window (a headless instance is replaced by a visible one on the same profile)',
+			sizeSyncOff: '🔒 Size lock',
+			sizeSyncOn: '🔓 Size sync',
+			sizeSyncHint: 'Unlocked: resizing this panel resizes the REAL agent browser window (CDP window bounds). Click again to lock.',
 			noUrl: 'No URL to open',
 			closeTab: 'Close tab',
 			newTab: '(new tab)',
@@ -226,6 +229,9 @@ declare function require(id: string): any
 			openExternal: '⧉ 打开真实页',
 		raiseWindow: '弹出窗口',
 		raiseWindowHint: '把 agent 浏览器弹出为真实窗口（无头实例会被同 Profile 的有头实例替换，标签页保留）',
+			sizeSyncOff: '🔒 锁定尺寸',
+			sizeSyncOn: '🔓 尺寸同步',
+			sizeSyncHint: '解锁后拖动面板会直接改变 agent 浏览器真实窗口大小（CDP 窗口 bounds）；再点一下锁定。',
 			noUrl: '无可打开的地址',
 			closeTab: '关闭标签',
 			newTab: '(新标签页)',
@@ -299,6 +305,96 @@ declare function require(id: string): any
 			if (!status || typeof status !== 'object' || status.frameRelay !== false) return false
 			frameRelaySet(true)
 			return true
+		}
+
+		// ── Panel size → real browser window (size sync) ────────────────────
+		// The live image is a screencast frame; by default resizing the panel only
+		// scales that frame. The panel's size-sync toggle makes a panel resize set
+		// the REAL agent browser window instead, so the page reflows at the size
+		// the user is drawing. The worker turns the reported image box (CSS px)
+		// into window bounds through CDP. Sends are debounced (a drag emits a size
+		// event per pixel) and skipped when the box did not actually change, so a
+		// periodic re-render cannot spam the worker.
+		var SIZE_SYNC_KEY = 'dsh-ego:size-sync'
+		function sizeSyncStored() {
+			try { return window.localStorage.getItem(SIZE_SYNC_KEY) === '1' } catch (e) { return false }
+		}
+		function sizeSyncStore(enabled) {
+			try { window.localStorage.setItem(SIZE_SYNC_KEY, enabled ? '1' : '0') } catch (e) {}
+		}
+		function createWindowSizeSync() {
+			var enabled = false
+			var element = null
+			var observer = null
+			var timer = null
+			var inFlight = false
+			var lastW = 0
+			var lastAt = 0
+			function send() {
+				timer = null
+				if (!enabled || !element) return
+				// Width only: the worker derives the height from the page's real
+				// viewport aspect. The element box cannot be used for height (CSS
+				// max-height and the thumbnail branch distort it), and feeding the
+				// resulting frame back in would shrink the window step by step.
+				var w = Math.round(element.clientWidth || 0)
+				if (w < 200) return
+				if (Math.abs(w - lastW) <= 6) return
+				var now = Date.now()
+				if (now - lastAt < 250) { schedule(); return }
+				if (inFlight) { schedule(); return }
+				inFlight = true
+				lastAt = now
+				fetch('/api/ego/window-size', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ width: w }),
+				}).then(function (r) { return r.json().catch(function () { return null }) })
+					.then(function (parsed) {
+						if (parsed && parsed.ok === true) { lastW = w }
+					})
+					.catch(function () { return null })
+					.finally(function () { inFlight = false })
+			}
+			function schedule() {
+				if (timer !== null) return
+				timer = setTimeout(send, 200)
+			}
+			function attach(el) {
+				element = el || null
+				if (!enabled) return
+				if (observer !== null) { observer.disconnect(); observer = null }
+				if (element && typeof ResizeObserver !== 'undefined') {
+					try {
+						observer = new ResizeObserver(function () { if (enabled) schedule() })
+						observer.observe(element)
+					} catch (e) { observer = null }
+				}
+				schedule()
+			}
+			function setEnabled(next) {
+				enabled = next === true
+				sizeSyncStore(enabled)
+				if (!enabled) {
+					if (timer !== null) { clearTimeout(timer); timer = null }
+					if (observer !== null) { observer.disconnect(); observer = null }
+					return
+				}
+				lastW = 0
+				lastAt = 0
+				if (element) attach(element)
+			}
+			function dispose() {
+				if (timer !== null) { clearTimeout(timer); timer = null }
+				if (observer !== null) { observer.disconnect(); observer = null }
+				element = null
+			}
+			return {
+				isEnabled: function () { return enabled },
+				setEnabled: setEnabled,
+				attach: attach,
+				dispose: dispose,
+			}
 		}
 
 		// ── Settings card: store ──────────────────────────────────────────
@@ -1374,6 +1470,7 @@ declare function require(id: string): any
   transition: background .15s ease;
 }
 .dsh-ego-back:hover { background: rgba(255,255,255,.2); }
+.dsh-ego-back.on { color: #d97757; box-shadow: inset 0 0 0 1px #d97757; }
 .dsh-ego-liveimg {
   width:100%; border-radius:11px; display:block;
   max-height:50vh; object-fit:contain;
@@ -1723,6 +1820,9 @@ declare function require(id: string): any
 				const frameCache = new Map()
 				let liveImg = null
 				let liveImgTargetId = null
+				// Panel size → real browser window toggle (see createWindowSizeSync).
+				const sizeSync = createWindowSizeSync()
+				sizeSync.setEnabled(sizeSyncStored())
 				// rAF-coalesced live-frame flush: newest frame is applied at display
 				// cadence instead of decoding every source frame (bounds CPU under
 				// an uncapped screencast).
@@ -2192,6 +2292,21 @@ declare function require(id: string): any
 							.catch(() => null)
 					})
 					badge.appendChild(raiseBtn)
+					// Size-sync toggle: unlocked, dragging the panel resizes the real
+					// agent browser window instead of only scaling the frame.
+					const sizeBtn = document.createElement('button')
+					sizeBtn.type = 'button'
+					sizeBtn.className = 'dsh-ego-back' + (sizeSync.isEnabled() ? ' on' : '')
+					sizeBtn.title = wt('sizeSyncHint')
+					sizeBtn.textContent = sizeSync.isEnabled() ? wt('sizeSyncOn') : wt('sizeSyncOff')
+					sizeBtn.addEventListener('click', () => {
+						const next = !sizeSync.isEnabled()
+						sizeSync.setEnabled(next)
+						sizeBtn.classList.toggle('on', next)
+						sizeBtn.textContent = next ? wt('sizeSyncOn') : wt('sizeSyncOff')
+						if (next) sizeSync.attach(liveImg)
+					})
+					badge.appendChild(sizeBtn)
 					const cached = frameCache.get(current.targetId)
 					if (captureBackend === 'ffmpeg' || cached) {
 						const img = makeZoomImage(u, captureBackend === 'ffmpeg' ? 'video' : 'img')
@@ -2199,6 +2314,7 @@ declare function require(id: string): any
 						else img.src = cached
 						img.alt = 'live'
 						attachLiveImg(current.targetId, img)
+						sizeSync.attach(img)
 						view.appendChild(img)
 					} else {
 						const n = document.createElement('div')
@@ -2738,6 +2854,7 @@ clearTimeout((panel as any)._dshHideT)
   transition: background .15s ease; color: inherit;
 }
 .dsh-ego-side-back:hover { background: rgba(128,128,128,.3); }
+.dsh-ego-side-back-on { color: #d97757; box-shadow: inset 0 0 0 1px #d97757; }
 .dsh-ego-side-liveimg {
   width: 100%; border-radius: 9px; display: block;
   max-height: 50vh; object-fit: contain;
@@ -3494,6 +3611,17 @@ clearTimeout((panel as any)._dshHideT)
 
 			var imgRef = React.useRef(null)
 			var videoRef = React.useRef(null)
+			// Size-sync toggle: unlocked, the live image box drives the REAL agent
+			// browser window size (via the worker's CDP window bounds route).
+			var sizeSyncRef = React.useRef(null)
+			if (sizeSyncRef.current === null) {
+				sizeSyncRef.current = createWindowSizeSync()
+				sizeSyncRef.current.setEnabled(sizeSyncStored())
+			}
+			var sizeSync = sizeSyncRef.current
+			var sizeSyncState = React.useState(sizeSync.isEnabled())
+			var sizeSyncOn = sizeSyncState[0]
+			var setSizeSyncOn = sizeSyncState[1]
 
 			// Bind the live <img>/<video> to the controller the moment the element
 			// attaches. The deps-based effect below only fires when target/backend/
@@ -3509,6 +3637,7 @@ clearTimeout((panel as any)._dshHideT)
 					controller.setLiveImg(el, state.currentTargetId)
 					controller.noteWired()
 				}
+				if (sizeSyncOn) sizeSync.attach(el)
 			}
 			var bindLiveVideo = function (el) {
 				videoRef.current = el
@@ -3517,6 +3646,7 @@ clearTimeout((panel as any)._dshHideT)
 					controller.setLiveVideo(el, state.currentTargetId)
 					controller.noteWired()
 				}
+				if (sizeSyncOn) sizeSync.attach(el)
 			}
 
 			React.useEffect(function () {
@@ -3527,6 +3657,17 @@ clearTimeout((panel as any)._dshHideT)
 			React.useEffect(function () {
 				controller.setVisible(visible)
 			}, [visible, controller])
+
+			// Reattach the size observer when the panel becomes visible or the shown
+			// tab changes; a hidden panel must not keep reporting sizes.
+			React.useEffect(function () {
+				if (!visible) sizeSync.attach(null)
+				else sizeSync.attach(imgRef.current || videoRef.current)
+			}, [visible, sizeSync, state.currentTargetId, state.streamGeneration])
+
+			React.useEffect(function () {
+				return function () { sizeSync.dispose() }
+			}, [sizeSync])
 
 			// Attach the live <img> to the controller whenever the target changes
 			React.useEffect(function () {
@@ -3695,7 +3836,19 @@ clearTimeout((panel as any)._dshHideT)
 										.then(function (r) { return r.json().catch(function () { return null }) })
 										.catch(function () { return null })
 								},
-							}, wt('raiseWindow'))
+							}, wt('raiseWindow')),
+							// Size-sync toggle: unlocked, dragging the panel resizes the
+							// real agent browser window instead of only scaling the frame.
+							h('button', {
+								className: 'dsh-ego-side-back' + (sizeSyncOn ? ' dsh-ego-side-back-on' : ''), type: 'button',
+								title: wt('sizeSyncHint'),
+								onClick: function () {
+									var next = !sizeSyncOn
+									setSizeSyncOn(next)
+									sizeSync.setEnabled(next)
+									if (next) sizeSync.attach(imgRef.current || videoRef.current)
+								},
+							}, sizeSyncOn ? wt('sizeSyncOn') : wt('sizeSyncOff'))
 						),
 						liveImg,
 						h('div', { className: 'dsh-ego-side-livetitle' }, currentSpace.title || currentSpace.url || wt('newTab')),

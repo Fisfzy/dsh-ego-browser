@@ -11,6 +11,7 @@ import { TargetSessions, CdpCaptureBackend } from './capture-cdp.ts'
 import { CaptureManager } from './capture-manager.ts'
 import { captureSnapshot } from './snapshot.ts'
 import { FfmpegCaptureBackend } from './capture-ffmpeg.ts'
+import { computeWindowBounds } from './window-size.ts'
 
 const SENTINEL = '@@DSH_RESULT@@'
 const HOME = homedir() || process.env.HOME || process.env.USERPROFILE || '/root'
@@ -360,6 +361,53 @@ function stopSiblingWorkers(): void {
   } catch { /* ignore */ }
 }
 
+/**
+ * Chrome's own frame around the page, used to turn a desired PAGE viewport into
+ * a WINDOW size. Measured from the page because the frame height differs by
+ * platform/version; falls back to a conservative constant when the page cannot
+ * be evaluated (closed tab, navigation in flight).
+ */
+async function measureChromeFrame(browser: ActiveBrowser, targetId: string): Promise<{ width: number; height: number }> {
+  try {
+    const response = await browser.sessions.call(targetId, 'Runtime.evaluate', {
+      expression: '({ ow: window.outerWidth, iw: window.innerWidth, oh: window.outerHeight, ih: window.innerHeight })',
+      returnByValue: true,
+    }) as { result?: { value?: { ow?: number; iw?: number; oh?: number; ih?: number } } }
+    const value = response?.result?.value
+    if (value && Number.isFinite(value.ow) && Number.isFinite(value.iw) && Number.isFinite(value.oh) && Number.isFinite(value.ih)) {
+      return {
+        width: Math.max(0, Math.round((value.ow as number) - (value.iw as number))),
+        height: Math.max(0, Math.round((value.oh as number) - (value.ih as number))),
+      }
+    }
+  } catch {
+    // best effort only; the fallback keeps the resize useful
+  }
+  return { width: 0, height: IS_WIN ? 132 : 88 }
+}
+
+/**
+ * The page's real viewport size. The panel reports only a width (its element
+ * box cannot be trusted for height: CSS caps it and the thumbnail branch
+ * distorts it), so the height follows the aspect the page is actually laid out
+ * at right now.
+ */
+async function measureViewport(browser: ActiveBrowser, targetId: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const response = await browser.sessions.call(targetId, 'Runtime.evaluate', {
+      expression: '({ w: window.innerWidth, h: window.innerHeight })',
+      returnByValue: true,
+    }) as { result?: { value?: { w?: number; h?: number } } }
+    const value = response?.result?.value
+    if (value && Number.isFinite(value.w) && Number.isFinite(value.h) && (value.w as number) > 0 && (value.h as number) > 0) {
+      return { width: Math.round(value.w as number), height: Math.round(value.h as number) }
+    }
+  } catch {
+    // best effort; the caller falls back to a sane aspect
+  }
+  return null
+}
+
 async function main(): Promise<void> {
   stopSiblingWorkers()
   rmSync(CAST_STATE_FILE, { force: true })
@@ -379,6 +427,39 @@ async function main(): Promise<void> {
         const png = await captureSnapshot(browser.sessions, targetId, maxWidth)
         res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'no-store' })
         return res.end(png)
+      }
+      if (req.method === 'POST' && url.pathname === '/api/window-size') {
+        const body = await readJson(req)
+        const width = Math.round(Number(body.width))
+        if (!Number.isFinite(width) || width < 200) {
+          return sendJson(res, 400, { ok: false, error: 'width must be an integer of at least 200' })
+        }
+        if (!active) return sendJson(res, 409, { ok: false, code: 'browser-disconnected', error: 'no live browser' })
+        const targetId = typeof body.targetId === 'string' && body.targetId ? body.targetId : await activeTargetId()
+        if (!targetId) return sendJson(res, 409, { ok: false, error: 'no active target' })
+        try {
+          // Height is optional: the panel only knows its width. Deriving the
+          // height from the page's current viewport keeps the page's aspect and
+          // avoids feeding the resized frame back into the measurement.
+          let height = Math.round(Number(body.height))
+          if (!Number.isFinite(height) || height < 120) {
+            const viewport = await measureViewport(active, targetId)
+            height = viewport !== null
+              ? Math.max(120, Math.round(width * viewport.height / viewport.width))
+              : Math.max(120, Math.round(width * 2 / 3))
+          }
+          const { windowId } = await active.cdp.call('Browser.getWindowForTarget', { targetId }) as { windowId?: number }
+          if (typeof windowId !== 'number') {
+            return sendJson(res, 409, { ok: false, code: 'headless', error: 'the browser has no window (headless); use the pop-out button first' })
+          }
+          const current = await active.cdp.call('Browser.getWindowBounds', { windowId }) as { bounds?: { left?: number; top?: number } }
+          const chromeFrame = await measureChromeFrame(active, targetId)
+          const bounds = computeWindowBounds({ width, height }, chromeFrame, current?.bounds ?? {})
+          await active.cdp.call('Browser.setWindowBounds', { windowId, bounds })
+          return sendJson(res, 200, { ok: true, windowId, bounds })
+        } catch (error) {
+          return sendJson(res, 503, { ok: false, code: 'window-resize-failed', error: (error as Error).message || String(error) })
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/watch/status') return sendJson(res, 200, { ok: true, ...manager.status() })
       if (req.method === 'GET' && url.pathname === '/api/video/status') return sendJson(res, 200, { ok: true, ...manager.status(), mime: videoInit?.mime || null })

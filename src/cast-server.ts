@@ -31,6 +31,7 @@ export const EGO_FLUSH_ROUTE = '/api/ego/flush'
 export const EGO_RAISE_ROUTE = '/api/ego/raise'
 export const EGO_LOGIN_IMPORT_ROUTE = '/api/ego/login-import'
 export const EGO_INPUT_ROUTE = '/api/ego/input'
+export const EGO_WINDOW_SIZE_ROUTE = '/api/ego/window-size'
 export const EGO_WATCH_START_ROUTE = '/api/ego/watch/start'
 export const EGO_WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
 export const EGO_WATCH_STOP_ROUTE = '/api/ego/watch/stop'
@@ -477,6 +478,36 @@ export function initCastServer(
     },
   })
 
+  // POST /api/ego/window-size — the watch panel's size-sync toggle drives the
+  // REAL agent browser window. The body carries the desired PAGE viewport in
+  // CSS px; the worker adds Chrome's frame and calls Browser.setWindowBounds.
+  const disposeWindowSize = server.register({
+    kind: 'exact',
+    path: EGO_WINDOW_SIZE_ROUTE,
+    handler: async (reqRaw: unknown, resRaw: unknown) => {
+      const req = reqRaw as IncomingMessage
+      const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
+      const port = await ensureWorker()
+      if (port === null) return sendJson(res, 400, { ok: false, error: 'no live agent browser' })
+      const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
+      const width = Number(body.width)
+      if (!Number.isFinite(width)) {
+        return sendJson(res, 400, { ok: false, error: 'width is required' })
+      }
+      const height = Number(body.height)
+      const result = await proxyPost(port, '/api/window-size', {
+        width,
+        // The panel knows only its width; the worker derives the height from the
+        // page's real viewport aspect when it is absent.
+        ...(Number.isFinite(height) && height > 0 ? { height } : {}),
+        ...(typeof body.targetId === 'string' && body.targetId ? { targetId: body.targetId } : {}),
+      })
+      if (!result) return sendJson(res, 502, { ok: false, error: 'window-size worker unavailable' })
+      return sendJson(res, result.status, result.body)
+    },
+  })
+
   // POST /api/ego/close — close a browser tab by targetId.
   const disposeClose = server.register({
     kind: 'exact',
@@ -629,6 +660,7 @@ export function initCastServer(
     try { disposeSpaces() } catch { /* ignore */ }
     try { disposeStream() } catch { /* ignore */ }
     try { disposeInput() } catch { /* ignore */ }
+    try { disposeWindowSize() } catch { /* ignore */ }
     try { disposeClose() } catch { /* ignore */ }
     try { disposeFlush() } catch { /* ignore */ }
     try { disposeRaise() } catch { /* ignore */ }
