@@ -22,7 +22,7 @@
         "apiVersion": "presentation.dsh/v1alpha1",
         "kind": "Notification",
         "optional": true,
-        "fallback": "log the notice to the browser-status scene"
+        "fallback": "omit transient notifications when tuiToast is unavailable; tool results remain available"
       }
     ]
   },
@@ -30,19 +30,6 @@
   "contributes": {
     "commands": [],
     "x-dsh-tui": [
-      {
-        "apiVersion": "tui.dsh/v1alpha1",
-        "kind": "Scene",
-        "id": "dsh-ego-browser.watch",
-        "name": "agent_browser",
-        "spec": {
-          "title": "Agent 浏览器",
-          "titles": {
-            "en": "Agent Browser",
-            "zh": "Agent 浏览器"
-          }
-        }
-      },
       {
         "apiVersion": "tui.dsh/v1alpha1",
         "kind": "SettingsSection",
@@ -60,33 +47,65 @@
               "path": [
                 "isolateSpaces"
               ],
-              "label": "任务空间沙盒隔离 (Space isolation)",
+              "label": "Space isolation",
               "kind": "boolean",
-              "hint": "默认关闭：使用磁盘持久化 Profile，任务中登录的账号跨电脑重启永久保留；开启后使用内存临时沙盒隔离，任务结束不落盘。"
+              "hint": "Use a temporary isolated profile; off keeps the persistent login profile.",
+              "titles": {
+                "en": "Space isolation",
+                "zh": "任务空间沙盒隔离"
+              },
+              "hintTitles": {
+                "en": "Use a temporary isolated profile; off keeps the persistent login profile.",
+                "zh": "使用临时隔离空间；关闭时使用持久化登录配置。"
+              }
             },
             {
               "path": [
                 "idleTimeoutMin"
               ],
-              "label": "空闲自动回收 (Idle auto-stop, minutes)",
+              "label": "Idle auto-stop (minutes)",
               "kind": "number",
-              "hint": "N 分钟没有任何 ego_* 调用后自动关闭后台浏览器进程（0 = 关闭此功能）。下次调用会自动冷启动（约 2-4 秒）。观察窗正在观看不算活动。"
+              "hint": "Stop the browser after N minutes without tool calls; 0 disables. Watching is not activity.",
+              "titles": {
+                "en": "Idle auto-stop (minutes)",
+                "zh": "空闲自动回收（分钟）"
+              },
+              "hintTitles": {
+                "en": "Stop the browser after N minutes without tool calls; 0 disables. Watching is not activity.",
+                "zh": "N 分钟没有工具调用后关闭浏览器；0 表示关闭回收。观看不算活动。"
+              }
             },
             {
               "path": [
                 "residentExecutor"
               ],
-              "label": "常驻执行进程 (Resident executor)",
+              "label": "Resident executor",
               "kind": "boolean",
-              "hint": "复用同一个 ego-browser --serve 进程执行 ego_* 调用：首次调用支付启动开销，之后每次约 1-2ms；常驻进程失效时自动回退到一次性 spawn。默认关闭。"
+              "hint": "Reuse the execution process; default off.",
+              "titles": {
+                "en": "Resident executor",
+                "zh": "常驻执行进程"
+              },
+              "hintTitles": {
+                "en": "Reuse the execution process; default off.",
+                "zh": "复用执行进程；默认关闭。"
+              }
             },
             {
               "path": [
                 "residentIdleMin"
               ],
-              "label": "常驻空闲停止 (Resident idle stop, minutes)",
+              "label": "Resident idle stop (minutes)",
               "kind": "number",
-              "hint": "N 分钟没有 ego_* 调用后停止常驻进程（0 = 一直保留到插件卸载）。不影响浏览器本体。"
+              "hint": "Stop the resident executor after N idle minutes; 0 keeps it until unload.",
+              "titles": {
+                "en": "Resident idle stop (minutes)",
+                "zh": "常驻空闲停止（分钟）"
+              },
+              "hintTitles": {
+                "en": "Stop the resident executor after N idle minutes; 0 keeps it until unload.",
+                "zh": "空闲 N 分钟后停止常驻执行进程；0 表示保留到卸载。"
+              }
             },
             {
               "path": [
@@ -94,7 +113,15 @@
               ],
               "label": "Browser binary path",
               "kind": "text",
-              "hint": "Path to the Chrome/Chromium/Edge binary. Empty = auto-detect."
+              "hint": "Path to Chrome, Chromium or Edge. Empty means auto-detect.",
+              "titles": {
+                "en": "Browser binary path",
+                "zh": "浏览器程序路径"
+              },
+              "hintTitles": {
+                "en": "Path to Chrome, Chromium or Edge. Empty means auto-detect.",
+                "zh": "Chrome、Chromium 或 Edge 路径；留空自动检测。"
+              }
             },
             {
               "path": [
@@ -115,7 +142,16 @@
                   "value": "ffmpeg",
                   "label": "FFmpeg"
                 }
-              ]
+              ],
+              "titles": {
+                "en": "Capture backend",
+                "zh": "画面采集后端"
+              },
+              "hint": "Choose automatic detection, CDP or FFmpeg.",
+              "hintTitles": {
+                "en": "Choose automatic detection, CDP or FFmpeg.",
+                "zh": "选择自动检测、CDP 或 FFmpeg。"
+              }
             },
             {
               "path": [
@@ -125,18 +161,36 @@
               "kind": "select",
               "options": [
                 {
+                  "value": "low",
+                  "label": "Low",
+                  "titles": {
+                    "zh": "低"
+                  }
+                },
+                {
                   "value": "balanced",
-                  "label": "Balanced"
+                  "label": "Balanced",
+                  "titles": {
+                    "zh": "均衡"
+                  }
                 },
                 {
-                  "value": "quality",
-                  "label": "Quality"
-                },
-                {
-                  "value": "speed",
-                  "label": "Speed"
+                  "value": "high",
+                  "label": "High",
+                  "titles": {
+                    "zh": "高"
+                  }
                 }
-              ]
+              ],
+              "titles": {
+                "en": "Quality profile",
+                "zh": "画质预设"
+              },
+              "hint": "Low reduces bandwidth; balanced is the default; high improves detail.",
+              "hintTitles": {
+                "en": "Low reduces bandwidth; balanced is the default; high improves detail.",
+                "zh": "低画质减少带宽；均衡为默认；高画质保留更多细节。"
+              }
             },
             {
               "path": [
@@ -144,7 +198,15 @@
               ],
               "label": "FFmpeg binary path",
               "kind": "text",
-              "hint": "Path to ffmpeg. Empty = auto-detect / on-demand install."
+              "hint": "Path to FFmpeg. Empty means auto-detect or on-demand installation.",
+              "titles": {
+                "en": "FFmpeg binary path",
+                "zh": "FFmpeg 程序路径"
+              },
+              "hintTitles": {
+                "en": "Path to FFmpeg. Empty means auto-detect or on-demand installation.",
+                "zh": "FFmpeg 路径；留空自动检测或按需安装。"
+              }
             }
           ]
         }

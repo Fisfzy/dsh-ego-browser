@@ -41,6 +41,9 @@ import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { importLoginCookies } from './login-import.ts'
+import { BrowserStateStore } from './browser-state.ts'
+import { installTui } from './tui/integration.ts'
+import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
@@ -492,6 +495,7 @@ export async function runWithStaleSpaceRetry(  ctx: EgoContext,
     cfg.spaceTracker.resetToName()
     result = await withWarmupRetry(() => runEgoScript(ctx.subprocess, buildScript(), exec, cfg, graceOverrideMs))
   }
+  if (!result.ok && isColdStartError(result.error ?? '')) cfg.onColdStartFailure?.()
   return result
 }
 /** Find the last line carrying the sentinel and JSON-parse its payload. */
@@ -536,6 +540,8 @@ export function parseSentinelOrLastJson(
 
 /** The live runtime config object built in apply() (getters read the settings bridge). */
 interface EgoRuntimeConfig {
+  onColdStartFailure?: () => void
+  observeTool?: <T>(name: string, args: Record<string, unknown>, run: () => Promise<T> | T) => Promise<T>
   egoBin: string
   configuredDefaultSpace: string | number
   spaceTracker: ActiveSpaceTracker
@@ -837,6 +843,10 @@ interface EgoToolOptions {
   afterExecute?: (args: Record<string, unknown>, value: unknown) => void
 }
 
+function observeEgoTool<T>(cfg: EgoRuntimeConfig, name: string, args: Record<string, unknown>, run: () => Promise<T> | T): Promise<T> {
+  return cfg.observeTool ? cfg.observeTool(name, args, run) : Promise.resolve().then(run)
+}
+
 function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOptions): ToolHandle {
   return defineTool({
     name: opts.name,
@@ -848,7 +858,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
     },
     timeoutMs: TOOL_TIMEOUT_MS,
     execute: async (args: Record<string, unknown>, exec: ToolExec) =>
-      withEgoLock(async () => {
+      withEgoLock(() => observeEgoTool(cfg, opts.name, args, async () => {
         // Signal the client to auto-open the sidebar Tab on the first ego_*
         // tool call. markEgoToolCall() bumps a host-side counter surfaced via
         // /api/ego/spaces; the LivePreviewController transitions on 0 → >0 and
@@ -863,10 +873,10 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
         if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
         // Value is JSON.parse output of our own payload — fits the tool JSON contract.
         return result.value
-      }),
-    presentCall: () => ({
+      })),
+    presentCall: (args: unknown) => ({
       card: 'generic',
-      title: opts.name,
+      title: toolCallTitle(opts.name, args),
       kind: 'other',
       rawInput: null,
     }),
@@ -952,7 +962,29 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     get residentExecutor() { return resolveConfig(bridge.source() as RawConfig).residentExecutor },
     get residentIdleMin() { return resolveConfig(bridge.source() as RawConfig).residentIdleMin },
   }
+  const browserState = new BrowserStateStore()
+  const tui = installTui(ctx, browserState)
+  cfg.onColdStartFailure = () => tui.toast('Agent Browser could not start after retrying. Run ego_doctor for details.', 'error')
+  cfg.observeTool = async (name, args, run) => {
+    const token = browserState.startTool(name, safeLocatorSummary(name, args))
+    try {
+      const value = await run()
+      const result = value as { ok?: boolean; error?: unknown } | null
+      const error = typeof result?.error === 'string' ? result.error : undefined
+      browserState.finishTool(token, { ok: result?.ok !== false, error })
+      return value
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      browserState.finishTool(token, { ok: false, error: message })
+      throw error
+    }
+  }
   const reg = (tool: ToolHandle): void => {
+    // These standalone tools do not take the shared browser lock.
+    if (['ego_cli', 'ego_script', 'ego_help', 'ego_doctor'].includes(tool.name)) {
+      const execute = tool.execute
+      tool.execute = (args, exec) => observeEgoTool(cfg, tool.name, args as Record<string, unknown>, () => execute(args, exec))
+    }
     const dispose = ctx.tools.register(tool) as unknown as () => void
     // Cordis lifecycle: unregister the tool when the plugin unmounts.
     ctx.effect?.(() => dispose)
@@ -1031,8 +1063,18 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
               ? (e.LOCALAPPDATA || `${home}\\AppData\\Local`) + '\\ego-lite-linux'
               : `${e.XDG_STATE_HOME || `${home}/.local/state`}/ego-lite-linux`)
           const { readFile } = await import('node:fs/promises')
+          let reapedPid: number | undefined
           try {
-            await readFile(`${stateDir}/browser.json`, 'utf8')
+            const stateText = await readFile(`${stateDir}/browser.json`, 'utf8')
+            if (tui.hasToast()) {
+              try {
+                const pid = JSON.parse(stateText).pid
+                if (Number.isInteger(pid) && pid > 0) {
+                  process.kill(pid, 0)
+                  reapedPid = pid
+                }
+              } catch { /* Only announce a confirmed live browser being stopped. */ }
+            }
           } catch {
             return // no state file → no browser → nothing to reap
           }
@@ -1049,7 +1091,14 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
             },
             graceMs: 8_000,
           })
-          handle.done.catch(() => null)
+          void handle.done.then(outcome => {
+            if (outcome.exitCode !== 0 || reapedPid === undefined || !tui.hasToast()) return
+            try { process.kill(reapedPid, 0) } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+                tui.toast('Agent Browser stopped after the idle timeout.', 'success')
+              }
+            }
+          }).catch(() => null)
         } catch {
           // never let the reaper throw
         }
@@ -1125,8 +1174,8 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
       // budget so it does not report "unavailable" merely because the backing
       // browser was still warming up.
       timeoutMs: 25_000,
-      execute: async () =>
-        withEgoLock(async () => {
+      execute: async (args: Record<string, unknown>) =>
+        withEgoLock(() => observeEgoTool(cfg, 'ego_status', args, async () => {
           try {
             const handle = ctx.subprocess.spawn({
               argv: [process.execPath, cfg.egoBin, '--status'],
@@ -1156,10 +1205,10 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
               error: describeSpawnFailure(err),
             }
           }
-        }),
-      presentCall: () => ({
+        })),
+      presentCall: (args: unknown) => ({
         card: 'generic',
-        title: 'ego_status',
+        title: toolCallTitle('ego_status', args),
         kind: 'other',
         rawInput: null,
       }),
@@ -1188,8 +1237,8 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
         render: renderText,
       },
       timeoutMs: 10_000,
-      execute: async () =>
-        withEgoLock(async () => {
+      execute: async (args: Record<string, unknown>) =>
+        withEgoLock(() => observeEgoTool(cfg, 'ego_auth_flush', args, async () => {
           try {
             const { readFile } = await import('node:fs/promises')
             // Mirror the ego-cast worker's state-dir discovery so the flush
@@ -1238,10 +1287,10 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
           } catch (err) {
             return { ok: false, error: String((err as Error)?.message || err) }
           }
-        }),
-      presentCall: () => ({
+        })),
+      presentCall: (args: unknown) => ({
         card: 'generic',
-        title: 'ego_auth_flush',
+        title: toolCallTitle('ego_auth_flush', args),
         kind: 'other',
         rawInput: null,
       }),
@@ -1369,7 +1418,7 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       },
       timeoutMs: 60_000,
       execute: async (args: Record<string, unknown>) =>
-        withEgoLock(async () => {
+        withEgoLock(() => observeEgoTool(cfg, 'ego_login_import', args, async () => {
           try {
             // Scoped #69 guard: only Windows + Chrome 155+ is refused (see
             // loginImportPolicy above).
@@ -1404,10 +1453,10 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           } catch (err) {
             return { ok: false, error: String((err as Error)?.message || err) }
           }
-        }),
-      presentCall: () => ({
+        })),
+      presentCall: (args: unknown) => ({
         card: 'generic',
-        title: 'ego_login_import',
+        title: toolCallTitle('ego_login_import', args),
         kind: 'other',
         rawInput: null,
       }),
@@ -2358,9 +2407,9 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             result: parsed ?? result.value ?? null,
           }
         },
-        presentCall: () => ({
+        presentCall: (args: unknown) => ({
           card: 'generic',
-          title: 'ego_cli',
+          title: toolCallTitle('ego_cli', args),
           kind: 'other',
           rawInput: null,
         }),
@@ -2395,7 +2444,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       },
       timeoutMs: 15_000,
       execute: async (args: Record<string, unknown>, exec: ToolExec) =>
-        withEgoLock(async () => {
+        withEgoLock(() => observeEgoTool(cfg, 'ego_captcha', args, async () => {
           markEgoToolCall(callingSessionId(exec))
           const result = await runWithStaleSpaceRetry(
             ctx,
@@ -2412,8 +2461,8 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
             detected: !!hc?.detected,
             kind: hc?.kind ?? null,
           }
-        }),
-      presentCall: () => ({ card: 'generic', title: 'ego_captcha', kind: 'other', rawInput: null }),
+        })),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_captcha', args), kind: 'other', rawInput: null }),
     } as unknown as DefineToolOpts),
   )
   reg(
@@ -2456,7 +2505,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
               : EGO_HELP_INDEX.overview)
         return { ok: true, topic: q || 'overview', text }
       },
-      presentCall: () => ({ card: 'generic', title: 'ego_help', kind: 'other', rawInput: null }),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_help', args), kind: 'other', rawInput: null }),
     } as unknown as DefineToolOpts),
   )
   reg(
@@ -2531,7 +2580,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         lines.push('npm/node: ' + process.version)
         return { ok: true, report: lines.join('\n') }
       },
-      presentCall: () => ({ card: 'generic', title: 'ego_doctor', kind: 'other', rawInput: null }),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_doctor', args), kind: 'other', rawInput: null }),
     } as unknown as DefineToolOpts),
   )
   reg(
@@ -2591,7 +2640,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
             timedOut: false,
           }
         },
-        presentCall: () => ({ card: 'generic', title: 'ego_script', kind: 'other', rawInput: null }),
+        presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_script', args), kind: 'other', rawInput: null }),
       } as unknown as DefineToolOpts)
       return def
     })(),
