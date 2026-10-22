@@ -48,6 +48,8 @@ export interface TuiPanelProps {
   readonly ui: {
     readonly Box: import('react').ElementType
     readonly Text: import('react').ElementType
+    /** dsh-tui-ref/src/ink/components/Image.tsx: pixels in source, cells in width/height. */
+    readonly Image: import('react').ElementType
   }
   readonly host: TuiPanelHost
   readonly width: number

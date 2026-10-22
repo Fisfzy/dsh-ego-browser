@@ -15,11 +15,12 @@ export interface BrowserSnapshot {
   readonly activeTool?: BrowserToolActivity
   readonly recent: readonly BrowserToolResult[]
   readonly browser?: { readonly running: boolean; readonly headless?: boolean }
+  readonly capture?: { readonly backend: string; readonly state: string; readonly code?: string }
   readonly spaces: readonly BrowserSpace[]
   readonly frameRelayDisabled: boolean
   readonly lastError?: string
 }
-type BrowserPatch = { -readonly [K in 'browser' | 'spaces' | 'frameRelayDisabled' | 'lastError']?: BrowserSnapshot[K] }
+type BrowserPatch = { -readonly [K in 'browser' | 'capture' | 'spaces' | 'frameRelayDisabled' | 'lastError']?: BrowserSnapshot[K] }
 
 /** Pure per-activation state: no process, filesystem, network or timer ownership. */
 export class BrowserStateStore {
@@ -59,6 +60,7 @@ export class BrowserStateStore {
   update(patch: BrowserPatch): void {
     const next: BrowserPatch = { ...patch }
     if (patch.browser) next.browser = Object.freeze({ ...patch.browser })
+    if (patch.capture) next.capture = Object.freeze({ ...patch.capture })
     if (patch.spaces) next.spaces = Object.freeze(patch.spaces.map(space => Object.freeze({ name: space.name,
       tabs: Object.freeze(space.tabs.map(tab => Object.freeze({ ...tab,
         ...(tab.humanCheck ? { humanCheck: Object.freeze({ ...tab.humanCheck }) } : {}) }))) })))

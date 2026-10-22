@@ -221,3 +221,15 @@ export async function readBrowserState(): Promise<BrowserProcessState> {
     return { running: false }
   }
 }
+
+/** Fetch one PNG without starting a worker or subscribing to its live stream. */
+export async function requestSnapshot(port: number, targetId: string, maxWidth: number): Promise<Uint8Array | null> {
+  try {
+    const query = new URLSearchParams({ targetId, maxWidth: String(maxWidth) })
+    const response = await fetch(`http://127.0.0.1:${port}/api/snapshot?${query}`, { signal: AbortSignal.timeout(15_000) })
+    if (!response.ok) return null
+    return new Uint8Array(await response.arrayBuffer())
+  } catch {
+    return null
+  }
+}

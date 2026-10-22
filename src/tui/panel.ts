@@ -1,6 +1,8 @@
 import type { EgoContext } from '../types.ts'
 import type { BrowserStateStore } from '../browser-state.ts'
 import { createPanelController, type PanelTransport } from './panel-controller.ts'
+import { createThumbnailController } from './thumbnail.ts'
+import { requestSnapshot } from '../worker-client.ts'
 import { hasHumanCheck, layoutPanel, panelTabs, rowTextProps } from './panel-layout.ts'
 import { truncateCells } from './text.ts'
 import type { TuiBridge } from './integration.ts'
@@ -24,7 +26,9 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
   ctx.inject?.(['tuiPanels'], pctx => {
     const panels = (pctx as EgoContext & { tuiPanels?: TuiPanelsService }).tuiPanels
     if (!panels) return
-    const controller = createPanelController(store, config, dependencies.createTransport())
+    const transport = dependencies.createTransport()
+    const controller = createPanelController(store, config, transport)
+    const thumbnail = createThumbnailController(store, config, { ensureWorker: transport.ensureWorker, requestSnapshot })
     let host: TuiPanelHost | undefined
     let disposed = false
     let firstTool = false
@@ -62,6 +66,7 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
       const { React, ui } = props
       const [snapshot, setSnapshot] = React.useState(store.getSnapshot)
       const [selected, setSelected] = React.useState(0)
+      const [preview, setPreview] = React.useState(thumbnail.getSnapshot)
       const [closeArmed, setCloseArmed] = React.useState<string | undefined>(undefined)
       const [message, setMessage] = React.useState('')
       const closing = React.useRef(false)
@@ -71,6 +76,11 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
         if (!props.visible) return
         setSnapshot(store.getSnapshot())
         return store.subscribe(() => setSnapshot(store.getSnapshot()))
+      }, [props.visible])
+      React.useEffect(() => {
+        if (!props.visible) return
+        setPreview(thumbnail.getSnapshot())
+        return thumbnail.subscribe(() => setPreview(thumbnail.getSnapshot()))
       }, [props.visible])
       React.useEffect(() => {
         host = props.host
@@ -83,6 +93,11 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
       const tabs = panelTabs(snapshot)
       const selection = Math.max(0, Math.min(selected, tabs.length - 1))
       const targetId = tabs[selection]?.targetId
+      const previewRows = Math.max(0, Math.min(6, Math.floor((props.height - 10) / 2)))
+      React.useEffect(() => {
+        thumbnail.setView(props.visible && previewRows > 0, targetId, props.width * 8)
+        return () => thumbnail.setView(false, targetId, props.width * 8)
+      }, [props.visible, targetId, props.width, previewRows, snapshot.frameRelayDisabled])
       React.useEffect(() => { setCloseArmed(undefined) }, [targetId, props.visible, props.focused])
       React.useEffect(() => {
         if (!props.visible || !props.focused) return
@@ -95,7 +110,7 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
             setCloseArmed(undefined)
             void dependencies.openAgentWindow().then(result => { if (!disposed && mounted.current && !result.ok) setMessage(result.error || 'Could not open browser window') }).catch(error => { if (!disposed && mounted.current) setMessage(String(error)) })
           }
-          else if (event.input === 'r') action = () => { setCloseArmed(undefined); void controller.refresh() }
+          else if (event.input === 'r') action = () => { setCloseArmed(undefined); void controller.refresh(); void thumbnail.refresh() }
           else if (event.input === 'f') action = () => { setCloseArmed(undefined); void controller.flush() }
           else if (event.input === 'x' && targetId) action = () => {
             if (closing.current) return
@@ -111,10 +126,11 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
           action()
         })
       }, [props.host, props.visible, props.focused, snapshot, selection, closeArmed, targetId])
-      const rows = layoutPanel(snapshot, props.width, props.height, selection)
+      const rows = layoutPanel(snapshot, props.width, props.height - previewRows, selection)
       if (closeArmed && rows.length) rows[rows.length - 1] = { text: truncateCells('Press x again to close this tab', props.width), tone: 'warning' }
       else if (message && rows.length) rows[rows.length - 1] = { text: truncateCells(message, props.width), tone: 'error' }
-      return React.createElement(ui.Box, { flexDirection: 'column', width: props.width, height: props.height }, ...rows.map((row, index) => React.createElement(ui.Text, { key: index, ...rowTextProps(row) }, row.text)))
+      const image = previewRows > 0 ? React.createElement(ui.Image, { source: snapshot.frameRelayDisabled ? undefined : preview.source, width: props.width, height: previewRows, alt: preview.alt, presentation: 'preview' }, React.createElement(ui.Text, { dimColor: true, wrap: 'truncate' }, truncateCells(preview.alt, props.width))) : null
+      return React.createElement(ui.Box, { flexDirection: 'column', width: props.width, height: props.height }, image, ...rows.map((row, index) => React.createElement(ui.Text, { key: index, ...rowTextProps(row) }, row.text)))
     }
     const unregister = panels.register({ apiVersion: 1, id: 'browser', title: 'Agent Browser', icon: '◎', minColumns: 28, component: BrowserPanel })
     // register prefixes the plugin id, while open/badge require that full owned id.
@@ -122,6 +138,7 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
     pctx.effect?.(() => () => {
       disposed = true
       controller.dispose()
+      thumbnail.dispose()
       unsubscribe()
       tui.setStatusOverride(undefined)
       if (typeof unregister === 'function') unregister()

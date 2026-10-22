@@ -9,6 +9,7 @@ import { WebSocket } from 'ws'
 import { CdpClient } from './cdp-client.ts'
 import { TargetSessions, CdpCaptureBackend } from './capture-cdp.ts'
 import { CaptureManager } from './capture-manager.ts'
+import { captureSnapshot } from './snapshot.ts'
 import { FfmpegCaptureBackend } from './capture-ffmpeg.ts'
 
 const SENTINEL = '@@DSH_RESULT@@'
@@ -367,6 +368,18 @@ async function main(): Promise<void> {
     try {
       if (req.method === 'GET' && url.pathname === '/api/health') return sendJson(res, 200, { workerOk: true, browserConnected: !!active, capture: manager.status() })
       if (req.method === 'GET' && url.pathname === '/api/spaces') return sendJson(res, 200, { ok: true, spaces: active ? await snapshotSpaces() : [], capture: manager.status() })
+      if (req.method === 'GET' && url.pathname === '/api/snapshot') {
+        const browser = active
+        if (!browser) return sendJson(res, 409, { ok: false, error: 'no live browser' })
+        const maxWidth = Number(url.searchParams.get('maxWidth') ?? 320)
+        if (!Number.isInteger(maxWidth) || maxWidth < 1 || maxWidth > 1920) return sendJson(res, 400, { ok: false, error: 'maxWidth must be an integer from 1 to 1920' })
+        const targets = await listTargets()
+        const targetId = url.searchParams.get('targetId') || await activeTargetId() || targets[0]?.targetId
+        if (!targetId || !targets.some((target) => target.targetId === targetId)) return sendJson(res, 409, { ok: false, error: 'target is no longer available' })
+        const png = await captureSnapshot(browser.sessions, targetId, maxWidth)
+        res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'no-store' })
+        return res.end(png)
+      }
       if (req.method === 'GET' && url.pathname === '/api/watch/status') return sendJson(res, 200, { ok: true, ...manager.status() })
       if (req.method === 'GET' && url.pathname === '/api/video/status') return sendJson(res, 200, { ok: true, ...manager.status(), mime: videoInit?.mime || null })
       if (req.method === 'POST' && url.pathname === '/api/config') { castConfig = normalizeConfig(await readJson(req)); await manager.updateConfig(); return sendJson(res, 200, { ok: true, config: castConfig }) }
