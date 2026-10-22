@@ -10,7 +10,7 @@ export interface CaptureStatus {
 }
 
 export interface CaptureBackend {
-  start(opts: { targetId: string; generation: number }): Promise<void>
+  start(opts: { targetId: string; generation: number; maxWidth?: number }): Promise<void>
   stop(reason: string): Promise<void>
   dispose?(): void | Promise<void>
 }
@@ -25,6 +25,7 @@ interface Lease {
   backend: string
   targetId: string
   expiresAt: number
+  maxWidth?: number
 }
 
 export interface CaptureManagerOptions {
@@ -83,27 +84,28 @@ export class CaptureManager {
     return value === 'auto' ? 'cdp' : value
   }
 
-  async startWatch({ clientId, backend, targetId }: { clientId: string; backend?: string; targetId: string }): Promise<Record<string, unknown>> {
+  async startWatch({ clientId, backend, targetId, maxWidth }: { clientId: string; backend?: string; targetId: string; maxWidth?: number }): Promise<Record<string, unknown>> {
     if (!clientId || !targetId) throw new Error('clientId and targetId are required')
     this.clearTimer(this.stopTimer!)
     this.stopTimer = null
     const requestedBackend = backend || this.getConfig().captureBackend
     const existing = this.leases.get(clientId)
-    this.leases.set(clientId, { clientId, backend: requestedBackend, targetId, expiresAt: this.now() + this.leaseTtlMs })
+    this.leases.set(clientId, { clientId, backend: requestedBackend, targetId, expiresAt: this.now() + this.leaseTtlMs, ...(maxWidth && maxWidth > 0 ? { maxWidth } : {}) })
     if (existing && existing.backend === requestedBackend && existing.targetId === targetId) {
       const resolved = this.#resolvedBackend(requestedBackend)
       if (this.targetId !== targetId || (this.backendName && this.backendName !== resolved)) return this.status()
       if (this.backend && this.backendName === resolved) return this.status()
     }
-    return this.#enqueue(async () => { await this.#activate(this.#resolvedBackend(backend), targetId); return this.status() })
+    return this.#enqueue(async () => { await this.#activate(this.#resolvedBackend(backend), targetId, false, maxWidth); return this.status() })
   }
 
-  async switchWatch({ clientId, targetId }: { clientId: string; targetId: string }): Promise<Record<string, unknown>> {
+  async switchWatch({ clientId, targetId, maxWidth }: { clientId: string; targetId: string; maxWidth?: number }): Promise<Record<string, unknown>> {
     const lease = this.leases.get(clientId)
     if (!lease) throw new Error('watch lease not found')
     lease.targetId = targetId
     lease.expiresAt = this.now() + this.leaseTtlMs
-    return this.#enqueue(async () => { await this.#activate(this.#resolvedBackend(lease.backend), targetId); return this.status() })
+    if (maxWidth && maxWidth > 0) lease.maxWidth = maxWidth
+    return this.#enqueue(async () => { await this.#activate(this.#resolvedBackend(lease.backend), targetId, false, maxWidth ?? lease.maxWidth); return this.status() })
   }
 
   async stopWatch({ clientId }: { clientId: string }): Promise<Record<string, unknown>> {
@@ -143,7 +145,7 @@ export class CaptureManager {
     if (lease) return this.#enqueue(() => this.#activate(this.#resolvedBackend(lease.backend), lease.targetId))
   }
 
-  async #activate(backendName: string, targetId: string, force = false): Promise<void> {
+  async #activate(backendName: string, targetId: string, force = false, maxWidth?: number): Promise<void> {
     if (!force && this.backend && this.backendName === backendName && this.targetId === targetId) return
     await this.#stopBackend('backend-change')
     const factory = this.backendFactories[backendName]
@@ -151,7 +153,7 @@ export class CaptureManager {
       const message = `${backendName} backend is unavailable`
       this.#setStatus({ backend: backendName, state: 'failed', targetId, code: 'capture-backend-unavailable', message })
       if (backendName === 'ffmpeg' && this.backendFactories.cdp) {
-        await this.#activate('cdp', targetId, true)
+        await this.#activate('cdp', targetId, true, maxWidth)
         if (this.backend && this.backendName === 'cdp') this.#setStatus({ backend: 'cdp', code: 'ffmpeg-fallback-cdp', message: `FFmpeg unavailable; using CDP: ${message}` })
       }
       return
@@ -169,7 +171,7 @@ export class CaptureManager {
         this.#setStatus({ ...status, generation })
       } })
       this.backend = candidate
-      await candidate.start({ targetId, generation })
+      await candidate.start({ targetId, generation, ...(maxWidth && maxWidth > 0 ? { maxWidth } : {}) })
     } catch (error) {
       const e = error as Error & { code?: string }
       const failed = this.backend
@@ -184,7 +186,7 @@ export class CaptureManager {
       }
       this.#setStatus({ backend: backendName, state: 'failed', targetId, generation: this.generation, code: e.code, message: e.message })
       if (backendName === 'ffmpeg' && this.backendFactories.cdp) {
-        await this.#activate('cdp', targetId, true)
+        await this.#activate('cdp', targetId, true, maxWidth)
         if (this.backend && this.backendName === 'cdp') this.#setStatus({ backend: 'cdp', code: 'ffmpeg-fallback-cdp', message: `FFmpeg unavailable; using CDP: ${e.message}` })
       }
     }

@@ -3873,15 +3873,17 @@ var CdpCaptureBackend = class {
 			})).catch(() => {});
 		});
 	}
-	async start({ targetId }) {
+	async start({ targetId, maxWidth }) {
 		await this.stop("restart");
 		const session = await this.sessions.ensure(targetId);
 		const config = this.getConfig();
+		const effectiveMaxWidth = Math.max(320, Math.min(config.cdpMaxWidth, maxWidth && maxWidth > 0 ? Math.round(maxWidth) : config.cdpMaxWidth));
 		this.current = {
 			targetId,
 			sessionId: session.sessionId,
 			lastFrameAt: 0,
-			startedAt: this.now()
+			startedAt: this.now(),
+			maxWidth: effectiveMaxWidth
 		};
 		this.onStatus({
 			backend: "cdp",
@@ -3892,8 +3894,8 @@ var CdpCaptureBackend = class {
 			await this.cdp.call("Page.startScreencast", {
 				format: "jpeg",
 				quality: config.cdpQuality,
-				maxWidth: config.cdpMaxWidth,
-				everyNthFrame: 1
+				maxWidth: effectiveMaxWidth,
+				everyNthFrame: Math.max(1, Math.min(8, Math.round(60 / Math.max(1, config.cdpFps))))
 			}, session.sessionId);
 			this.onStatus({
 				backend: "cdp",
@@ -3914,16 +3916,22 @@ var CdpCaptureBackend = class {
 			throw error;
 		}
 	}
-	async switchTarget({ targetId }) {
+	async switchTarget({ targetId, maxWidth }) {
 		this.onStatus({
 			backend: "cdp",
 			state: "switching",
 			targetId
 		});
-		await this.start({ targetId });
+		await this.start({
+			targetId,
+			maxWidth
+		});
 	}
 	async updateConfig() {
-		if (this.current) await this.start({ targetId: this.current.targetId });
+		if (this.current) await this.start({
+			targetId: this.current.targetId,
+			maxWidth: this.current.maxWidth
+		});
 	}
 	async stop(reason = "stopped") {
 		this.clearTimer(this.sendTimer);
@@ -4012,7 +4020,8 @@ var CdpCaptureBackend = class {
 			if (!current) return;
 			if (this.now() - current.lastFrameAt >= interval) try {
 				const session = await this.sessions.updateViewport(current.targetId);
-				const scale = session.viewportW > this.getConfig().cdpMaxWidth ? this.getConfig().cdpMaxWidth / session.viewportW : 1;
+				const maxWidth = this.current?.maxWidth ?? this.getConfig().cdpMaxWidth;
+				const scale = session.viewportW > maxWidth ? maxWidth / session.viewportW : 1;
 				const result = await this.cdp.call("Page.captureScreenshot", {
 					format: "jpeg",
 					quality: this.getConfig().cdpQuality,
@@ -4091,7 +4100,7 @@ var CaptureManager = class {
 		const value = requested || this.getConfig().captureBackend;
 		return value === "auto" ? "cdp" : value;
 	}
-	async startWatch({ clientId, backend, targetId }) {
+	async startWatch({ clientId, backend, targetId, maxWidth }) {
 		if (!clientId || !targetId) throw new Error("clientId and targetId are required");
 		this.clearTimer(this.stopTimer);
 		this.stopTimer = null;
@@ -4101,7 +4110,8 @@ var CaptureManager = class {
 			clientId,
 			backend: requestedBackend,
 			targetId,
-			expiresAt: this.now() + this.leaseTtlMs
+			expiresAt: this.now() + this.leaseTtlMs,
+			...maxWidth && maxWidth > 0 ? { maxWidth } : {}
 		});
 		if (existing && existing.backend === requestedBackend && existing.targetId === targetId) {
 			const resolved = this.#resolvedBackend(requestedBackend);
@@ -4109,17 +4119,18 @@ var CaptureManager = class {
 			if (this.backend && this.backendName === resolved) return this.status();
 		}
 		return this.#enqueue(async () => {
-			await this.#activate(this.#resolvedBackend(backend), targetId);
+			await this.#activate(this.#resolvedBackend(backend), targetId, false, maxWidth);
 			return this.status();
 		});
 	}
-	async switchWatch({ clientId, targetId }) {
+	async switchWatch({ clientId, targetId, maxWidth }) {
 		const lease = this.leases.get(clientId);
 		if (!lease) throw new Error("watch lease not found");
 		lease.targetId = targetId;
 		lease.expiresAt = this.now() + this.leaseTtlMs;
+		if (maxWidth && maxWidth > 0) lease.maxWidth = maxWidth;
 		return this.#enqueue(async () => {
-			await this.#activate(this.#resolvedBackend(lease.backend), targetId);
+			await this.#activate(this.#resolvedBackend(lease.backend), targetId, false, maxWidth ?? lease.maxWidth);
 			return this.status();
 		});
 	}
@@ -4164,7 +4175,7 @@ var CaptureManager = class {
 		const lease = [...this.leases.values()].sort((a, b) => b.expiresAt - a.expiresAt)[0];
 		if (lease) return this.#enqueue(() => this.#activate(this.#resolvedBackend(lease.backend), lease.targetId));
 	}
-	async #activate(backendName, targetId, force = false) {
+	async #activate(backendName, targetId, force = false, maxWidth) {
 		if (!force && this.backend && this.backendName === backendName && this.targetId === targetId) return;
 		await this.#stopBackend("backend-change");
 		const factory = this.backendFactories[backendName];
@@ -4178,7 +4189,7 @@ var CaptureManager = class {
 				message
 			});
 			if (backendName === "ffmpeg" && this.backendFactories.cdp) {
-				await this.#activate("cdp", targetId, true);
+				await this.#activate("cdp", targetId, true, maxWidth);
 				if (this.backend && this.backendName === "cdp") this.#setStatus({
 					backend: "cdp",
 					code: "ffmpeg-fallback-cdp",
@@ -4215,7 +4226,8 @@ var CaptureManager = class {
 			this.backend = candidate;
 			await candidate.start({
 				targetId,
-				generation
+				generation,
+				...maxWidth && maxWidth > 0 ? { maxWidth } : {}
 			});
 		} catch (error) {
 			const e = error;
@@ -4234,7 +4246,7 @@ var CaptureManager = class {
 				message: e.message
 			});
 			if (backendName === "ffmpeg" && this.backendFactories.cdp) {
-				await this.#activate("cdp", targetId, true);
+				await this.#activate("cdp", targetId, true, maxWidth);
 				if (this.backend && this.backendName === "cdp") this.#setStatus({
 					backend: "cdp",
 					code: "ffmpeg-fallback-cdp",

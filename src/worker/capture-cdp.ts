@@ -130,6 +130,8 @@ interface CurrentCapture {
   sessionId: string
   lastFrameAt: number
   startedAt: number
+  /** Effective screencast width for this capture (panel-sized, capped by config). */
+  maxWidth: number
 }
 
 export interface CdpCaptureBackendOptions {
@@ -185,18 +187,26 @@ export class CdpCaptureBackend {
     })
   }
 
-  async start({ targetId }: { targetId: string }): Promise<void> {
+  async start({ targetId, maxWidth }: { targetId: string; maxWidth?: number }): Promise<void> {
     await this.stop('restart')
     const session = await this.sessions.ensure(targetId)
     const config = this.getConfig()
-    this.current = { targetId, sessionId: session.sessionId, lastFrameAt: 0, startedAt: this.now() }
+    // The panel asks for roughly its own display width; never exceed the
+    // configured ceiling (users who want full 1280 keep it via settings).
+    const effectiveMaxWidth = Math.max(320, Math.min(config.cdpMaxWidth, maxWidth && maxWidth > 0 ? Math.round(maxWidth) : config.cdpMaxWidth))
+    this.current = { targetId, sessionId: session.sessionId, lastFrameAt: 0, startedAt: this.now(), maxWidth: effectiveMaxWidth }
     this.onStatus({ backend: 'cdp', state: 'starting', targetId })
     try {
       await this.cdp.call('Page.startScreencast', {
         format: 'jpeg',
         quality: config.cdpQuality,
-        maxWidth: config.cdpMaxWidth,
-        everyNthFrame: 1,
+        maxWidth: effectiveMaxWidth,
+        // Chrome encodes every presented frame by default (~100/s on an
+        // animated page) while the panel forwards cdpFps. Ask Chrome to skip
+        // frames at the source: a 60 Hz compositor with everyNthFrame=3 emits
+        // ~20 fps, which matches the panel rate without the encoder doing 5x
+        // the work.
+        everyNthFrame: Math.max(1, Math.min(8, Math.round(60 / Math.max(1, config.cdpFps)))),
       }, session.sessionId)
       this.onStatus({ backend: 'cdp', state: 'streaming', targetId, metrics: this.metrics })
       this.#scheduleBackstop()
@@ -207,13 +217,13 @@ export class CdpCaptureBackend {
     }
   }
 
-  async switchTarget({ targetId }: { targetId: string }): Promise<void> {
+  async switchTarget({ targetId, maxWidth }: { targetId: string; maxWidth?: number }): Promise<void> {
     this.onStatus({ backend: 'cdp', state: 'switching', targetId })
-    await this.start({ targetId })
+    await this.start({ targetId, maxWidth })
   }
 
   async updateConfig(): Promise<void> {
-    if (this.current) await this.start({ targetId: this.current.targetId })
+    if (this.current) await this.start({ targetId: this.current.targetId, maxWidth: this.current.maxWidth })
   }
 
   async stop(reason = 'stopped'): Promise<void> {
@@ -296,7 +306,8 @@ export class CdpCaptureBackend {
       if (this.now() - current.lastFrameAt >= interval) {
         try {
           const session = await this.sessions.updateViewport(current.targetId)
-          const scale = session.viewportW! > this.getConfig().cdpMaxWidth ? this.getConfig().cdpMaxWidth / session.viewportW! : 1
+          const maxWidth = this.current?.maxWidth ?? this.getConfig().cdpMaxWidth
+          const scale = session.viewportW! > maxWidth ? maxWidth / session.viewportW! : 1
           const result = await this.cdp.call('Page.captureScreenshot', {
             format: 'jpeg',
             quality: this.getConfig().cdpQuality,

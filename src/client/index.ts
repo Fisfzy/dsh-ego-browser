@@ -1883,6 +1883,14 @@ declare function require(id: string): any
 					captureBackend = nextBackend; streamGeneration = nextGeneration; streamState = nextState; streamMessage = status.message || status.code || ''; streamMime = nextMime
 					if (changed) { stopVideo(); const current = lastList.find((s) => s.targetId === (selectedTabId || currentActiveId)); if (current) renderLiveMain(current, selectedTabId !== null) }
 				}
+				// Panel size → screencast width: capturing at the configured 1280
+				// for a ~550 px floating panel wasted most of Chrome's encoder.
+				const desiredMaxWidth = () => {
+					const el = liveImg || document.querySelector('.dsh-ego-side-liveview')
+					const w = (el && el.clientWidth) || (panel && panel.clientWidth) || 800
+					const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+					return Math.max(480, Math.min(1280, Math.round(w * dpr * 1.15)))
+				}
 				const requestWatch = (route, body) => {
 					if (watchRequest) return null
 					watchRequest = postJson(route, body).finally(() => { watchRequest = null })
@@ -1892,10 +1900,10 @@ declare function require(id: string): any
 					if (disposed || !effectiveVisible() || !targetId) return
 					if (watchStopTimer) { window.clearTimeout(watchStopTimer); watchStopTimer = null }
 					if (watchStarted && watchTargetId === targetId) return
-					const request = requestWatch(watchStarted ? WATCH_SWITCH_ROUTE : WATCH_START_ROUTE, { clientId: watchClientId, targetId })
+					const request = requestWatch(watchStarted ? WATCH_SWITCH_ROUTE : WATCH_START_ROUTE, { clientId: watchClientId, targetId, maxWidth: desiredMaxWidth() })
 					if (!request) { watchRequest.finally(() => syncWatch(targetId)); return }
 					request.then((status) => { watchStarted = status && status.ok !== false; watchTargetId = status?.targetId || targetId; if (watchTargetId !== targetId) { selectedTabId = null; currentActiveId = watchTargetId }; applyCaptureStatus(status); if (!effectiveVisible()) stopWatch(true) }).catch(() => {})
-					if (!watchRenewTimer) watchRenewTimer = window.setInterval(() => { if (effectiveVisible() && watchTargetId) { const renewal = requestWatch(WATCH_START_ROUTE, { clientId: watchClientId, targetId: watchTargetId }); if (renewal) renewal.then(applyCaptureStatus).catch(() => {}) } }, 5000)
+					if (!watchRenewTimer) watchRenewTimer = window.setInterval(() => { if (effectiveVisible() && watchTargetId) { const renewal = requestWatch(WATCH_START_ROUTE, { clientId: watchClientId, targetId: watchTargetId, maxWidth: desiredMaxWidth() }); if (renewal) renewal.then(applyCaptureStatus).catch(() => {}) } }, 5000)
 				}
 				const stopWatch = (immediate) => {
 					if (watchRenewTimer) { window.clearInterval(watchRenewTimer); watchRenewTimer = null }
@@ -3006,6 +3014,11 @@ clearTimeout((panel as any)._dshHideT)
 			this.disposed = false
 			this.visible = false
 			this.clientId = 'sidebar-' + Math.random().toString(36).slice(2)
+			// Desired screencast width, set by the panel from its real display
+			// width (× devicePixelRatio). Capturing at 1280 for a ~550 px panel
+			// made Chrome encode, ship and decode ~5x the pixels the user can
+			// actually see; the worker caps this against the configured max.
+			this.maxWidthHint = 800
 			this.watchStarted = false
 			this.watchTargetId = null
 			this.watchRenewTimer = null
@@ -3218,7 +3231,7 @@ clearTimeout((panel as any)._dshHideT)
 			if (this.watchStopTimer) { window.clearTimeout(this.watchStopTimer); this.watchStopTimer = null }
 			var route = this.watchStarted ? WATCH_SWITCH_ROUTE : WATCH_START_ROUTE
 			if (this.watchStarted && this.watchTargetId === targetId) return
-			var body = { clientId: this.clientId, targetId: targetId }
+			var body = { clientId: this.clientId, targetId: targetId, maxWidth: this.maxWidthHint }
 			var request = this._requestWatch(route, body)
 			if (!request) { this.watchRequest.finally(function () { self._syncWatch(targetId) }); return }
 			request.then(function (status) {
@@ -3229,7 +3242,7 @@ clearTimeout((panel as any)._dshHideT)
 				if (!self.visible) self._stopWatch(true)
 			}).catch(function () {})
 			if (!this.watchRenewTimer) this.watchRenewTimer = window.setInterval(function () {
-				if (self.visible && self.watchTargetId) { var renewal = self._requestWatch(WATCH_START_ROUTE, { clientId: self.clientId, targetId: self.watchTargetId }); if (renewal) renewal.then(function (status) { self._applyCaptureStatus(status) }).catch(function () {}) }
+				if (self.visible && self.watchTargetId) { var renewal = self._requestWatch(WATCH_START_ROUTE, { clientId: self.clientId, targetId: self.watchTargetId, maxWidth: self.maxWidthHint }); if (renewal) renewal.then(function (status) { self._applyCaptureStatus(status) }).catch(function () {}) }
 			}, 5000)
 		}
 		LivePreviewController.prototype._stopWatch = function (immediate) {
@@ -3696,6 +3709,7 @@ clearTimeout((panel as any)._dshHideT)
 
 			var imgRef = React.useRef(null)
 			var videoRef = React.useRef(null)
+			var rootRef = React.useRef(null)
 			// Size-sync toggle: unlocked, the live image box drives the REAL agent
 			// browser window size (via the worker's CDP window bounds route).
 			var sizeSyncRef = React.useRef(null)
@@ -3850,6 +3864,15 @@ clearTimeout((panel as any)._dshHideT)
 				if (!visible) sizeSync.attach(null)
 				else sizeSync.attach(imgRef.current || videoRef.current)
 			}, [visible, sizeSync, state.currentTargetId, state.streamGeneration])
+
+			// Tell the worker how wide the screencast should be: capturing at the
+			// configured 1280 for a ~550 px panel wasted most of Chrome's encoder.
+			React.useEffect(function () {
+				var root = rootRef.current
+				if (!root || !controller) return
+				var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+				controller.maxWidthHint = Math.max(480, Math.min(1280, Math.round(root.clientWidth * dpr * 1.15)))
+			}, [visible, controller])
 
 			React.useEffect(function () {
 				return function () { sizeSync.dispose() }
@@ -4071,7 +4094,7 @@ clearTimeout((panel as any)._dshHideT)
 				)
 			}
 
-			return h('div', { className: 'dsh-ego-side-root' }, header, guides, tabsEl, body)
+			return h('div', { className: 'dsh-ego-side-root', ref: rootRef }, header, guides, tabsEl, body)
 		}
 
 		function EgoLoginGuide(props) {

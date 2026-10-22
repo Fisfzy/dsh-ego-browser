@@ -486,8 +486,8 @@ async function main(): Promise<void> {
       if (req.method === 'GET' && url.pathname === '/api/watch/status') return sendJson(res, 200, { ok: true, ...manager.status() })
       if (req.method === 'GET' && url.pathname === '/api/video/status') return sendJson(res, 200, { ok: true, ...manager.status(), mime: videoInit?.mime || null })
       if (req.method === 'POST' && url.pathname === '/api/config') { castConfig = normalizeConfig(await readJson(req)); await manager.updateConfig(); return sendJson(res, 200, { ok: true, config: castConfig }) }
-      if (req.method === 'POST' && url.pathname === '/api/watch/start') { if (!active) return sendJson(res, 409, { ok: false, error: 'no live browser' }); return sendJson(res, 200, { ok: true, ...await manager.startWatch(await readJson(req) as { clientId: string; targetId: string }) }) }
-      if (req.method === 'POST' && url.pathname === '/api/watch/switch') return sendJson(res, 200, { ok: true, ...await manager.switchWatch(await readJson(req) as { clientId: string; targetId: string }) })
+      if (req.method === 'POST' && url.pathname === '/api/watch/start') { if (!active) return sendJson(res, 409, { ok: false, error: 'no live browser' }); return sendJson(res, 200, { ok: true, ...await manager.startWatch(await readJson(req) as { clientId: string; targetId: string; backend?: string; maxWidth?: number }) }) }
+      if (req.method === 'POST' && url.pathname === '/api/watch/switch') return sendJson(res, 200, { ok: true, ...await manager.switchWatch(await readJson(req) as { clientId: string; targetId: string; maxWidth?: number }) })
       if (req.method === 'POST' && url.pathname === '/api/watch/stop') return sendJson(res, 200, { ok: true, ...await manager.stopWatch(await readJson(req) as { clientId: string }) })
       if (req.method === 'POST' && url.pathname === '/api/input') {
         const body = await readJson(req)
