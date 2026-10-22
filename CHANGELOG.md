@@ -14,6 +14,8 @@
 ### 修复
 - **重启后观察窗卡在「⚠ 未接管 / 暂无截图」**：如果面板在浏览器/worker 还没起来时打开，host 的 `/api/ego/stream` 当时只能建一条静默 SSE，并且之后永远不会再接上 worker——即使浏览器后来启动了、worker 也在推帧，面板也收不到任何 `frame` / `spaces` 事件。现在这条流会每 1.5 秒重试 `ensureWorker()`，worker 一出现就自动接上（新增单测覆盖"worker 晚于 SSE 出现"的情况）。
 - **画面边缘的红/橙色条**：边缘拖拽热区原来常显高亮条，看起来像画面多了一圈红边。现在热区默认完全透明，只在鼠标悬停时低调显示；解锁尺寸同步时仅保留极淡的提示色。
+- **调整窗口后点击位置偏移**：screencast 帧携带的 `vw/vh` 视口元数据不会在每次窗口变化后更新（实测窗口已缩到 900×573 时帧仍标注 1264×805），面板按旧视口换算点击坐标导致落点偏移。现在：capture 每秒用 `Page.getLayoutMetrics` 同步真实视口；`/api/ego/window-size` 应用新尺寸后 160ms 内刷新会话视口；客户端收到 resize 响应立即用返回的 `viewport` 更新坐标映射。验证：窗口缩放到 900×573 后点击面板 60%/40% 位置，页面收到的坐标与预期一致（540,229）。
+- **拖动边缘缩放卡顿**：`/api/ego/window-size` 原来每一步都重新 getWindowForTarget + getWindowBounds + 测量 chrome 边框 + 测量视口 + setWindowBounds（约 5 次 CDP 往返）。现在缓存 windowId / chrome 边框 / 窗口位置与视口（10s / 2s 过期），每步只需 1 次 setWindowBounds；实测单步延迟 avg 22ms（10–47ms）。
 
 ### 性能
 - **观察窗串流 CPU 大幅下降**：两处结构性优化，帧率与功能不变。

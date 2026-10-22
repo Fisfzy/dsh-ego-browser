@@ -3477,6 +3477,15 @@ clearTimeout((panel as any)._dshHideT)
 				}
 			}).catch(function () {})
 		}
+		// A window resize answers with the exact new page viewport. Record it
+		// immediately: the frame metadata that feeds click mapping arrives a
+		// fraction later, and clicks in between would land at the old position.
+		LivePreviewController.prototype.noteViewport = function (targetId, width, height) {
+			if (!targetId || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+			var prev = this.pageMeta.get(targetId) || { targetId: targetId }
+			this.pageMeta.set(targetId, Object.assign({}, prev, { vw: Math.round(width), vh: Math.round(height) }))
+			this._recompute()
+		}
 		LivePreviewController.prototype.browserXY = function (e) {
 			if (this.liveImgTargetId == null || !this.liveImg) return null
 			var m = this.pageMeta.get(this.liveImgTargetId)
@@ -3753,6 +3762,9 @@ clearTimeout((panel as any)._dshHideT)
 				}).then(function (r) {
 					return r.json().catch(function () { return null }).then(function (parsed) {
 						noteSizeResult(r.status, parsed)
+						if (parsed && parsed.ok === true && parsed.viewport && controller.liveImgTargetId) {
+							controller.noteViewport(controller.liveImgTargetId, parsed.viewport.width, parsed.viewport.height)
+						}
 						return parsed
 					})
 				}).catch(function () { return null })
@@ -3793,6 +3805,9 @@ clearTimeout((panel as any)._dshHideT)
 						}).then(function (r) {
 							return r.json().catch(function () { return null }).then(function (parsed) {
 								noteSizeResult(r.status, parsed)
+								if (parsed && parsed.ok === true && parsed.viewport && controller.liveImgTargetId) {
+									controller.noteViewport(controller.liveImgTargetId, parsed.viewport.width, parsed.viewport.height)
+								}
 								return parsed
 							})
 						}).catch(function () { return null })

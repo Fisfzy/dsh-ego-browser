@@ -158,6 +158,13 @@ export class CdpCaptureBackend {
   pendingFrame: JpegFrame | null
   sendTimer: NodeJS.Timeout | null
   backstopTimer: NodeJS.Timeout | null
+  /**
+   * Screencast metadata only carries a fresh viewport size when Chrome decides
+   * to include it; after a programmatic window resize the frames kept reporting
+   * the old width/height, so panel clicks were mapped into a stale coordinate
+   * space. Refresh the real viewport on a slow cadence while streaming.
+   */
+  viewportTimer: NodeJS.Timeout | null
   lastSentAt: number
   metrics: { sourceFrames: number; sentFrames: number; droppedFrames: number; ackErrors: number }
   offFrame: (() => void) | null
@@ -176,6 +183,7 @@ export class CdpCaptureBackend {
     this.pendingFrame = null
     this.sendTimer = null
     this.backstopTimer = null
+    this.viewportTimer = null
     this.lastSentAt = 0
     this.metrics = { sourceFrames: 0, sentFrames: 0, droppedFrames: 0, ackErrors: 0 }
     this.offFrame = cdp.on('Page.screencastFrame', (params: unknown, targetSessionId?: string) => this.#onFrame(params as Record<string, unknown>, targetSessionId))
@@ -210,6 +218,7 @@ export class CdpCaptureBackend {
       }, session.sessionId)
       this.onStatus({ backend: 'cdp', state: 'streaming', targetId, metrics: this.metrics })
       this.#scheduleBackstop()
+      this.#scheduleViewportSync()
     } catch (error) {
       this.current = null
       this.onStatus({ backend: 'cdp', state: 'failed', targetId, code: 'cdp-start-failed', message: (error as Error).message })
@@ -229,8 +238,10 @@ export class CdpCaptureBackend {
   async stop(reason = 'stopped'): Promise<void> {
     this.clearTimer(this.sendTimer!)
     this.clearTimer(this.backstopTimer!)
+    this.clearTimer(this.viewportTimer!)
     this.sendTimer = null
     this.backstopTimer = null
+    this.viewportTimer = null
     this.pendingFrame = null
     const current = this.current
     this.current = null
@@ -247,6 +258,8 @@ export class CdpCaptureBackend {
   }
 
   dispose(): void {
+    if (this.viewportTimer) this.clearTimer(this.viewportTimer)
+    this.viewportTimer = null
     this.offFrame?.()
     this.offFrame = null
     this.offDestroyed?.()
@@ -297,8 +310,28 @@ export class CdpCaptureBackend {
     this.onJpegFrame(frame)
   }
 
-  #scheduleBackstop(): void {
-    this.clearTimer(this.backstopTimer!)
+  /**
+   * Keep the session's viewport size in sync with the real page. Chrome does
+   * not reliably attach fresh viewport metadata to every screencast frame, and
+   * the window-size route resizes the window directly; without this poll the
+   * frames kept advertising the pre-resize viewport and panel input was mapped
+   * to the wrong coordinates.
+   */
+  #scheduleViewportSync(): void {
+    if (this.viewportTimer) this.clearTimer(this.viewportTimer)
+    this.viewportTimer = this.setTimer(async () => {
+      const current = this.current
+      if (!current) return
+      try {
+        await this.sessions.updateViewport(current.targetId)
+      } catch {
+        /* ignore */
+      }
+      if (this.current === current) this.#scheduleViewportSync()
+    }, 1000)
+  }
+
+  #scheduleBackstop(): void {    this.clearTimer(this.backstopTimer!)
     const interval = this.getConfig().cdpBackstopIntervalMs
     this.backstopTimer = this.setTimer(async () => {
       const current = this.current

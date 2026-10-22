@@ -408,6 +408,26 @@ async function measureViewport(browser: ActiveBrowser, targetId: string): Promis
   return null
 }
 
+interface WindowSizeCacheEntry {
+  windowId: number
+  chromeFrame: { width: number; height: number }
+  viewport: { width: number; height: number }
+  left: number
+  top: number
+  measuredAt: number
+  viewportAt: number
+}
+
+/**
+ * The panel's resize handles fire several requests per second while dragging.
+ * Measuring the window, Chrome's frame and the page viewport on every one of
+ * them meant ~5 CDP round-trips per step and made the drag stutter. Cache the
+ * expensive parts; the cached viewport is maintained by our own resizes and
+ * re-read from the session every couple of seconds.
+ */
+const windowSizeCache = new Map<string, WindowSizeCacheEntry>()
+const windowSizeViewportRefresh = new Map<string, ReturnType<typeof setTimeout>>()
+
 async function main(): Promise<void> {
   stopSiblingWorkers()
   rmSync(CAST_STATE_FILE, { force: true })
@@ -450,15 +470,41 @@ async function main(): Promise<void> {
         const targetId = typeof body.targetId === 'string' && body.targetId ? body.targetId : await activeTargetId()
         if (!targetId) return sendJson(res, 409, { ok: false, error: 'no active target' })
         try {
-          const { windowId } = await browser.cdp.call('Browser.getWindowForTarget', { targetId }) as { windowId?: number }
-          if (typeof windowId !== 'number') {
-            return sendJson(res, 409, { ok: false, code: 'headless', error: 'the browser has no window (headless); use the pop-out button first' })
+          const now = Date.now()
+          let cache = windowSizeCache.get(targetId)
+          if (!cache || now - cache.measuredAt > 10000) {
+            const { windowId } = await browser.cdp.call('Browser.getWindowForTarget', { targetId }) as { windowId?: number }
+            if (typeof windowId !== 'number') {
+              return sendJson(res, 409, { ok: false, code: 'headless', error: 'the browser has no window (headless); use the pop-out button first' })
+            }
+            const current = await browser.cdp.call('Browser.getWindowBounds', { windowId }) as { bounds?: { left?: number; top?: number; width?: number; height?: number } }
+            const chromeFrame = await measureChromeFrame(browser, targetId)
+            const measured = await measureViewport(browser, targetId)
+            const bounds = current?.bounds ?? {}
+            cache = {
+              windowId,
+              chromeFrame,
+              viewport: measured ?? {
+                width: Math.max(0, (bounds.width ?? 0) - chromeFrame.width),
+                height: Math.max(0, (bounds.height ?? 0) - chromeFrame.height),
+              },
+              left: typeof bounds.left === 'number' ? bounds.left : 0,
+              top: typeof bounds.top === 'number' ? bounds.top : 0,
+              measuredAt: now,
+              viewportAt: now,
+            }
+            windowSizeCache.set(targetId, cache)
+          } else if (now - cache.viewportAt > 2000) {
+            // Re-read the viewport before computing a delta: the page may have
+            // been resized outside this route.
+            const session = await browser.sessions.updateViewport(targetId).catch(() => null)
+            if (session && Number.isFinite(session.viewportW) && Number.isFinite(session.viewportH)) {
+              cache.viewport = { width: session.viewportW as number, height: session.viewportH as number }
+            }
+            cache.viewportAt = now
           }
-          const current = await browser.cdp.call('Browser.getWindowBounds', { windowId }) as { bounds?: { left?: number; top?: number; width?: number; height?: number } }
-          const chromeFrame = await measureChromeFrame(browser, targetId)
-          const measured = await measureViewport(browser, targetId)
-          const currentWidth = measured !== null ? measured.width : Math.max(0, (current?.bounds?.width ?? 0) - chromeFrame.width)
-          const currentHeight = measured !== null ? measured.height : Math.max(0, (current?.bounds?.height ?? 0) - chromeFrame.height)
+          const currentWidth = cache.viewport.width
+          const currentHeight = cache.viewport.height
           if ((currentWidth <= 0 || currentHeight <= 0) && !(hasWidth && hasHeight)) {
             return sendJson(res, 409, { ok: false, error: 'could not determine the current viewport size' })
           }
@@ -476,10 +522,28 @@ async function main(): Promise<void> {
           else if (hasDy) height = Math.round(currentHeight + requestedDy)
           else height = Math.round(width * currentHeight / currentWidth)
           const clamped = clampViewportSize(width, height)
-          const bounds = computeWindowBounds(clamped, chromeFrame, current?.bounds ?? {})
-          await browser.cdp.call('Browser.setWindowBounds', { windowId, bounds })
-          return sendJson(res, 200, { ok: true, windowId, bounds, viewport: clamped })
+          const bounds = computeWindowBounds(clamped, cache.chromeFrame, { left: cache.left, top: cache.top })
+          await browser.cdp.call('Browser.setWindowBounds', { windowId: cache.windowId, bounds })
+          cache.viewport = clamped
+          cache.left = typeof bounds.left === 'number' ? bounds.left : cache.left
+          cache.top = typeof bounds.top === 'number' ? bounds.top : cache.top
+          cache.measuredAt = now
+          cache.viewportAt = now
+          // Make the capture session advertise the new viewport promptly: the
+          // panel maps its clicks through the frame's vw/vh, so stale metadata
+          // would offset input right after a resize. Debounced to one refresh
+          // per drag step burst.
+          if (!windowSizeViewportRefresh.has(targetId)) {
+            const timer = setTimeout(() => {
+              windowSizeViewportRefresh.delete(targetId)
+              void browser.sessions.updateViewport(targetId).catch(() => {})
+            }, 160)
+            timer.unref?.()
+            windowSizeViewportRefresh.set(targetId, timer)
+          }
+          return sendJson(res, 200, { ok: true, windowId: cache.windowId, bounds, viewport: clamped })
         } catch (error) {
+          windowSizeCache.delete(targetId)
           return sendJson(res, 503, { ok: false, code: 'window-resize-failed', error: (error as Error).message || String(error) })
         }
       }
