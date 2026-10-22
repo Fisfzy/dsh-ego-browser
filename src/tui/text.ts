@@ -1,10 +1,13 @@
-/** Terminal-safe scalar text; remove escape sequences before control characters. */
-export function sanitizeText(value: string): string {
+/** Remove escape sequences before controls, preserving printable layout spaces. */
+function terminalText(value: string): string {
   return value
     .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ')
-    .replace(/\s+/g, ' ').trim()
+}
+/** Compact a scalar locator or detail into a single terminal-safe line. */
+export function sanitizeText(value: string): string {
+  return terminalText(value).replace(/\s+/g, ' ').trim()
 }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
@@ -24,11 +27,11 @@ function graphemeWidth(value: string): number {
   return width
 }
 export function displayWidth(text: string): number {
-  return [...segmenter.segment(sanitizeText(text))].reduce((sum, part) => sum + graphemeWidth(part.segment), 0)
+  return [...segmenter.segment(terminalText(text))].reduce((sum, part) => sum + graphemeWidth(part.segment), 0)
 }
 /** Truncate without splitting combining sequences, emoji or terminal-wide cells. */
 export function truncateCells(text: string, maxCells: number): string {
-  const clean = sanitizeText(text)
+  const clean = terminalText(text)
   const limit = Math.max(0, Math.floor(maxCells))
   if (!limit) return ''
   if (displayWidth(clean) <= limit) return clean

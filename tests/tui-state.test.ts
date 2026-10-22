@@ -20,6 +20,8 @@ describe('safe tool presentation', () => {
   it('removes terminal escapes and respects display cells and graphemes', () => {
     expect(sanitizeText('\x1b[31mred\x1b[0m\n\x1b]8;;https://secret\x07link\x1b]8;;\x07')).toBe('red link')
     expect(displayWidth('汉字e\u0301👨‍👩‍👧‍👦🇨🇳')).toBe(9)
+    expect(displayWidth('  tab  ')).toBe(7)
+    expect(truncateCells('  tab  ', 7)).toBe('  tab  ')
     expect(truncateCells('汉字e\u0301👨‍👩‍👧‍👦', 6)).toBe('汉字é…')
     expect(displayWidth(safeLocatorSummary('ego_click', { selector: '汉'.repeat(40) }))).toBeLessThanOrEqual(48)
     expect(truncateCells('👨‍👩‍👧‍👦abc', 2)).toBe('…')

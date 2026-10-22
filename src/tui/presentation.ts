@@ -1,4 +1,4 @@
-import { truncateCells } from './text.ts'
+import { sanitizeText, truncateCells } from './text.ts'
 
 const selectorTools = new Set(['ego_click', 'ego_fill', 'ego_screenshot', 'ego_wait_for_selector',
   'ego_hover', 'ego_read_element', 'ego_select', 'ego_scroll', 'ego_upload', 'ego_check'])
@@ -17,7 +17,7 @@ export function safeLocatorSummary(name: string, value: unknown): string {
   } else if (name === 'ego_drag' && typeof args.from === 'string' && typeof args.to === 'string') {
     summary = `${args.from} → ${args.to}`
   } else if (name === 'ego_download' && typeof args.triggerSelector === 'string') summary = args.triggerSelector
-  return truncateCells(summary, 48)
+  return truncateCells(sanitizeText(summary), 48)
 }
 export function toolCallTitle(name: string, args: unknown): string {
   const summary = safeLocatorSummary(name, args)
