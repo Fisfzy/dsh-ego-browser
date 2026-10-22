@@ -493,16 +493,21 @@ export function initCastServer(
       const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
       const width = Number(body.width)
       const delta = Number(body.delta)
-      if (!Number.isFinite(width) && !Number.isFinite(delta)) {
-        return sendJson(res, 400, { ok: false, error: 'width or delta is required' })
-      }
       const height = Number(body.height)
+      const dy = Number(body.dy)
+      const aspect = Number(body.aspect)
+      if (!Number.isFinite(width) && !Number.isFinite(delta) && !Number.isFinite(height) && !Number.isFinite(dy) && !Number.isFinite(aspect)) {
+        return sendJson(res, 400, { ok: false, error: 'width, delta, height, dy or aspect is required' })
+      }
       const result = await proxyPost(port, '/api/window-size', {
         ...(Number.isFinite(width) ? { width } : {}),
-        // The panel's toggle sends a drag delta; the worker applies it to the
-        // page's current viewport width.
+        // The panel's toggle sends drag deltas; the worker applies them to the
+        // page's current viewport.
         ...(Number.isFinite(delta) ? { delta } : {}),
         ...(Number.isFinite(height) && height > 0 ? { height } : {}),
+        ...(Number.isFinite(dy) ? { dy } : {}),
+        // Aspect presets keep the current width and derive the height.
+        ...(Number.isFinite(aspect) && aspect > 0 ? { aspect } : {}),
         ...(typeof body.targetId === 'string' && body.targetId ? { targetId: body.targetId } : {}),
       })
       if (!result) return sendJson(res, 502, { ok: false, error: 'window-size worker unavailable' })

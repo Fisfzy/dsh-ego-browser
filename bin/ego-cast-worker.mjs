@@ -5051,6 +5051,14 @@ var FfmpegCaptureBackend = class {
 };
 /** A sanity ceiling; the OS clamps to the display anyway. */
 const MAX_VIEWPORT_WIDTH = 3840;
+const MAX_VIEWPORT_HEIGHT = 2160;
+/** Keep a requested viewport inside a sane range (a sliver is unusable). */
+function clampViewportSize(width, height) {
+	return {
+		width: Math.min(MAX_VIEWPORT_WIDTH, Math.max(320, Math.round(width))),
+		height: Math.min(MAX_VIEWPORT_HEIGHT, Math.max(200, Math.round(height)))
+	};
+}
 /**
 * Apply a drag delta to the current viewport width.
 *
@@ -5580,10 +5588,17 @@ async function main() {
 				const body = await readJson(req);
 				const requestedWidth = Number(body.width);
 				const requestedDelta = Number(body.delta);
+				const requestedHeight = Number(body.height);
+				const requestedDy = Number(body.dy);
+				const requestedAspect = Number(body.aspect);
 				const hasWidth = Number.isFinite(requestedWidth) && requestedWidth >= 200;
-				if (!hasWidth && !(Number.isFinite(requestedDelta) && requestedDelta !== 0)) return sendJson(res, 400, {
+				const hasDelta = Number.isFinite(requestedDelta) && requestedDelta !== 0;
+				const hasHeight = Number.isFinite(requestedHeight) && requestedHeight >= 120;
+				const hasDy = Number.isFinite(requestedDy) && requestedDy !== 0;
+				const hasAspect = Number.isFinite(requestedAspect) && requestedAspect > 0 && requestedAspect < 10;
+				if (!hasWidth && !hasDelta && !hasHeight && !hasDy && !hasAspect) return sendJson(res, 400, {
 					ok: false,
-					error: "width or delta is required"
+					error: "width, delta, height, dy or aspect is required"
 				});
 				if (!active) return sendJson(res, 409, {
 					ok: false,
@@ -5605,31 +5620,21 @@ async function main() {
 					});
 					const current = await browser.cdp.call("Browser.getWindowBounds", { windowId });
 					const chromeFrame = await measureChromeFrame(browser, targetId);
-					let viewport = null;
-					const readViewport = async () => {
-						if (viewport === null) viewport = await measureViewport(browser, targetId);
-						return viewport;
-					};
-					let width;
-					if (hasWidth) width = Math.round(requestedWidth);
-					else {
-						const measured = await readViewport();
-						const currentViewportWidth = measured !== null ? measured.width : Math.max(0, (current?.bounds?.width ?? 0) - chromeFrame.width);
-						if (currentViewportWidth <= 0) return sendJson(res, 409, {
-							ok: false,
-							error: "could not determine the current viewport width"
-						});
-						width = widthWithDelta(currentViewportWidth, requestedDelta);
-					}
-					let height = Math.round(Number(body.height));
-					if (!Number.isFinite(height) || height < 120) {
-						const measured = await readViewport();
-						height = measured !== null ? Math.max(120, Math.round(width * measured.height / measured.width)) : Math.max(120, Math.round(width * 2 / 3));
-					}
-					const bounds = computeWindowBounds({
-						width,
-						height
-					}, chromeFrame, current?.bounds ?? {});
+					const measured = await measureViewport(browser, targetId);
+					const currentWidth = measured !== null ? measured.width : Math.max(0, (current?.bounds?.width ?? 0) - chromeFrame.width);
+					const currentHeight = measured !== null ? measured.height : Math.max(0, (current?.bounds?.height ?? 0) - chromeFrame.height);
+					if ((currentWidth <= 0 || currentHeight <= 0) && !(hasWidth && hasHeight)) return sendJson(res, 409, {
+						ok: false,
+						error: "could not determine the current viewport size"
+					});
+					const width = hasWidth ? Math.round(requestedWidth) : hasDelta ? widthWithDelta(currentWidth, requestedDelta) : currentWidth;
+					let height;
+					if (hasHeight) height = Math.round(requestedHeight);
+					else if (hasAspect) height = Math.round(width / requestedAspect);
+					else if (hasDy) height = Math.round(currentHeight + requestedDy);
+					else height = Math.round(width * currentHeight / currentWidth);
+					const clamped = clampViewportSize(width, height);
+					const bounds = computeWindowBounds(clamped, chromeFrame, current?.bounds ?? {});
 					await browser.cdp.call("Browser.setWindowBounds", {
 						windowId,
 						bounds
@@ -5637,7 +5642,8 @@ async function main() {
 					return sendJson(res, 200, {
 						ok: true,
 						windowId,
-						bounds
+						bounds,
+						viewport: clamped
 					});
 				} catch (error) {
 					return sendJson(res, 503, {

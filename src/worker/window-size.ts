@@ -23,6 +23,15 @@ export const MIN_VIEWPORT_WIDTH = 320
 export const MIN_VIEWPORT_HEIGHT = 200
 /** A sanity ceiling; the OS clamps to the display anyway. */
 export const MAX_VIEWPORT_WIDTH = 3840
+export const MAX_VIEWPORT_HEIGHT = 2160
+
+/** Keep a requested viewport inside a sane range (a sliver is unusable). */
+export function clampViewportSize(width: number, height: number): { width: number; height: number } {
+  return {
+    width: Math.min(MAX_VIEWPORT_WIDTH, Math.max(MIN_VIEWPORT_WIDTH, Math.round(width))),
+    height: Math.min(MAX_VIEWPORT_HEIGHT, Math.max(MIN_VIEWPORT_HEIGHT, Math.round(height))),
+  }
+}
 
 /**
  * Apply a drag delta to the current viewport width.

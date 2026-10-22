@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { computeWindowBounds, widthWithDelta, MIN_VIEWPORT_HEIGHT, MIN_VIEWPORT_WIDTH } from '../src/worker/window-size.ts'
+import { clampViewportSize, computeWindowBounds, widthWithDelta, MIN_VIEWPORT_HEIGHT, MIN_VIEWPORT_WIDTH } from '../src/worker/window-size.ts'
+
+describe('clampViewportSize', () => {
+  it('clamps both dimensions into the sane range', () => {
+    expect(clampViewportSize(100, 100)).toEqual({ width: MIN_VIEWPORT_WIDTH, height: MIN_VIEWPORT_HEIGHT })
+    expect(clampViewportSize(5000, 5000)).toEqual({ width: 3840, height: 2160 })
+    expect(clampViewportSize(1000, 700)).toEqual({ width: 1000, height: 700 })
+  })
+})
 
 describe('widthWithDelta', () => {
   it('moves the viewport width by the drag delta', () => {
