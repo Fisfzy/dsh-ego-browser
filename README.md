@@ -9,6 +9,9 @@
   <img src="https://img.shields.io/badge/DSH-%3E%3D0.1.2--rc.1-blue" alt="DSH >= 0.1.2-rc.1">
   <img src="https://img.shields.io/badge/DSH--better--sidebar-%3E%3D0.12.2(optional)-red" alt="dsh-better-sidebar >= 0.12.2 (optional)">
   <img src="https://img.shields.io/badge/Node-%3E%3D22-brightgreen?logo=node.js&logoColor=white" alt="Node >= 22">
+  <a href="https://www.npmjs.com/package/dsh-ego-browser"><img src="https://img.shields.io/npm/v/dsh-ego-browser?logo=npm" alt="npm version"></a>
+  <a href="https://github.com/Fisfzy/dsh-ego-browser/releases"><img src="https://img.shields.io/github/v/release/Fisfzy/dsh-ego-browser" alt="GitHub release"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license MIT"></a>
 </p>
 
 > **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.0**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
@@ -52,6 +55,22 @@
 
 ---
 
+## 🚀 快速启动
+
+```sh
+# 安装（任选一种；桌面端也可以走 插件 → 添加插件）
+dsh plugin --profile desktop add dsh-ego-browser@0.9.0
+```
+
+1. 在 DSH 会话里说一句让 agent 用浏览器的话，例如：
+   > 打开 https://example.com ，截图并告诉我页面标题
+2. agent 第一次调用 `ego_*` 时，右侧边栏的「Agent 浏览器」标签会自动出现（没有原生侧边栏时回退到 `dsh-better-sidebar`，再没有就是右下角浮动球），实时显示它正在操作的页面。
+3. 想接手时，直接在观察窗里点击 / 输入 / 滚动；需要完整浏览器窗口就点面板上的「弹出窗口」。
+
+> 宿主侧无需配置：Chrome/Edge/Brave 自动探测，root / 无头自动兜底。第一次启动约 2–4 秒。如果观察窗没出现，先跑一次 `ego_doctor` 看环境；更换浏览器路径后需要让 agent 浏览器冷启动才生效（见「已知限制」）。
+
+---
+
 ## 我们的真正优势（不是口号，是能对照代码和竞品核实的能力）
 
 同样把 ego-lite 接进 DSH，市面上已有同类插件用它**只做了 3 个工具**——一个 `run` 脚本、一个 `help` 指南、一个 `status` 体检，浏览器仍是**后台黑盒**。`ego-browser` 走的是另一条路：**把黑盒打开，并且一上来就把"看"和"控"的能力做到位**。
@@ -70,13 +89,13 @@
 - **看得到**：别家是"跑完告诉你结果"的黑盒；我们实时推流，你**看着 agent 操作**，卡在验证码/走岔立刻发现。
 - **控得住**：别家只读；我们监控窗**直接驱动**同一个 agent 浏览器，需要时你亲手接管（缩放/拖拽/点击），不必打断 agent 重来。
 
-> 以上对比基于公开可见的可核实事实：本仓库代码（`bin/ego-cast-worker.mjs` 实时推流 + CDP 输入回传、`lib/index.js` 33 个注册工具、`lib/cast-server.js` host 桥接）与同类插件的源码/README。此文档不含对任何他人的贬低——我们只陈述自己多实现并验证了哪些能力。
+> 以上对比基于公开可见的可核实事实：本仓库代码（`bin/ego-cast-worker.mjs` 实时推流 + CDP 输入回传、`lib/index.js` 33 个注册工具、`src/cast-server.ts`（构建进 `lib/index.js`）host 桥接）与同类插件的源码/README。此文档不含对任何他人的贬低——我们只陈述自己多实现并验证了哪些能力。
 
 **相对 [ego-lite](https://github.com/CitroLabs/ego-lite) 本体，我们多做了这些（都可对照本仓库代码核实）：**
 
 | 能力 | 说明（对应代码） |
 |---|---|
-| **观察窗前端口** | ego-lite 本体是无头 CLI（只有 heredoc 脚本 + 文本输出）；我们在其上加了 **SSE 实时推流 + 标签条 + 历史抽屉 + 监控窗鼠标直操**（`bin/ego-cast-worker.mjs`、`lib/cast-server.js`、`lib/client.js`），让"看"和"控"成为一等能力 |
+| **观察窗前端口** | ego-lite 本体是无头 CLI（只有 heredoc 脚本 + 文本输出）；我们在其上加了 **SSE 实时推流 + 标签条 + 历史抽屉 + 监控窗鼠标直操**（`bin/ego-cast-worker.mjs`、`src/cast-server.ts`（构建进 `lib/index.js`）、`lib/client.js`），让"看"和"控"成为一等能力 |
 | **开箱即用 + 跨平台自足** | `resolveEgoEnv` 自动探测 Chrome/Edge/Brave，内置 `--no-sandbox` wrapper，root / Docker / 无显示器免配置（`lib/index.js`）；不必像官方那样先装一个 GUI 宿主 |
 | **健壮性层** | 冷启动自动重试（只重试 CDP 瞬态，不吞真错）、worker 单实例守卫 + 崩溃自动重启、插件卸载 fire-and-forget 不阻塞宿主退出、前端帧缓存上限（`withWarmupRetry` / `makeEnsureWorker` / `frameCache`） |
 | **运维型工具** | `ego_doctor`（环境体检）、`ego_captcha`（人机验证探测）、`ego_auth_flush`（登录落盘）、`ego_login_import`（系统浏览器登录态导入）、`ego_http`（浏览器上下文请求）等，是原生 CLI helper 没有的一层 |
@@ -125,12 +144,30 @@
 |---|---|
 | Node ≥ 22 | harness 环境自带 |
 | **任意 Chrome / Chromium / Brave / Edge** | 自动发现，或 `EGO_LINUX_CHROME` 指定；root 下用自带 wrapper |
-| DSH + dshx | 插件装载机制 |
+| DSH（插件装载） | 插件页添加，或 `dsh plugin --profile <profile> add dsh-ego-browser`；npm 包名 `dsh-ego-browser` |
 | 带图形界面的 DSH Web（观察窗） | headless 会话仍可用 `ego_*` 工具，仅无观察窗 |
 
 ## 安装
 
-> **包名迁移（DSH Desktop 2.0.5+）**：本插件包名是 **`dsh-ego-browser`**（非 `@dsh-external/ego-browser`）。DSH Desktop 2.0.5 起增加了「profile 依赖名 == 包实际 name」的一致性校验，若 profile 仍用旧名 `@dsh-external/ego-browser` 引用，启动会挂进恢复模式（`profile package identity is invalid for @dsh-external/ego-browser`）。升级到 2.0.5 后请把 profile 的 `package.json` 依赖键 **和** `dsh.profile.bundles` 条目**两处**都改为 `dsh-ego-browser`：
+**方式 A：桌面端插件页**：插件 → 添加插件 → 搜索 `dsh-ego-browser`。
+
+**方式 B：命令行（npm，推荐）**：
+
+```sh
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.0
+dsh plugin --profile <profile> list                 # 应看到 dsh-ego-browser
+# 升级
+dsh plugin --profile <profile> add dsh-ego-browser@latest
+```
+
+**方式 C：git / tarball**（离线或固定提交）：
+
+```sh
+dsh plugin --profile <profile> add https://github.com/Fisfzy/dsh-ego-browser.git
+dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.0.tgz
+```
+
+> **从旧版本升级（DSH Desktop 2.0.5+）**：本插件包名是 **`dsh-ego-browser`**（非 `@dsh-external/ego-browser`）。DSH Desktop 2.0.5 起增加了「profile 依赖名 == 包实际 name」的一致性校验，若 profile 仍用旧名 `@dsh-external/ego-browser` 引用，启动会挂进恢复模式（`profile package identity is invalid for @dsh-external/ego-browser`）。升级到 2.0.5 后请把 profile 的 `package.json` 依赖键 **和** `dsh.profile.bundles` 条目**两处**都改为 `dsh-ego-browser`：
 
    ```diff
    - "@dsh-external/ego-browser": "git+https://github.com/Fisfzy/ego-browser.git",
@@ -141,11 +178,6 @@
    - "@dsh-external/ego-browser",
    + "dsh-ego-browser",
    ```
-
-```sh
-dshx install ego-browser <ego-browser.tgz>                             # tarball 或 git URL 均可
-dshx list                                                # 应显示：[on] ego-browser
-```
 
 观察窗设置中可选 `captureBackend=auto|cdp|ffmpeg`（默认 `auto`，当前解析为 CDP）、画质档位、CDP FPS/JPEG 质量/最大宽度，以及 FFmpeg FPS/最大宽度/码率/编码器/自定义路径。插件先检测自定义路径、系统 PATH 和托管缓存；检测到兼容 FFmpeg 前，设置页禁止选择 FFmpeg，并提供固定版本的一键下载。GitHub 下载可用 `githubMirror` 替换 `https://github.com`，例如 `https://gh-proxy.com/github.com`。FFmpeg 码率范围为 500-20000 kbps，低/平衡/高档默认 2000/4000/8000 kbps。
 
@@ -240,7 +272,7 @@ When the existing metadata response includes `capture`, the panel displays its b
 ## 工作原理
 
 - **工具层**：每个工具把参数拼成 JS 脚本，经 `ctx.subprocess` 用 `ego-browser nodejs` 喂给 stdin 运行，宿主经 CDP 驱动共享 Chromium。结果以 `@@DSH_RESULT@@` 哨兵行解析（v0.8.7 起无哨兵时兜底解析最后一行 JSON 并标记 `fallback: true`）。所有 `ego_*` 经进程内互斥锁串行化，错误统一归一。
-- **观察窗**：`lib/client.js` 管理 watcher lease、JPEG `<img>` 与 MSE `<video>`；`lib/cast-server.js` 代理元数据 SSE、watch API 和带背压的二进制视频；worker 中 `CaptureManager` 保证同时只有一个活动后端和一个当前 target。CDP 控制面（标签、viewport、输入、验证码）独立于画面后端。
+- **观察窗**：`lib/client.js` 管理 watcher lease、JPEG `<img>` 与 MSE `<video>`；`src/cast-server.ts`（构建进 `lib/index.js`）代理元数据 SSE、watch API 和带背压的二进制视频；worker 中 `CaptureManager` 保证同时只有一个活动后端和一个当前 target。CDP 控制面（标签、viewport、输入、验证码）独立于画面后端。
 
 ## 开发
 
@@ -259,7 +291,7 @@ pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-ca
 ## 已知限制（诚实说明）
 
 - **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。v0.8.7 修复了孤儿 Chrome 占锁（#70），v0.8.8 起崩溃/回收后遗留的孤儿标签会被自动清扫（#67），但强杀/崩溃后的 profile 恢复仍建议非必要不中断浏览器进程。
-- **macOS**：需要**手动**在设置里填 `chromePath`（`.app` 路径），`COMMON_CHROME_BINS` 不含 macOS 路径；且无 `$DISPLAY` 时 headed 路径会去找 Xvfb（macOS 上不存在）。这两点（#65/#68）**暂缓修复**——维护者暂无 Mac 设备验证，不想发布未经实测的平台适配；欢迎有 Mac 环境的朋友提 PR。
+- **macOS**：需要**手动**在设置里填 `chromePath`（`.app` 路径），`COMMON_CHROME_BINS` 不含 macOS 路径；且无 `$DISPLAY` 时 headed 路径会去找 Xvfb（macOS 上不存在）。这两点（#65/#68）待社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72)（`.app` 探测 + headed 免 Xvfb，作者称已在 macOS arm64 + Chrome 154 真机验证）rebase 合并后即可开箱使用；合并前可手动填 `chromePath` 临时可用。
 - **登录态导入**：v0.8.7 起 `ego_login_import` 定向禁用——仅 **Windows + Chrome ≥155** 拒绝（原因见 #69），Linux / macOS / 旧版 Chrome 正常可用；确认环境无风险后用 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 可在任何环境放行。
 - **FFmpeg 平台捕获**：Windows 已使用 `gfxcapture(HWND)`，需要包含该 filter 的新构建；PATH 中的旧 FFmpeg 会被跳过并提示下载兼容版本。Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop；macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
 - **安装环境**：本仓库的 DSH peer 包不全在公共 npm registry。普通 `pnpm install` 可能在解析 `@deepseek-ai/*` peer 时失败；DSH profile 安装应提供这些 peer。CDP 不依赖 FFmpeg，也不会在插件安装阶段下载二进制。
