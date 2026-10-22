@@ -84,6 +84,12 @@ declare function require(id: string): any
 		disableFrameRelayHint: 'No picture is relayed at all: no ego-cast worker, no CDP/WGC screencast capture, no ffmpeg pull, and the watch panel opens no stream. ego_* tools keep working normally.',
 		disableFrameRelayOff: 'Off (live view enabled)',
 		disableFrameRelayOn: 'On (no picture pushed to this page)',
+		residentExecutor: 'Resident executor',
+		residentExecutorHint: 'Reuse one long-lived `ego-browser --serve` process across ego_* calls: the first call pays startup, later calls skip it (~16ms). A dead resident falls back to a fresh spawn automatically.',
+		residentExecutorOff: 'Off (spawn per call)',
+		residentExecutorOn: 'On (resident process)',
+		residentIdleMin: 'Resident idle stop (minutes)',
+		residentIdleMinHint: 'Stop the resident process after N minutes without an ego_* call (0 = keep it until the plugin unmounts). The browser itself is not affected.',
 		relayDisabledTitle: 'Live frame relay is disabled',
 		relayDisabledBody: 'Turn off "Disable live frame relay" in Settings → Plugins → ego-browser to see the live view here.',
 		minUnit: 'min',
@@ -124,6 +130,12 @@ declare function require(id: string): any
 		disableFrameRelayHint: '完全不回传画面：不启动 ego-cast worker，不做 CDP/WGC 屏幕采集与 ffmpeg 拉流，观察窗不再建立任何拉流连接。ego_* 工具本身照常可用。',
 		disableFrameRelayOff: '关闭（保留实时画面）',
 		disableFrameRelayOn: '开启（不回传任何画面）',
+		residentExecutor: '常驻执行进程',
+		residentExecutorHint: '复用同一个 ego-browser --serve 进程执行 ego_* 调用：首次调用支付启动开销，之后每次约 16ms；常驻进程失效时自动回退到一次性 spawn。',
+		residentExecutorOff: '关闭（每次调用独立 spawn）',
+		residentExecutorOn: '开启（常驻进程）',
+		residentIdleMin: '常驻空闲停止（分钟）',
+		residentIdleMinHint: 'N 分钟没有 ego_* 调用后停止常驻进程（0 = 一直保留到插件卸载）。不影响浏览器本体。',
 		relayDisabledTitle: '画面回传已禁用',
 		relayDisabledBody: '在「设置 → 插件 → ego-browser」中关闭「禁用画面回传」后，这里才会显示实时画面。',
 		minUnit: '分钟',
@@ -295,7 +307,7 @@ declare function require(id: string): any
 				status: 'idle',        // 'idle' | 'loading' | 'ready'
 				available: false,      // true after a successful /ego/api/get
 				writable: false,       // false when settings service is absent
-				draft: { isolateSpaces: false, disableFrameRelay: false, idleTimeoutMin: '0', chromePath: '', captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '1280', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '' },
+				draft: { isolateSpaces: false, disableFrameRelay: false, residentExecutor: false, residentIdleMin: '30', idleTimeoutMin: '0', chromePath: '', captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '1280', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '' },
 				ffmpegStatus: { state: 'checking', canDownload: false, canSelectFfmpeg: false },
 				dirty: false,
 				applyState: { kind: 'idle' }, // 'idle' | 'saving' | 'saved' | 'error'
@@ -347,6 +359,8 @@ declare function require(id: string): any
 				isolateSpaces: config.isolateSpaces === true || config.isolateSpaces === 'true' || config.isolateSpaces === 1 || config.isolateSpaces === '1',
 				idleTimeoutMin: String(config.idleTimeoutMin ?? 0),
 				disableFrameRelay: config.disableFrameRelay === true || config.disableFrameRelay === 'true' || config.disableFrameRelay === 1 || config.disableFrameRelay === '1',
+				residentExecutor: config.residentExecutor === true || config.residentExecutor === 'true' || config.residentExecutor === 1 || config.residentExecutor === '1',
+				residentIdleMin: String(config.residentIdleMin ?? 30),
 				chromePath: config.chromePath || '',
 				captureBackend: config.captureBackend === 'ffmpeg' && !ffmpegStatus.canSelectFfmpeg ? 'cdp' : (config.captureBackend || 'auto'), streamProfile: config.streamProfile || 'balanced',
 				cdpFps: String(config.cdpFps ?? 20), cdpQuality: String(config.cdpQuality ?? 55), cdpMaxWidth: String(config.cdpMaxWidth ?? 1280), cdpBackstopIntervalMs: String(config.cdpBackstopIntervalMs ?? 3000),
@@ -429,6 +443,7 @@ declare function require(id: string): any
 			var patch = {}
 			var NUMERIC_FIELDS = {
 				idleTimeoutMin: { min: 0, max: 1440, def: 0 },
+				residentIdleMin: { min: 0, max: 1440, def: 30 },
 				cdpFps: { min: 5, max: 30, def: 20 }, cdpQuality: { min: 1, max: 100, def: 55 }, cdpMaxWidth: { min: 320, max: 1920, def: 1280 }, cdpBackstopIntervalMs: { min: 1000, max: 10000, def: 3000 }, ffmpegFps: { min: 5, max: 30, def: 20 }, ffmpegMaxWidth: { min: 320, max: 1920, def: 1280 }, ffmpegBitrateKbps: { min: 500, max: 20000, def: 4000 },
 			}
 			this.staged.forEach(function (v, k) {
@@ -475,6 +490,8 @@ declare function require(id: string): any
 				isolateSpaces: config.isolateSpaces === true || config.isolateSpaces === 'true' || config.isolateSpaces === 1 || config.isolateSpaces === '1',
 				idleTimeoutMin: String(config.idleTimeoutMin ?? 0),
 				disableFrameRelay: config.disableFrameRelay === true || config.disableFrameRelay === 'true' || config.disableFrameRelay === 1 || config.disableFrameRelay === '1',
+				residentExecutor: config.residentExecutor === true || config.residentExecutor === 'true' || config.residentExecutor === 1 || config.residentExecutor === '1',
+				residentIdleMin: String(config.residentIdleMin ?? 30),
 				chromePath: config.chromePath || '',
 				captureBackend: config.captureBackend === 'ffmpeg' && ffmpegStatus && !ffmpegStatus.canSelectFfmpeg ? 'cdp' : (config.captureBackend || 'auto'), streamProfile: config.streamProfile || 'balanced',
 				cdpFps: String(config.cdpFps ?? 20), cdpQuality: String(config.cdpQuality ?? 55), cdpMaxWidth: String(config.cdpMaxWidth ?? 1280), cdpBackstopIntervalMs: String(config.cdpBackstopIntervalMs ?? 3000),
@@ -723,6 +740,19 @@ declare function require(id: string): any
 							disabled: busy,
 							onEdit: function (v) { controller.edit('disableFrameRelay', v === 'true') },
 						}),
+						h(SettingsField, {
+							id: 'plugin-config-ego-browser-residentexecutor',
+							label: t('residentExecutor'),
+							hint: t('residentExecutorHint'),
+							value: state.draft.residentExecutor ? 'true' : 'false',
+							options: [
+								{ value: 'false', label: t('residentExecutorOff') },
+								{ value: 'true', label: t('residentExecutorOn') },
+							],
+							disabled: busy,
+							onEdit: function (v) { controller.edit('residentExecutor', v === 'true') },
+						}),
+						h(SettingsField, { id: 'plugin-config-ego-browser-residentidle', label: t('residentIdleMin'), hint: t('residentIdleMinHint'), value: state.draft.residentIdleMin, numeric: true, narrow: true, unit: t('minUnit'), min: 0, max: 1440, step: 1, disabled: busy, onEdit: function (v) { controller.edit('residentIdleMin', v) } }),
 						h(SettingsField, { id: 'plugin-config-ego-browser-idletimeout', label: t('idleTimeoutMin'), hint: t('idleTimeoutMinHint'), value: state.draft.idleTimeoutMin, numeric: true, narrow: true, unit: t('minUnit'), min: 0, max: 1440, step: 1, disabled: busy, onEdit: function (v) { controller.edit('idleTimeoutMin', v) } }),
 						h(SettingsField, {
 							id: 'plugin-config-ego-browser-chromepath',

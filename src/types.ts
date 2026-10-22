@@ -125,6 +125,10 @@ export interface ResolvedConfig {
   idleTimeoutMin: number
   /** True = the live frame relay (ego-cast worker + cast routes) is turned off entirely. */
   disableFrameRelay: boolean
+  /** True = reuse a resident `ego-browser --serve` process across ego_* calls (issue #56). */
+  residentExecutor: boolean
+  /** Minutes without an ego_* call before the resident process is stopped. 0 = keep until unmount. */
+  residentIdleMin: number
   chromePath: string
   captureBackend: 'auto' | 'cdp' | 'ffmpeg'
   streamProfile: 'low' | 'balanced' | 'high'

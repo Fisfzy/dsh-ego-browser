@@ -8,7 +8,7 @@
 import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { existsSync } from "node:fs";
 
-import { resolveEgoEnv, findChromeBinary, loginImportAllowed } from "../src/index.ts";
+import { resolveEgoEnv, findChromeBinary, loginImportPolicy, loginImportForced } from "../src/index.ts";
 
 // ─── resolveEgoEnv: Windows ────────────────────────────────────────────────
 
@@ -335,21 +335,38 @@ describe("runtime chrome.mjs (EGO_LINUX_EXTRA_ARGS spread)", () => {
   });
 });
 
-// ─── ego_login_import fail-closed gate (#69) ────────────────────────────
+// ─── ego_login_import scoped guard (#69) ────────────────────────────────
 
-describe("loginImportAllowed (#69)", () => {
-  it("is disabled by default", () => {
-    expect(loginImportAllowed({})).toBe(false);
+describe("loginImportPolicy (#69)", () => {
+  it("refuses Windows + Chrome 155+", () => {
+    expect(loginImportPolicy({ platform: "win32", chromeMajor: 155, force: false }).allowed).toBe(false);
+    expect(loginImportPolicy({ platform: "win32", chromeMajor: 160, force: false }).allowed).toBe(false);
   });
 
-  it("is enabled only by EGO_LINUX_LOGIN_IMPORT_FORCE=1/true", () => {
-    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "1" })).toBe(true);
-    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "true" })).toBe(true);
+  it("allows Windows + older Chrome", () => {
+    expect(loginImportPolicy({ platform: "win32", chromeMajor: 154, force: false }).allowed).toBe(true);
+    expect(loginImportPolicy({ platform: "win32", chromeMajor: 120, force: false }).allowed).toBe(true);
   });
 
-  it("stays disabled for other values", () => {
-    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "0" })).toBe(false);
-    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "yes" })).toBe(true);
+  it("refuses Windows when the version cannot be determined", () => {
+    const verdict = loginImportPolicy({ platform: "win32", chromeMajor: null, force: false });
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toContain("could not determine");
+  });
+
+  it("allows Linux and macOS regardless of the version", () => {
+    expect(loginImportPolicy({ platform: "linux", chromeMajor: 160, force: false }).allowed).toBe(true);
+    expect(loginImportPolicy({ platform: "darwin", chromeMajor: 160, force: false }).allowed).toBe(true);
+    expect(loginImportPolicy({ platform: "linux", chromeMajor: null, force: false }).allowed).toBe(true);
+  });
+
+  it("the env override wins everywhere", () => {
+    expect(loginImportPolicy({ platform: "win32", chromeMajor: 160, force: true }).allowed).toBe(true);
+    expect(loginImportForced({ EGO_LINUX_LOGIN_IMPORT_FORCE: "1" })).toBe(true);
+    expect(loginImportForced({ EGO_LINUX_LOGIN_IMPORT_FORCE: "true" })).toBe(true);
+    expect(loginImportForced({ EGO_LINUX_LOGIN_IMPORT_FORCE: "yes" })).toBe(true);
+    expect(loginImportForced({ EGO_LINUX_LOGIN_IMPORT_FORCE: "0" })).toBe(false);
+    expect(loginImportForced({})).toBe(false);
   });
 });
 // ─── findChromeBinary ──────────────────────────────────────────────────────

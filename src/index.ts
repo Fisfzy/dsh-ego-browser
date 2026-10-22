@@ -35,8 +35,10 @@
  * 加工具：在 registerActionTools 里 reg(t({...}))，并同步 EGO_HELP_INDEX，跑 npm run build。
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { importLoginCookies } from './login-import.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
@@ -45,6 +47,7 @@ import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
 import { registerEgoBrowserGateway } from './gateway.ts'
+import { ResidentProcess, ResidentNotRunningError, type ResidentFrame } from './resident.ts'
 import { getSharedFfmpegInstallationManager } from './ffmpeg-installation.ts'
 import { SENTINEL, j, str, num, bool, readAll, SAFE_FN } from './util.ts'
 import type { EgoContext, RawConfig, ResolvedConfig, SubprocessService, ToolExec, WebServerLike } from './types.ts'
@@ -556,13 +559,127 @@ interface EgoRuntimeConfig {
   readonly chromeArgs: string
   readonly isolateSpaces: boolean
   readonly disableFrameRelay: boolean
+  /** Reuse a resident `ego-browser --serve` process across ego_* calls (issue #56). */
+  readonly residentExecutor: boolean
+  /** Minutes without an ego_* call before the resident process is stopped. 0 = keep until unmount. */
+  readonly residentIdleMin: number
 }
 
 interface ExecLike {
   signal?: AbortSignal
 }
 
+// ── resident `--serve` transport (issue #56) ──────────────────────────────
+// One process per (bin, user CLI args) combination. Recreated when the user
+// changes egoCliArgs, stopped on idle timeout and on plugin teardown. Every
+// call still has the one-shot spawn path as a fallback, so a dead resident can
+// only cost latency, never a failed tool.
+let residentTransport: ResidentProcess | null = null
+let residentTransportKey = ''
+
+/** @internal exported for tests */
+export function resetResidentTransportForTests(): void {
+  const transport = residentTransport
+  residentTransport = null
+  residentTransportKey = ''
+  transport?.stop()
+}
+
+function stopResidentTransport(): void {
+  const transport = residentTransport
+  residentTransport = null
+  residentTransportKey = ''
+  transport?.stop()
+}
+
+/**
+ * Return the live resident for this configuration, creating it when needed.
+ * @internal exported for tests
+ */
+export function ensureResidentTransport(cfg: EgoRuntimeConfig): ResidentProcess {
+  const extraCliArgs = filterArgs(cfg.egoCliArgs ?? '', EGO_CLI_BLOCKED)
+  const key = JSON.stringify([cfg.egoBin, extraCliArgs])
+  if (residentTransport !== null && residentTransportKey === key && residentTransport.alive) {
+    return residentTransport
+  }
+  stopResidentTransport()
+  residentTransportKey = key
+  residentTransport = new ResidentProcess({
+    argv: [process.execPath, cfg.egoBin, 'nodejs', '--serve', ...extraCliArgs],
+    env: resolveEgoEnv(cfg),
+    cwd: process.cwd(),
+    graceMs: cfg.graceMs,
+    idleMs: cfg.residentIdleMin > 0 ? cfg.residentIdleMin * 60_000 : 0,
+    onExit: () => {
+      // A crashed/hung resident is replaced lazily by the next call; nothing to
+      // do here but keep the reference honest.
+    },
+  })
+  residentTransport.start()
+  return residentTransport
+}
+
+/** Map a resident frame onto the shape the one-shot spawn path returns. */
+function residentFrameToResult(frame: ResidentFrame): WarmupResult {
+  const stdout = frame.stdout
+  const stderr = frame.stderr
+  if (!frame.ok) {
+    return {
+      ok: false,
+      error: `ego-browser script failed: ${frame.error ?? 'unknown failure'}${describeStderr(stderr)}`,
+      stdout,
+      stderr,
+    }
+  }
+  const parsed = parseSentinelOrLastJson(stdout)
+  if (parsed === undefined) {
+    return {
+      ok: false,
+      error: `ego-browser finished but no ${SENTINEL} JSON payload was found on stdout${describeStderr(
+        stderr,
+      )}`,
+      stdout,
+      stderr,
+    }
+  }
+  const value = parsed.fallback ? { ...parsed.value, fallback: true } : parsed.value
+  return { ok: true, value, stdout, stderr }
+}
+
+
 async function runEgoScript(subprocess: SubprocessService, script: string, exec: ExecLike, cfg: EgoRuntimeConfig, graceOverrideMs?: number): Promise<WarmupResult> {
+  // Resident path (opt-in, issue #56). Only a request that was never written
+  // falls back to the one-shot spawn below: once written, a retry could
+  // double-execute a click/fill, so the resident reports the failure instead.
+  if (cfg.residentExecutor) {
+    let transport: ResidentProcess | null = null
+    try {
+      transport = ensureResidentTransport(cfg)
+    } catch {
+      transport = null // spawn failed; the one-shot path below reports it
+    }
+    if (transport !== null) {
+      try {
+        const frame = await transport.run(script, {
+          ...(exec.signal !== undefined ? { signal: exec.signal } : {}),
+          ...(Number.isFinite(graceOverrideMs) && graceOverrideMs! > 0 ? { graceMs: graceOverrideMs! } : {}),
+        })
+        return residentFrameToResult(frame)
+      } catch (err) {
+        if (!(err instanceof ResidentNotRunningError)) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+            stdout: '',
+            stderr: '',
+          }
+        }
+        // not written → retry through the one-shot path
+      }
+    }
+  } else if (residentTransport !== null) {
+    stopResidentTransport()
+  }
   let handle
   try {
     // User-configured extra ego-browser CLI args (settings field `egoCliArgs`).
@@ -752,6 +869,8 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'castFpsCap', 'screencastQuality', 'screencastMaxWidth', 'backstopIntervalMs',
     'idleTimeoutMin',
     'disableFrameRelay',
+    'residentExecutor',
+    'residentIdleMin',
   ]
   const entry = Object.fromEntries(settingKeys.filter((key) => config[key] !== undefined).map((key) => [key, config[key]]))
   // DSH 0.1.7：可注册的 settings 命名空间被换成了 loader 条目上的配置文档，用户
@@ -812,6 +931,10 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // Live getter: cast-server reads this on EVERY /api/ego/* request, so the
     // settings card toggle takes effect without a host restart.
     get disableFrameRelay() { return resolveConfig(bridge.source() as RawConfig).disableFrameRelay },
+    // #56: resident executor (opt-in) and its idle window. Both are read on
+    // every call, so toggling the setting takes effect on the next ego_* call.
+    get residentExecutor() { return resolveConfig(bridge.source() as RawConfig).residentExecutor },
+    get residentIdleMin() { return resolveConfig(bridge.source() as RawConfig).residentIdleMin },
   }
   const reg = (tool: ToolHandle): void => {
     const dispose = ctx.tools.register(tool) as unknown as () => void
@@ -918,6 +1041,10 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     }, 60_000)
     return () => clearInterval(timer)
   }, 'ego-browser: idle reaper')
+  // #56: stop the resident --serve process when the plugin unmounts. The
+  // browser itself is stopped by the teardown effect below; the resident is
+  // only a stdio peer and must not outlive the plugin.
+  ctx.effect?.(() => () => stopResidentTransport(), 'ego-browser: resident executor')
   // Graceful teardown: stop the persistent browser when the plugin unmounts.
   // CRITICAL: this must be fire-and-forget, NOT awaited. Awaiting `--stop`
   // (which asks the browser to graceful-close, ~seconds) stalls the host process
@@ -1107,22 +1234,78 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
 }
 /** `ego_login_import` — copy login cookies from the system browser (issue #46). */
 /**
- * #69 stopgap: `ego_login_import` is fail-closed until the Chrome 155 damage is
- * understood. On Windows/Chrome 155 the junction-alias + headless boot + hard
- * kill path read 0 cookies AND was observed to wipe the real profile's
- * extension registry and reset its default search provider. Refusing by
- * default is the safe stopgap; the env flag is an explicit opt-in for
- * environments where the feature is known to work (older Chrome, Linux).
+ * #69 policy: `ego_login_import` is unsafe only on the combination that damaged
+ * profiles — Windows + Chrome 155+ (junction alias + headless boot + hard
+ * kill). Linux/macOS use a different profile-handoff path and older Chrome
+ * versions read cookies normally, so they stay enabled. The env flag remains a
+ * manual override for any environment.
+ *
+ * Exported for tests.
  */
-export function loginImportAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+export function loginImportPolicy({
+  platform,
+  chromeMajor,
+  force,
+}: {
+  platform: NodeJS.Platform
+  chromeMajor: number | null
+  force: boolean
+}): { allowed: boolean; reason?: string } {
+  if (force) return { allowed: true }
+  if (platform !== 'win32') return { allowed: true }
+  if (chromeMajor === null) {
+    return {
+      allowed: false,
+      reason:
+        'could not determine the installed Chrome version on Windows; refusing to risk the source profile (set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to override)',
+    }
+  }
+  if (chromeMajor >= 155) {
+    return {
+      allowed: false,
+      reason: `Chrome ${chromeMajor} on Windows is affected by #69 (reads 0 cookies and has wiped extension registries / reset the search provider). Set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to override.`,
+    }
+  }
+  return { allowed: true }
+}
+
+/** Is the manual override set? */
+export function loginImportForced(env: NodeJS.ProcessEnv = process.env): boolean {
   return /^(1|true|yes|on)$/i.test(env.EGO_LINUX_LOGIN_IMPORT_FORCE ?? '')
+}
+
+/**
+ * Best-effort major version of the Chrome-family binary the import would use.
+ *
+ * Windows: Chrome keeps one `<major>.<minor>.<build>.<patch>` directory under
+ * the `Application` directory next to chrome.exe — cheap and reliable. Elsewhere
+ * ask the binary itself (`--version`), which is what the platform expects. Any
+ * failure returns null; the policy treats null conservatively on Windows.
+ * Exported for tests.
+ */
+export function detectChromeMajorVersion(binPath: string | null | undefined): number | null {
+  if (!binPath) return null
+  try {
+    if (process.platform === 'win32') {
+      const versions = readdirSync(dirname(binPath))
+        .filter((entry) => /^\d+\.\d+\.\d+\.\d+$/.test(entry))
+        .map((entry) => Number(entry.split('.')[0]))
+        .filter((major) => Number.isInteger(major) && major > 0)
+      return versions.length === 0 ? null : Math.max(...versions)
+    }
+    const out = execFileSync(binPath, ['--version'], { encoding: 'utf8', timeout: 5000 })
+    const match = String(out).match(/(\d+)\.\d+\.\d+/)
+    return match ? Number(match[1]) : null
+  } catch {
+    return null
+  }
 }
 function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
   reg(
     defineTool({
       name: 'ego_login_import',
       description:
-        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. DISABLED BY DEFAULT since 2026-10 (#69): on Chrome 155 the headless-alias boot + force-kill path reads 0 cookies and was observed to wipe the source profile\'s extension registry / reset its search provider. Set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to run it anyway (older Chrome / Linux only). When enabled it works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
+        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. Blocked only where it is known to damage the source profile (#69): Windows + Chrome 155+ (the junction-alias boot + hard kill path reads 0 cookies and has wiped extension registries / reset the search provider). Linux/macOS and older Chrome versions keep working; EGO_LINUX_LOGIN_IMPORT_FORCE=1 overrides the check anywhere. When enabled it works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
       parameters: {
         source: {
           type: 'string',
@@ -1172,13 +1355,19 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       execute: async (args: Record<string, unknown>) =>
         withEgoLock(async () => {
           try {
-            // Fail-closed stopgap (#69): see loginImportAllowed above.
-            if (!loginImportAllowed()) {
+            // Scoped #69 guard: only Windows + Chrome 155+ is refused (see
+            // loginImportPolicy above).
+            const guardBinary = cfg.chromePath || findChromeBinary()
+            const policy = loginImportPolicy({
+              platform: process.platform,
+              chromeMajor: detectChromeMajorVersion(guardBinary),
+              force: loginImportForced(),
+            })
+            if (!policy.allowed) {
               return {
                 ok: false,
                 disabled: true,
-                error:
-                  'ego_login_import is disabled by default: on Chrome 155 it reads 0 cookies and was observed to wipe the source profile\'s extension registry / reset its search provider after a junction-alias boot and force-kill. Set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to opt in (older Chrome / Linux only).',
+                error: `ego_login_import is disabled here: ${policy.reason}`,
               }
             }
             const domains = Array.isArray(args.domains) ? (args.domains as unknown[]).map(String) : undefined

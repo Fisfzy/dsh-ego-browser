@@ -8,6 +8,7 @@ describe("dual capture config", () => {
       cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 1280, cdpBackstopIntervalMs: 3000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
+      residentExecutor: false, residentIdleMin: 30,
     });
   });
 
@@ -17,6 +18,7 @@ describe("dual capture config", () => {
       cdpFps: 30, cdpQuality: 70, cdpMaxWidth: 1200, cdpBackstopIntervalMs: 5000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
+      residentExecutor: false, residentIdleMin: 30,
     });
     expect(resolveConfig({ cdpFps: 15, castFpsCap: 30 }).cdpFps).toBe(15);
   });
@@ -53,6 +55,26 @@ describe("disableFrameRelay", () => {
     expect(resolveConfig({ disableFrameRelay: 1 } as any).disableFrameRelay).toBe(true);
     expect(resolveConfig({ disableFrameRelay: "false" } as any).disableFrameRelay).toBe(false);
     expect(resolveConfig({ disableFrameRelay: "nonsense" } as any).disableFrameRelay).toBe(false);
+  });
+});
+
+// ── resident executor (issue #56) ──────────
+
+describe("resident executor (#56)", () => {
+  it("defaults to off with a 30-minute idle window", () => {
+    const config = resolveConfig({});
+    expect(config.residentExecutor).toBe(false);
+    expect(config.residentIdleMin).toBe(30);
+  });
+
+  it("accepts the stored forms and clamps the idle window", () => {
+    expect(resolveConfig({ residentExecutor: true } as any).residentExecutor).toBe(true);
+    expect(resolveConfig({ residentExecutor: "1" } as any).residentExecutor).toBe(true);
+    expect(resolveConfig({ residentExecutor: "true" } as any).residentExecutor).toBe(true);
+    expect(resolveConfig({ residentExecutor: "0" } as any).residentExecutor).toBe(false);
+    expect(resolveConfig({ residentIdleMin: 5 }).residentIdleMin).toBe(5);
+    expect(resolveConfig({ residentIdleMin: 0 }).residentIdleMin).toBe(0);
+    expect(resolveConfig({ residentIdleMin: 9999 } as any).residentIdleMin).toBe(30);
   });
 });
 
