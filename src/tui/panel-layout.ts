@@ -6,6 +6,17 @@ export interface PanelRow {
   tone?: 'dim' | 'accent' | 'success' | 'warning' | 'error'
 }
 
+/**
+ * Host `ui.Text` props for a row. dsh-TUI's themed Text resolves `color` as a
+ * theme key (bare names such as 'red' resolve to nothing) and dims via
+ * `dimColor`; every non-dim tone here is also a theme key.
+ */
+export function rowTextProps(row: PanelRow): { dimColor: boolean; color?: Exclude<PanelRow['tone'], 'dim'>; wrap: 'truncate' } {
+  return row.tone === 'dim' || row.tone === undefined
+    ? { dimColor: row.tone === 'dim', wrap: 'truncate' }
+    : { dimColor: false, color: row.tone, wrap: 'truncate' }
+}
+
 export function panelTabs(snapshot: BrowserSnapshot): readonly BrowserTab[] {
   return (snapshot.spaces ?? []).flatMap(space => space.tabs)
 }

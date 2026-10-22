@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BrowserStateStore } from '../src/browser-state.ts'
 import { createPanelController, parseSpaces } from '../src/tui/panel-controller.ts'
-import { hasHumanCheck, layoutPanel } from '../src/tui/panel-layout.ts'
+import { hasHumanCheck, layoutPanel, rowTextProps } from '../src/tui/panel-layout.ts'
 import { displayWidth } from '../src/tui/text.ts'
 
 const tabs = Array.from({ length: 9 }, (_, i) => ({ targetId: String(i), title: `全中文网页标题很长需要按显示宽度截断${i}`, url: `https://example.org/${'long-url/'.repeat(15)}${i}`, active: i === 0 }))
@@ -272,4 +272,14 @@ it('requires the available host dialog confirmation before closing a tab', async
   await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
   expect(h.wire.post).not.toHaveBeenCalled()
   renderer.unmount(); h.dispose()
+})
+
+it('maps row tones to dsh-TUI theme keys and dimColor', () => {
+  // Themed Text treats `color` as a theme key; bare names like 'red' resolve to nothing.
+  expect(rowTextProps({ text: 'a', tone: 'error' })).toEqual({ dimColor: false, color: 'error', wrap: 'truncate' })
+  expect(rowTextProps({ text: 'a', tone: 'warning' })).toEqual({ dimColor: false, color: 'warning', wrap: 'truncate' })
+  expect(rowTextProps({ text: 'a', tone: 'success' })).toEqual({ dimColor: false, color: 'success', wrap: 'truncate' })
+  expect(rowTextProps({ text: 'a', tone: 'accent' })).toEqual({ dimColor: false, color: 'accent', wrap: 'truncate' })
+  expect(rowTextProps({ text: 'a', tone: 'dim' })).toEqual({ dimColor: true, wrap: 'truncate' })
+  expect(rowTextProps({ text: 'a' })).toEqual({ dimColor: false, wrap: 'truncate' })
 })

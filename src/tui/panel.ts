@@ -1,7 +1,7 @@
 import type { EgoContext } from '../types.ts'
 import type { BrowserStateStore } from '../browser-state.ts'
 import { createPanelController, type PanelTransport } from './panel-controller.ts'
-import { hasHumanCheck, layoutPanel, panelTabs } from './panel-layout.ts'
+import { hasHumanCheck, layoutPanel, panelTabs, rowTextProps } from './panel-layout.ts'
 import { truncateCells } from './text.ts'
 import type { TuiBridge } from './integration.ts'
 import type { TuiPanelProps, TuiPanelsService, TuiDialogsService, TuiPanelHost } from './types.ts'
@@ -114,7 +114,7 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
       const rows = layoutPanel(snapshot, props.width, props.height, selection)
       if (closeArmed && rows.length) rows[rows.length - 1] = { text: truncateCells('Press x again to close this tab', props.width), tone: 'warning' }
       else if (message && rows.length) rows[rows.length - 1] = { text: truncateCells(message, props.width), tone: 'error' }
-      return React.createElement(ui.Box, { flexDirection: 'column', width: props.width, height: props.height }, ...rows.map((row, index) => React.createElement(ui.Text, { key: index, dim: row.tone === 'dim', color: row.tone === 'error' ? 'red' : row.tone === 'warning' ? 'yellow' : row.tone === 'success' ? 'green' : row.tone === 'accent' ? 'cyan' : undefined, wrap: 'truncate' }, row.text)))
+      return React.createElement(ui.Box, { flexDirection: 'column', width: props.width, height: props.height }, ...rows.map((row, index) => React.createElement(ui.Text, { key: index, ...rowTextProps(row) }, row.text)))
     }
     const unregister = panels.register({ apiVersion: 1, id: 'browser', title: 'Agent Browser', icon: '◎', minColumns: 28, component: BrowserPanel })
     // register prefixes the plugin id, while open/badge require that full owned id.
