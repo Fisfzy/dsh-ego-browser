@@ -2,7 +2,7 @@
   "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "id": "dsh-ego-browser",
   "name": "ego-browser",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "manifestVersion": "0.15",
   "facets": {
     "host": {
@@ -71,6 +71,22 @@
               "label": "空闲自动回收 (Idle auto-stop, minutes)",
               "kind": "number",
               "hint": "N 分钟没有任何 ego_* 调用后自动关闭后台浏览器进程（0 = 关闭此功能）。下次调用会自动冷启动（约 2-4 秒）。观察窗正在观看不算活动。"
+            },
+            {
+              "path": [
+                "residentExecutor"
+              ],
+              "label": "常驻执行进程 (Resident executor)",
+              "kind": "boolean",
+              "hint": "复用同一个 ego-browser --serve 进程执行 ego_* 调用：首次调用支付启动开销，之后每次约 1-2ms；常驻进程失效时自动回退到一次性 spawn。默认关闭。"
+            },
+            {
+              "path": [
+                "residentIdleMin"
+              ],
+              "label": "常驻空闲停止 (Resident idle stop, minutes)",
+              "kind": "number",
+              "hint": "N 分钟没有 ego_* 调用后停止常驻进程（0 = 一直保留到插件卸载）。不影响浏览器本体。"
             },
             {
               "path": [

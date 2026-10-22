@@ -2,6 +2,28 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.8.8] - 2026-10-22 — 原生右侧边栏 + 常驻执行器 + 孤儿标签清扫 + 登录导入定向放行
+
+### 新增
+- **原生右侧边栏支持（#64）**：DSH ≥ 0.2.1 自带右侧边栏（`@deepseek-ai/dsh-client-ui-sidebar-right`）时，观察窗注册为原生 Tab——`dsh-ego-browser:watch` 类型 + `sidebar.right.pane.tab` 面板 + guide 入口（自绘「浏览器窗口 + agent 光标」图标）。检测用 `ctx.inject(['sidebarRight','sidebarRightTabs'])` 等待服务（服务晚于插件就绪时不再漏检），优先级 **原生 > dsh-better-sidebar > 浮动球**；升级挂载时会释放上一个宿主，不会出现两份面板。自动打开仍按调用会话作用域。
+- **常驻执行器（#56 第一期，可选）**：新增 `residentExecutor`（默认关）与 `residentIdleMin`（默认 30 分钟，0 = 保留到卸载）。开启后 `ego_*` 调用复用同一个 `ego-browser --serve` 进程：首次调用支付启动开销，之后每次 **~1–2 ms**（一次性 spawn 基准 ~340 ms）。浏览器被空闲回收/崩溃后，下一次调用自动回退到一次性 spawn 并重新拉起浏览器（带启动重试），随后恢复常驻；**已经写出的请求不会重试**，避免重复点击/填表。设置卡片（插件 → dsh-ego-browser → 配置）与 TUI settings 字段均已接线。
+- **TUI 设置字段**：`dsh-plugin.json` 的 SettingsSection 补充常驻两项。
+
+### 修复
+- **浏览器在常驻进程下被停/崩溃后请求永久失败（#56）**：`--serve` 的 CDP socket 在浏览器停止后不会恢复，旧实现之后每次请求都报 `CDP channel is not open`。现在 `--serve` 每请求检查 `cdp.isOpen()`，失效立即返回可重试的 `browser is not reachable`；插件把它归为冷启动错误，回收常驻进程并走一次性 spawn 恢复（10s cooldown 后才重新常驻）。Windows 上启动失败不再空等 Xvfb（本来不存在，只会多等 10s+）。
+- **孤儿标签（#67）**：`reconcile()` 增加两阶段 + 120s 宽限的孤儿 page target 清扫——关闭不属于任何 space 的标签（崩溃恢复/手动打开），跳过 `about:blank`/`chrome://`，并在 `closedSpaces` 留下 `(orphan tab)` 轨迹。此前 `pruneIdle`/`pruneAbandoned`/`--prune-spaces` 只遍历 `state.spaces`，扫不到这些孤儿。
+- **登录导入定向放行（#69）**：`ego_login_import` 从"全禁"改为仅 **Windows + Chrome ≥155** 拒绝（该组合的 junction 别名 + 无头启动 + 强杀路径会读到 0 条 cookie 并破坏源 profile）；Linux / macOS / 旧 Chrome 正常可用，`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 可在任何环境强制放行。工具会在错误信息里带上检测到的版本。
+
+### 变更
+- README 同步 v0.8.8：版本号、DSH 兼容矩阵（0.2.1 原生侧边栏）、侧边栏三种形态、常驻执行器、登录导入定向放行、Windows 已知限制。
+- `dsh-plugin.json` 版本 0.8.8。
+- 测试：181 passed / 5 skipped（新增常驻传输、恢复契约、配置与孤儿选择器用例）。
+
+### 验证
+- 真实桌面端（DSH 0.2.1-rc.2）：常驻首调 1485ms（含浏览器冷启动）→ 之后 1ms；`--stop` 后下一次调用自动恢复并重新拉起浏览器；冷却期走一次性；冷却后回到新常驻；全程仅 1 个常驻进程、无残留。
+- 原生侧边栏（临时 web profile）：guide 出现「Agent 浏览器」及图标，面板正常推流/输入。
+- #69：Windows + Chrome 155 正确拒绝并给出原因。
+
 ## [0.8.7] - 2026-10-22 — 工具语义修复 + Windows 孤儿锁 + 登录导入止损 + 回收器会话清理
 
 ### 修复

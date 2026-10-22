@@ -11,17 +11,17 @@
   <img src="https://img.shields.io/badge/Node-%3E%3D22-brightgreen?logo=node.js&logoColor=white" alt="Node >= 22">
 </p>
 
-> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.8.7**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
+> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.8.8**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
 
 ### 版本兼容矩阵
 
 | 依赖 | 最低版本 | 推荐版本 | 说明 |
 |---|---|---|---|
-| **DSH** (DeepSeek Harness) | `0.1.2-rc.1` | `≥ 0.1.2-rc.1`（v0.8.6 起适配 0.1.7 settings，截至 0.1.7 验证通过） | `engines.dsh` 声明地板；peer 依赖同步锁定 `>=0.1.2-rc.1`。0.1.0-rc.x / 0.1.1-rc.x 请使用 v0.8.0 及更早版本 |
+| **DSH** (DeepSeek Harness) | `0.1.2-rc.1` | `≥ 0.1.2-rc.1`（v0.8.6 起适配 0.1.7 settings；v0.8.8 起支持 0.2.1 原生右侧边栏，截至 0.2.1 验证通过） | `engines.dsh` 声明地板；peer 依赖同步锁定 `>=0.1.2-rc.1`。0.1.0-rc.x / 0.1.1-rc.x 请使用 v0.8.0 及更早版本 |
 | **dsh-better-sidebar** | `0.12.2`（可选） | `≥ 0.17.1` | 未安装时自动回退浮动观察球；`< 0.12.2` 可运行但外部链接拦截（`urlTarget`）静默降级 |
 | **Node.js** | `22` | — | harness 环境自带 |
 
-**DSH 全版本适配说明**：v0.8.7 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x 桌面端的 0.1.7 settings 路径）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.1.7 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
+**DSH 全版本适配说明**：v0.8.8 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
 
 **dsh-better-sidebar 适配说明**：ego-browser 通过 `ctx.betterSidebar` 服务（try-catch 防御性获取）注册侧边栏 Tab 并监听外部链接。关键 API 引入版本：
 
@@ -35,11 +35,13 @@
 
 **DSH 版本支持详情**：v0.8.2 → v0.8.3 主要变更：合并 6 个社区 PR（root/xvfb/macOS headless 适配、rc.1 兼容、Windows 稳定性），修复无认证 `/api/ego/*` 路由安全漏洞、无 dsh-better-sidebar 宿主 client 启动失败（#29）、Windows 冷启动回归（#22 引入的 Xvfb 误判），并修复 gateway 设置白名单缺 `egoCliArgs`/`chromeArgs`。适配点：client 运行时改名（`@deepseek-ai/dsh-client-store`）、client 模块注册 id 与装载行名按声明包名、`dsh.client.inject` 仅声明真实模块图行、`webServer` 以嵌套注入交付（可选服务），并同步侧边栏 Tab（dsh-better-sidebar）模式。
 
-**侧边栏支持（[dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar)）**：当宿主安装了 `dsh-better-sidebar`（推荐 ≥ v0.12.2）时，实时观察窗注册为**侧边栏原生 Tab**——「Agent 浏览器」出现在侧边栏「+」菜单中，点击即打开并随侧边栏抽屉固定展示；agent 首次调用 `ego_*` 工具时会自动打开该 Tab（v0.8.5 起按调用会话作用域打开，多会话不再弹错位置）。未安装 `dsh-better-sidebar` 时自动回退为右下角**浮动观察球**（`#dsh-ego-fab`）模式。两种形态共用同一套 SSE 实时推流 / 点击 / 输入 / 下载捕获能力。观察窗还提供一个「弹出窗口」按钮：无头（headless）运行的 agent 浏览器可一键替换为同 Profile 的有头窗口（标签页保留），方便手动接管。
+**侧边栏支持**：v0.8.8 起优先注册进 **DSH 原生右侧边栏**（`@deepseek-ai/dsh-client-ui-sidebar-right`，DSH ≥ 0.2.1 桌面端自带）——「Agent 浏览器」出现在侧边栏「+」的新标签页列表里（带自绘图标），点击打开并随侧边栏抽屉固定展示；agent 首次调用 `ego_*` 工具时自动打开该 Tab（按调用会话作用域，多会话不会弹错位置）。宿主没有原生右侧边栏时，回退到 [dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar)（推荐 ≥ v0.12.2）的原生 Tab；两者都没有时回退为右下角**浮动观察球**（`#dsh-ego-fab`）。三种形态共用同一套 SSE 实时推流 / 点击 / 输入 / 下载捕获能力。观察窗还提供一个「弹出窗口」按钮：无头（headless）运行的 agent 浏览器可一键替换为同 Profile 的有头窗口（标签页保留），方便手动接管。
 
-**登录态导入（v0.8.5 新增；v0.8.7 起默认关闭）**：设置页「从系统浏览器导入登录态」或工具 `ego_login_import`，把你日常 Chrome/Edge/Brave 里的登录 cookie **按域名**复制进 agent 浏览器（真实二进制无头启动 + CDP 透传读取，兼容 Chrome 127+ 的 App-Bound Encryption，不做离线解密；源浏览器运行中可选择优雅关闭后导入，窗口下次启动自动恢复）。cookie 值不出现在任何日志与输出中；导入前自动备份源 cookie 库，异常清空自动还原。配合默认的磁盘持久化 Profile，导入的登录态跨重启永久保留。
+**登录态导入（v0.8.5 新增；v0.8.7 起定向禁用；v0.8.8 起仅危险环境拒绝）**：设置页「从系统浏览器导入登录态」或工具 `ego_login_import`，把你日常 Chrome/Edge/Brave 里的登录 cookie **按域名**复制进 agent 浏览器（真实二进制无头启动 + CDP 透传读取，兼容 Chrome 127+ 的 App-Bound Encryption，不做离线解密；源浏览器运行中可选择优雅关闭后导入，窗口下次启动自动恢复）。cookie 值不出现在任何日志与输出中；导入前自动备份源 cookie 库，异常清空自动还原。配合默认的磁盘持久化 Profile，导入的登录态跨重启永久保留。
 
-> ⚠️ **v0.8.7 起 `ego_login_import` 默认禁用（fail-closed）**：Chrome 155 上该路径读到 0 条 cookie，且被观测到会清空源 profile 的扩展注册表并重置默认搜索引擎（详见 [#69](https://github.com/Fisfzy/dsh-ego-browser/issues/69)）。工具现在直接返回可执行说明；确认你的环境不受影响后，可设 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 放行。彻底修复仍在跟踪中。
+> ⚠️ **仅 Windows + Chrome ≥ 155 会被拒绝**：该组合上 junction 别名 + 无头启动 + 强杀路径读到 0 条 cookie，且被观测到会清空源 profile 的扩展注册表并重置默认搜索引擎（详见 [#69](https://github.com/Fisfzy/dsh-ego-browser/issues/69)）。Linux / macOS / 旧版 Chrome 正常可用；确认环境不受影响后，可设 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 在任何环境放行。彻底修复仍在跟踪中。
+
+**常驻执行器（v0.8.8，可选，默认关闭）**：设置页「常驻执行进程」开启后，`ego_*` 调用复用同一个 `ego-browser --serve` 进程——首次调用支付启动开销，之后每次 **~1–2 ms**（一次性 spawn 基准 ~340 ms）。浏览器被空闲回收或崩溃后，下一次调用自动回退到一次性 spawn 并重新拉起浏览器（带启动重试），随后恢复常驻；**已经写出的请求不会重试**，避免重复点击/填表。空闲停止时间可配（默认 30 分钟）。
 
 把 [CitroLabs/ego-lite](https://github.com/CitroLabs/ego-lite)（给 AI Agent 用的 Chromium）接入 DeepSeek Harness：以 **33 个结构化 `ego_*` 工具**驱动浏览器，并配一套**实时观察前端口**——agent 后台操作网页时，你能像看直播一样看到它正在浏览的每个页面，还能直接操作它。
 
@@ -102,6 +104,7 @@
 
 ## ✨ 近期亮点
 
+- **v0.8.8**：**原生右侧边栏**——观察窗优先注册进 DSH 自带的右侧边栏（`sidebar.right.pane.tab` + guide 入口 + 自绘图标），`dsh-better-sidebar` 与浮动球依次回退；服务晚于插件就绪时用 `ctx.inject` 等待。**常驻执行器（可选）**——`ego_*` 调用复用同一个 `ego-browser --serve` 进程，首次启动后每次 ~1–2 ms（一次性 spawn 约 340 ms）；浏览器被停/崩溃后自动回退一次性 spawn 恢复，再回到常驻；已写出的请求不重试。**稳定性**——`reconcile()` 清扫不属于任何 space 的孤儿标签（#67），冷启动不再堆积标签；Windows 上浏览器启动失败不再空等 Xvfb。**登录导入**——`ego_login_import` 从"全禁"改为仅 Windows + Chrome ≥155 拒绝（#69）。
 - **v0.8.7**：**工具语义修复**——`ego_wait_for_url` 先比对当前 URL 再等未来导航（带 `matchedCurrent`）、`ego_wait_for_response` 超时不再抛错、`ego_dialog` 失败时给出可执行提示、`ego_script`/`ego_cli` 文档写明 `@@DSH_RESULT@@` 哨兵并支持最后一行 JSON 兜底。**Windows 稳定性**——`clearProfileLock()` 在 win32 上真正清理孤儿 Chrome（此前是永久 no-op，一次非优雅退出会让 agent 浏览器再也打不开）。**安全**——`ego_login_import` 默认禁用（fail-closed，`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 才放行）。**回收器**——`--stop` 后清理 `Default/Sessions/`，冷启动不再静默复活旧标签。**观感**——光标箭头与手形不再重叠；CDP 预览默认宽度 960 → 1280。合并 PR #63（`--serve` 常驻传输，默认仍走 spawn 路径）。
 - **v0.8.6**：登录态导入安全加固（#61 不再可能损坏源 cookie 库）、人机验证误报修复（#62，loopback 不探测、要求挑战短语）、DSH 0.1.7 设置页适配（插件页行配置 + `settings/document-updated` 订阅）。
 - **v0.8.0**：**侧边栏 Tab 集成**——当 `dsh-better-sidebar` 可用时，实时查看窗注册为侧边栏原生 Tab（而非浮动浮窗），`ego_browser` 工具首次调用自动展开；内置 `EgoBrowserTab` React 组件 + `LivePreviewController` 实时帧管道。`dsh-better-sidebar` **不是 peer 依赖**（`ctx.get()` 机会性消费），没装就退回浮动浮窗，两种部署都干净。
@@ -160,7 +163,7 @@ dshx list                                                # 应显示：[on] ego-
 | 交互 | `ego_click` `ego_fill` `ego_hover` `ego_drag` `ego_select` `ego_check` `ego_key` `ego_scroll` |
 | 执行/调试 | `ego_js`（页面求值） `ego_cdp`（原始 CDP） `ego_cli`（任意 heredoc） `ego_script`（多步脚本） |
 | 输出 | `ego_screenshot` `ego_download` `ego_upload` |
-| 会话/安全 | `ego_auth_flush`（登录落盘） `ego_login_import`（系统浏览器登录态导入，v0.8.7 默认关闭） `ego_captcha` `ego_dialog` |
+| 会话/安全 | `ego_auth_flush`（登录落盘） `ego_login_import`（系统浏览器登录态导入，v0.8.7 起定向禁用：仅 Windows+Chrome≥155） `ego_captcha` `ego_dialog` |
 | 元工具 | `ego_help` `ego_doctor` `ego_http` |
 
 > 导航/等待语义（v0.8.7）：`ego_wait_for_url` 先比对当前 URL 再等未来导航，结果带 `matchedCurrent`；`ego_wait_for_response` 超时返回结构化 `reached:false`，不再抛错；两个等待都只观察**本次调用期间**的事件——触发动作与等待要放在同一个 `ego_script` 里。`ego_script`/`ego_cli` 的脚本需以 `console.log('@@DSH_RESULT@@' + JSON.stringify({...}))` 结尾（忘记哨兵时会兜底解析最后一行 JSON，并标记 `fallback: true`）。
@@ -207,9 +210,9 @@ pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-ca
 
 ## 已知限制（诚实说明）
 
-- **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。v0.8.7 修复了孤儿 Chrome 占锁（#70），但强杀/崩溃后的 profile 恢复仍建议非必要不中断浏览器进程。
+- **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。v0.8.7 修复了孤儿 Chrome 占锁（#70），v0.8.8 起崩溃/回收后遗留的孤儿标签会被自动清扫（#67），但强杀/崩溃后的 profile 恢复仍建议非必要不中断浏览器进程。
 - **macOS**：需要**手动**在设置里填 `chromePath`（`.app` 路径），`COMMON_CHROME_BINS` 不含 macOS 路径；且无 `$DISPLAY` 时 headed 路径会去找 Xvfb（macOS 上不存在）。这两点（#65/#68）**暂缓修复**——维护者暂无 Mac 设备验证，不想发布未经实测的平台适配；欢迎有 Mac 环境的朋友提 PR。
-- **登录态导入**：v0.8.7 起 `ego_login_import` 默认禁用（fail-closed），原因见 #69；确认环境无风险后用 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 放行。
+- **登录态导入**：v0.8.7 起 `ego_login_import` 定向禁用——仅 **Windows + Chrome ≥155** 拒绝（原因见 #69），Linux / macOS / 旧版 Chrome 正常可用；确认环境无风险后用 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 可在任何环境放行。
 - **FFmpeg 平台捕获**：Windows 已使用 `gfxcapture(HWND)`，需要包含该 filter 的新构建；PATH 中的旧 FFmpeg 会被跳过并提示下载兼容版本。Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop；macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
 - **安装环境**：本仓库的 DSH peer 包不全在公共 npm registry。普通 `pnpm install` 可能在解析 `@deepseek-ai/*` peer 时失败；DSH profile 安装应提供这些 peer。CDP 不依赖 FFmpeg，也不会在插件安装阶段下载二进制。
 - **快照质量**：Linux 用 CDP `DOMSnapshot` 重建语义树，非 macOS 内核级，复杂 iframe/画布场景可能降级。
