@@ -67,7 +67,11 @@ export function installBrowserPanel(ctx: EgoContext, config: PanelConfig, store:
       const closing = React.useRef(false)
       const mounted = React.useRef(true)
       React.useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-      React.useEffect(() => store.subscribe(() => setSnapshot(store.getSnapshot())), [])
+      React.useEffect(() => {
+        if (!props.visible) return
+        setSnapshot(store.getSnapshot())
+        return store.subscribe(() => setSnapshot(store.getSnapshot()))
+      }, [props.visible])
       React.useEffect(() => {
         host = props.host
         return () => { if (host === props.host) host = undefined }
