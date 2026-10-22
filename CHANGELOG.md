@@ -20,6 +20,7 @@
 ### Added — TUI thumbnail (PR3)
 - Display one-shot browser PNGs through the host `ui.Image` as fresh RGBA buffers, with terminal-cell sizing, preview presentation, and a text fallback.
 - Refresh on visible tab selection, tool completion, or `r`; stop requesting frames while hidden and discard stale responses. No continuous screenshot loop is introduced.
+- Show the existing capture backend/state in a bounded text row without additional requests, and include an English companion to the TUI guide.
 
 ### Added — TUI side panel (PR2)
 - Register an optional 28-column Agent Browser panel with global browser state, tab selection, recent tool results, and keyboard controls.

@@ -179,6 +179,8 @@ dshx list                                                # 应显示：[on] ego-
 
 ### 页面缩略图
 
+worker 的状态响应包含 `capture` 时，面板另显示一行捕获后端、状态和可选状态码；它来自已有状态刷新，不额外轮询或启动直播，禁用回传或浏览器停止后清除。
+
 有足够面板高度时，顶部通过宿主 `ui.Image` 展示所选标签的单帧预览。选择标签、可见面板内工具执行结束以及按 `r` 会刷新一次；没有持续截图计时器，不实现可选的 `l` 实时模式，面板隐藏时不会发起截图。正在进行的请求在面板隐藏、选择变化或卸载后不会更新旧预览。`disableFrameRelay=true` 时不启动截图工作。
 
 截图由 worker 的 `/api/snapshot?targetId=…&maxWidth=…` 通过既有 CDP 控制会话产生 PNG，不调用 `ego_screenshot`、不进入工具互斥锁、不启动直播订阅。缩略图按面板列数乘以常规 8 像素的单元宽度请求，并由宿主按终端列/行渲染；PNG 解码得到的 `source.width/height` 保留真实像素维度，`Image.width/height` 是终端单元数。每帧独立分配 RGBA 字节缓冲区，不原地改写已经交给宿主的图像。
@@ -194,6 +196,8 @@ Each integration is enabled only when its optional host service is available. `t
 Metadata polling runs about every two seconds only while the panel is visible; tool completion may request one refresh while hidden. When there is enough vertical space, a selected-page thumbnail refreshes on visible selection changes, tool completion and `r`. It uses a one-shot worker PNG capture through the existing CDP session, independent of the tool execution lock. Fresh RGBA pixels are passed to `ui.Image` with terminal-cell dimensions, `presentation: 'preview'`, alt text and a text fallback. No continuous screenshot mode is enabled. Pixel width is estimated from columns using an eight-pixel cell; the host handles terminal graphics rendering.
 
 `disableFrameRelay` suppresses TUI browser/membership reads, worker startup and screenshot requests while retaining tool activity and an explanation. Missing services silently omit their contributions; if all TUI services are absent, this integration adds no I/O or polling. Hide/unmount and plugin teardown release the relevant timers and subscriptions. The existing web/desktop watch routes and worker policy are unchanged; shared safe tool-card titles apply to both surfaces. Real DSH/dsh-TUI, Chrome takeover and Kitty/Sixel rendering still require verification on the target installation.
+
+When the existing metadata response includes `capture`, the panel displays its backend, state and optional code in one line. This uses the same metadata refresh and starts no additional request or live stream; disabled relay or a stopped browser clears the row.
 
 ## 工具清单（33 个，前缀 `ego_`，完整索引见 `ego_help`）
 
