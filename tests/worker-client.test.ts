@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveConfig } from '../src/config.ts'
-import { knownWorkerState, makeEnsureWorker, proxyFrom, proxyPost, readBrowserState } from '../src/worker-client.ts'
+import { knownWorkerState, makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpaceGroups } from '../src/worker-client.ts'
 
 describe('shared worker client', () => {
   let stateDir: string
@@ -29,6 +29,16 @@ describe('shared worker client', () => {
     expect(await readBrowserState()).toEqual({ running: false, headless: false })
     await writeFile(join(stateDir, 'browser.json'), 'invalid')
     expect(await readBrowserState()).toEqual({ running: false })
+  })
+
+  it('reads task-space membership without creating or modifying state, and tolerates absent or malformed metadata', async () => {
+    expect(await readTaskSpaceGroups()).toEqual([])
+    await writeFile(join(stateDir, 'task-spaces.json'), JSON.stringify({ spaces: [
+      { name: 'Research', targetIds: ['a', 'b'] }, { name: 'Writing', targetIds: ['c', 123] }, { name: 'Broken' },
+    ] }))
+    expect(await readTaskSpaceGroups()).toEqual([{ name: 'Research', targetIds: ['a', 'b'] }, { name: 'Writing', targetIds: ['c'] }])
+    await writeFile(join(stateDir, 'task-spaces.json'), '{partial write')
+    expect(await readTaskSpaceGroups()).toEqual([])
   })
 
   it('keeps construction lazy and failed launches throttled for eight seconds', async () => {

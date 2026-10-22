@@ -188,6 +188,23 @@ export function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegMan
   }
 }
 
+export interface TaskSpaceGroup { readonly name: string; readonly targetIds: readonly string[] }
+
+/** Read-only membership metadata; never reconcile, prune, or mutate task spaces. */
+export async function readTaskSpaceGroups(): Promise<readonly TaskSpaceGroup[]> {
+  try {
+    const { readFile } = await import('node:fs/promises')
+    const state = JSON.parse(await readFile(join(resolveEgoStateDir(), 'task-spaces.json'), 'utf8')) as { spaces?: unknown }
+    if (!Array.isArray(state.spaces)) return []
+    return state.spaces.flatMap(value => {
+      if (!value || typeof value !== 'object' || typeof value.name !== 'string' || !Array.isArray(value.targetIds)) return []
+      return [{ name: value.name, targetIds: value.targetIds.filter((id: unknown): id is string => typeof id === 'string') }]
+    })
+  } catch {
+    return []
+  }
+}
+
 export interface BrowserProcessState {
   running: boolean
   headless?: boolean

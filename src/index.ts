@@ -44,7 +44,7 @@ import { importLoginCookies } from './login-import.ts'
 import { BrowserStateStore } from './browser-state.ts'
 import { installTui } from './tui/integration.ts'
 import { installBrowserPanel } from './tui/panel.ts'
-import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState } from './worker-client.ts'
+import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpaceGroups } from './worker-client.ts'
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
@@ -970,7 +970,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   const browserState = new BrowserStateStore()
   const tui = installTui(ctx, browserState)
   installBrowserPanel(ctx, cfg, browserState, tui, {
-    createTransport: () => ({ readBrowserState, ensureWorker: makeEnsureWorker(ctx, cfg, ffmpegManager), get: proxyFrom, post: proxyPost }),
+    createTransport: () => ({ readBrowserState, readTaskSpaceGroups, ensureWorker: makeEnsureWorker(ctx, cfg, ffmpegManager), get: proxyFrom, post: proxyPost }),
     openAgentWindow: () => openAgentWindow(ctx, cfg),
   })
   cfg.onColdStartFailure = () => tui.toast('Agent Browser could not start after retrying. Run ego_doctor for details.', 'error')

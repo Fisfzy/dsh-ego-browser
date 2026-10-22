@@ -1,7 +1,9 @@
 import type { BrowserSnapshot, BrowserStateStore, BrowserTab } from '../browser-state.ts'
+import type { TaskSpaceGroup } from '../worker-client.ts'
 import { sanitizeText } from './text.ts'
 
 export interface PanelTransport {
+  readTaskSpaceGroups?(): Promise<readonly TaskSpaceGroup[]>
   readBrowserState(): Promise<{ running: boolean; headless?: boolean }>
   ensureWorker(): Promise<number | null>
   get(port: number, path: string): Promise<unknown | null>
@@ -9,7 +11,7 @@ export interface PanelTransport {
 }
 
 /** The worker currently calls its flat target list `spaces`; do not invent task spaces. */
-export function parseSpaces(value: unknown): BrowserSnapshot['spaces'] {
+export function parseSpaces(value: unknown, groups: readonly TaskSpaceGroup[] = []): BrowserSnapshot['spaces'] {
   if (!value || typeof value !== 'object') return []
   const rows = (value as { spaces?: unknown }).spaces
   if (!Array.isArray(rows)) return []
@@ -22,7 +24,15 @@ export function parseSpaces(value: unknown): BrowserSnapshot['spaces'] {
   if (rows.some(row => row && typeof row === 'object' && Array.isArray(row.tabs))) {
     return rows.filter(row => row && typeof row === 'object' && Array.isArray(row.tabs)).map(row => ({ name: sanitizeText(typeof row.name === 'string' ? row.name : 'Unnamed space'), tabs: parseTabs(row.tabs) }))
   }
-  return [{ name: 'Global/default group', tabs: parseTabs(rows) }]
+  const tabs = parseTabs(rows)
+  const remaining = new Map(tabs.map(tab => [tab.targetId, tab]))
+  const spaces = groups.flatMap(group => {
+    const members = group.targetIds.flatMap(id => { const tab = remaining.get(id); if (!tab) return []; remaining.delete(id); return [tab] })
+    return members.length ? [{ name: sanitizeText(group.name), tabs: members }] : []
+  })
+  if (!spaces.length) return [{ name: 'Global/default group', tabs }]
+  if (remaining.size) spaces.push({ name: 'Unassigned / global', tabs: [...remaining.values()] })
+  return spaces
 }
 
 export interface PanelController {
@@ -58,7 +68,9 @@ export function createPanelController(store: BrowserStateStore, config: { readon
       if (!port) { store.update({ lastError: 'Browser worker unavailable' }); return }
       const payload = await transport.get(port, '/api/spaces')
       if (disposed || epoch !== generation || config.disableFrameRelay) return
-      store.update(payload ? { spaces: parseSpaces(payload), lastError: undefined } : { lastError: 'Could not refresh browser tabs' })
+      const groups = payload ? await transport.readTaskSpaceGroups?.() ?? [] : []
+      if (disposed || epoch !== generation || config.disableFrameRelay) return
+      store.update(payload ? { spaces: parseSpaces(payload, groups), lastError: undefined } : { lastError: 'Could not refresh browser tabs' })
     })().catch(error => {
       if (!disposed && epoch === generation) store.update({ lastError: sanitizeText(String(error)) })
     }).finally(() => { pending = undefined })

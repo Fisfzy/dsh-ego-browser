@@ -19,6 +19,7 @@
 
 ### Added — TUI side panel (PR2)
 - Register an optional 28-column Agent Browser panel with global browser state, tab selection, recent tool results, and keyboard controls.
+- Group live targets by read-only task-space membership metadata, with explicit fallback groups for unknown targets.
 - Add opt-in `tuiAutoOpenPanel`, human-verification warnings, host-dialog or double-press close confirmation, and lifecycle-bound visible polling.
 - Share the existing lazy worker client with the panel without changing web routes or worker startup policy.
 

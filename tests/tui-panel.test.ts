@@ -5,7 +5,7 @@ import { hasHumanCheck, layoutPanel } from '../src/tui/panel-layout.ts'
 import { displayWidth } from '../src/tui/text.ts'
 
 const tabs = Array.from({ length: 9 }, (_, i) => ({ targetId: String(i), title: `全中文网页标题很长需要按显示宽度截断${i}`, url: `https://example.org/${'long-url/'.repeat(15)}${i}`, active: i === 0 }))
-const transport = () => ({ readBrowserState: vi.fn(async () => ({ running: true, headless: true })), ensureWorker: vi.fn(async () => 1234), get: vi.fn(async () => ({ spaces: tabs })), post: vi.fn(async () => ({ status: 200, body: { ok: true } })) })
+const transport = () => ({ readTaskSpaceGroups: vi.fn(async () => []), readBrowserState: vi.fn(async () => ({ running: true, headless: true })), ensureWorker: vi.fn(async () => 1234), get: vi.fn(async () => ({ spaces: tabs })), post: vi.fn(async () => ({ status: 200, body: { ok: true } })) })
 
 afterEach(() => vi.useRealTimers())
 
@@ -29,6 +29,14 @@ describe('browser panel layout', () => {
     store.update({ spaces: parseSpaces({ spaces: [{ ...tabs[0], humanCheck: { detected: true, kind: 'captcha' } }] }) })
     expect(hasHumanCheck(store.getSnapshot())).toBe(true)
   })
+  it('groups live tabs by exact persisted target ids and labels unknown tabs separately', () => {
+    const groups = [{ name: 'Research', targetIds: ['0', 'gone'] }, { name: 'Writing', targetIds: ['1'] }]
+    const spaces = parseSpaces({ spaces: tabs.slice(0, 3) }, groups)!
+    expect(spaces.map(space => space.name)).toEqual(['Research', 'Writing', 'Unassigned / global'])
+    expect(spaces.map(space => space.tabs.map(tab => tab.targetId))).toEqual([['0'], ['1'], ['2']])
+    expect(parseSpaces({ spaces: tabs.slice(0, 1) }, [{ name: 'Stale', targetIds: ['gone'] }])?.[0]?.name).toBe('Global/default group')
+  })
+
   it('shows recent success and failure with elapsed time and safe truncation', () => {
     const store = new BrowserStateStore()
     for (let i = 0; i < 6; i++) {
@@ -77,6 +85,7 @@ describe('browser panel lifecycle', () => {
     await controller.close('1')
     await controller.flush()
     expect(wire.readBrowserState).not.toHaveBeenCalled()
+    expect(wire.readTaskSpaceGroups).not.toHaveBeenCalled()
     expect(wire.ensureWorker).not.toHaveBeenCalled()
     expect(store.getSnapshot().frameRelayDisabled).toBe(true)
     controller.dispose()
