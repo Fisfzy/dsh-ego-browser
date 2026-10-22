@@ -46,6 +46,11 @@ Linux-only commands:
                             long as its session keeps using it. Set
                             EGO_LINUX_SPACE_IDLE_MIN to change the window, or
                             0 to sweep only by hand
+  --serve                   resident request/response loop over stdio: one JSON
+                            request per line ({"id","code"}) in, one JSON response
+                            per line ({"id","ok","stdout","stderr"}) out. Pays
+                            process startup and harness import once instead of per
+                            call. Not for interactive use — a host drives it.
   --stop                    stop the backing browser
   --import-chrome-profile   copy your real Chrome profile in, to inherit logins
   --install-desktop-entry   add it to your app launcher, with an icon
@@ -269,6 +274,206 @@ async function pruneSpaces() {
   return 0;
 }
 
+/**
+ * `--serve`: a resident request/response loop over stdio, so a host that makes
+ * many `ego_*` calls can pay process startup and harness import ONCE instead of
+ * per call. Measured on Windows/Edge 151: ~350ms per call via spawn-per-call
+ * (of which ~246ms is the host's own spawn path) versus ~8ms resident.
+ *
+ * Protocol — newline-delimited JSON, one exchange per line:
+ *
+ *   --> {"id":"1","code":"<the heredoc the plugin would have piped to stdin>"}
+ *   <-- {"id":"1","ok":true,"stdout":"<verbatim script stdout>","stderr":"<...>"}
+ *   <-- {"id":"1","ok":false,"error":"<message>","stdout":"...","stderr":"..."}
+ *
+ * The frame carries the streams VERBATIM and nothing else. It deliberately does
+ * NOT wrap or re-emit the `@@DSH_RESULT@@` sentinel: that sentinel is printed by
+ * the script the caller generates, not by this runner, and the caller's reader
+ * already scans the collected stdout backwards for the last sentinel-carrying
+ * line. If this layer also stamped one, it would have to re-implement last-wins
+ * and a script that merely *prints* sentinel-shaped text (very reachable — any
+ * script that echoes a source file) could be mistaken for the response. Keeping
+ * the sentinel in exactly one place means the blob handed to the reader is
+ * byte-identical to the one-shot path, so collision is not possible.
+ *
+ * Two traps this loop has to work around, both verified by experiment:
+ *
+ *  1. `console.log` is re-pointed at the run's output sink by the harness's
+ *     `executionContext()`, permanently, for the life of the process. From the
+ *     second request onward, calling `console.log` here would route protocol
+ *     output into the captured stdout of whichever script is running (or drop it
+ *     entirely). Protocol lines therefore go through `process.stdout.write`,
+ *     captured before any script runs.
+ *
+ *  2. A script can leave globals behind — and not only NEW ones. Snapshotting the
+ *     key set is not enough: `globalThis.fetch = ...` leaves the key set
+ *     unchanged while replacing the value. The snapshot records VALUES (shallow
+ *     references, ~80 entries) and the restore both deletes additions and puts
+ *     overwritten values back, so a resident process matches spawn-per-call
+ *     isolation without the harness needing to know.
+ */
+
+/** Collect a sink's text without touching the process streams. */
+function createCapture() {
+  const chunks = [];
+  return {
+    sink: { write: (chunk) => chunks.push(String(chunk)) },
+    text: () => chunks.join(""),
+  };
+}
+
+/**
+ * Snapshot every own property of `globalThis`, keys AND descriptors.
+ *
+ * `Object.entries`/`Object.keys` are not usable here: on this Node they see 15 of
+ * 135 own globals, silently omitting `Object`, `Function`, `Promise`, `Error` and
+ * the rest of the built-ins — exactly the ones a script is most likely to
+ * poison. `Object.getOwnPropertyNames` sees all of them.
+ *
+ * Descriptors, not values, because a script can replace a property's
+ * ACCESSOR as well as its value, and because restoring a non-writable property
+ * by assignment throws in strict mode.
+ *
+ * @returns {Map<string, PropertyDescriptor>}
+ */
+function snapshotGlobals() {
+  const snapshot = new Map();
+  for (const key of Object.getOwnPropertyNames(globalThis)) {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, key);
+    if (descriptor !== undefined) snapshot.set(key, descriptor);
+  }
+  return snapshot;
+}
+
+/**
+ * Undo a script's global side effects: remove what it added, put back what it
+ * replaced. Together these make a resident process match spawn-per-call
+ * isolation without the harness having to know.
+ *
+ * @param {Map<string, PropertyDescriptor>} before - from {@link snapshotGlobals}.
+ */
+function restoreGlobals(before) {
+  for (const key of Object.getOwnPropertyNames(globalThis)) {
+    if (before.has(key)) continue;
+    // A global the script invented. Deleting is the spawn-per-call equivalent.
+    try {
+      delete globalThis[key];
+    } catch {
+      // Non-configurable; nothing to do.
+    }
+  }
+  for (const [key, descriptor] of before) {
+    const current = Object.getOwnPropertyDescriptor(globalThis, key);
+    // Cheap identity check first: the overwhelmingly common case is untouched.
+    if (current !== undefined && Object.is(current.value, descriptor.value)
+      && Object.is(current.get, descriptor.get)
+      && Object.is(current.set, descriptor.set)) {
+      continue;
+    }
+    try {
+      Object.defineProperty(globalThis, key, descriptor);
+    } catch {
+      // Non-configurable and already replaced; nothing to do.
+    }
+  }
+}
+
+/**
+ * Read newline-delimited JSON from a stream.
+ *
+ * Yields raw lines rather than parsed objects so the caller can answer a
+ * malformed line with an error frame instead of dying — a wedged serve process
+ * would take every subsequent tool call with it.
+ */
+async function* readLines(stream) {
+  stream.setEncoding("utf8");
+  let buffer = "";
+  for await (const chunk of stream) {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (line.trim() !== "") yield line;
+    }
+  }
+  // A final line with no trailing newline is still a request.
+  if (buffer.trim() !== "") yield buffer;
+}
+
+async function serve({ harness, headless }) {
+  // Captured before any script runs: `console.log` is about to be hijacked, and
+  // process.stdout itself can be redirected later by a script.
+  const writeLine = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+
+  const shim = await createEgoShim({ headless });
+  globalThis.ego = shim.ego;
+
+  const { runMain } = await import(harness);
+
+  // `globalThis.ego` is setup state, not script state: the snapshot/restore pair
+  // below runs around each request, and re-asserting it keeps the restored
+  // globals from ever removing the harness's own bridge.
+  const pinEgo = () => {
+    globalThis.ego = shim.ego;
+  };
+
+  try {
+    for await (const line of readLines(process.stdin)) {
+      let request;
+      try {
+        request = JSON.parse(line);
+      } catch (error) {
+        // No id to echo back — the caller cannot correlate this one, but it must
+        // not wedge the loop.
+        writeLine({
+          id: null,
+          ok: false,
+          error: `malformed request line: ${error?.message ?? error}`,
+          stdout: "",
+          stderr: "",
+        });
+        continue;
+      }
+
+      const id = request?.id ?? null;
+      const snapshot = snapshotGlobals();
+      const out = createCapture();
+      const err = createCapture();
+
+      let ok = true;
+      let errorMessage;
+      try {
+        await runMain({
+          argv: [],
+          stdinText: String(request?.code ?? ""),
+          stdout: out.sink,
+          stderr: err.sink,
+        });
+      } catch (error) {
+        // `execute()` rethrows a script throw after stopScreencast(); the stream
+        // itself is still healthy, so this is a per-request failure, not a fatal.
+        ok = false;
+        errorMessage = String(error?.message ?? error);
+      } finally {
+        restoreGlobals(snapshot);
+        pinEgo();
+      }
+
+      writeLine({
+        id,
+        ok,
+        ...(ok ? {} : { error: errorMessage ?? "unknown failure" }),
+        stdout: out.text(),
+        stderr: err.text(),
+      });
+    }
+  } finally {
+    shim.close();
+  }
+  return 0;
+}
+
 async function main() {
   const argv = process.argv.slice(2);
 
@@ -379,6 +584,14 @@ async function main() {
 
   // Site skills and learnings live in the repo's skill directory.
   process.env.EGO_BROWSER_AGENT_WORKSPACE ||= SKILL_WORKSPACE.pathname;
+
+  // `--serve` owns its own shim/import lifecycle (both are paid once, up front),
+  // so it is dispatched here — after headless and the harness path are resolved,
+  // and instead of the one-shot shim below. Handled before the one-shot path so
+  // a serve process never opens two overlapping browser connections.
+  if (rest[0] === "--serve") {
+    return serve({ harness, headless });
+  }
 
   const shim = await createEgoShim({ headless });
   globalThis.ego = shim.ego;
