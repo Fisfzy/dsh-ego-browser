@@ -238,7 +238,10 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     streamProfile: selectedProfile,
     cdpFps: finiteIn(config.cdpFps, 5, 30) ? config.cdpFps : legacyFps,
     cdpQuality: finiteIn(config.cdpQuality, 1, 100) ? config.cdpQuality : (finiteIn(config.screencastQuality, 1, 100) ? config.screencastQuality : 55),
-    cdpMaxWidth: finiteIn(config.cdpMaxWidth, 320, 1920) ? config.cdpMaxWidth : (finiteIn(config.screencastMaxWidth, 320, 1920) ? config.screencastMaxWidth : 960),
+    // 1280 (not 960): a 960 cap downsizes a 1264-wide viewport and the panel then
+    // upscales it, which is the "soft/garbled text" report. 1280 keeps the common
+    // laptop viewport at native width; larger displays can raise it to 1600/1920.
+    cdpMaxWidth: finiteIn(config.cdpMaxWidth, 320, 1920) ? config.cdpMaxWidth : (finiteIn(config.screencastMaxWidth, 320, 1920) ? config.screencastMaxWidth : 1280),
     cdpBackstopIntervalMs: finiteIn(config.cdpBackstopIntervalMs, 1000, 10000) ? config.cdpBackstopIntervalMs : (finiteIn(config.backstopIntervalMs, 200, 10000) ? Math.max(1000, config.backstopIntervalMs) : 3000),
     ffmpegFps: finiteIn(config.ffmpegFps, 5, 30) ? config.ffmpegFps : profileDefaults.fps,
     ffmpegMaxWidth: finiteIn(config.ffmpegMaxWidth, 320, 1920) ? config.ffmpegMaxWidth : profileDefaults.width,

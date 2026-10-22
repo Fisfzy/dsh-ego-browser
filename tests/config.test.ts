@@ -5,7 +5,7 @@ describe("dual capture config", () => {
   it("returns canonical defaults", () => {
     expect(resolveConfig({})).toEqual({
       chromePath: "", captureBackend: "auto", streamProfile: "balanced",
-      cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 960, cdpBackstopIntervalMs: 3000,
+      cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 1280, cdpBackstopIntervalMs: 3000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
     });

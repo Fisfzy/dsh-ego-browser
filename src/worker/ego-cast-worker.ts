@@ -37,7 +37,7 @@ interface CastConfig {
 
 const DEFAULT_CONFIG: CastConfig = {
   captureBackend: 'auto', streamProfile: 'balanced', ffmpegFallbackReason: '',
-  cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 960, cdpBackstopIntervalMs: 3000,
+  cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 1280, cdpBackstopIntervalMs: 3000,
   ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: 'auto', ffmpegPath: '', ffmpegResolvedPath: '',
 }
 let castConfig: CastConfig = { ...DEFAULT_CONFIG }

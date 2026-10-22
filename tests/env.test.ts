@@ -8,7 +8,7 @@
 import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { existsSync } from "node:fs";
 
-import { resolveEgoEnv, findChromeBinary } from "../src/index.ts";
+import { resolveEgoEnv, findChromeBinary, loginImportAllowed } from "../src/index.ts";
 
 // ─── resolveEgoEnv: Windows ────────────────────────────────────────────────
 
@@ -335,6 +335,23 @@ describe("runtime chrome.mjs (EGO_LINUX_EXTRA_ARGS spread)", () => {
   });
 });
 
+// ─── ego_login_import fail-closed gate (#69) ────────────────────────────
+
+describe("loginImportAllowed (#69)", () => {
+  it("is disabled by default", () => {
+    expect(loginImportAllowed({})).toBe(false);
+  });
+
+  it("is enabled only by EGO_LINUX_LOGIN_IMPORT_FORCE=1/true", () => {
+    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "1" })).toBe(true);
+    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "true" })).toBe(true);
+  });
+
+  it("stays disabled for other values", () => {
+    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "0" })).toBe(false);
+    expect(loginImportAllowed({ EGO_LINUX_LOGIN_IMPORT_FORCE: "yes" })).toBe(true);
+  });
+});
 // ─── findChromeBinary ──────────────────────────────────────────────────────
 
 describe("findChromeBinary", () => {

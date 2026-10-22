@@ -2,6 +2,29 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.8.7] - 2026-10-22 — 工具语义修复 + Windows 孤儿锁 + 登录导入止损 + 回收器会话清理
+
+### 修复
+- **虚拟光标箭头与小手重叠**：覆盖层 `#arrow` 的 ID 规则带 `display:block`，优先级压过 `svg.shape{display:none}`——`showShape()` 切到手形/文字光标后箭头仍在绘制，两者在同一点重叠。现在可见性统一由 `svg.shape` / `.on` 控制：悬停链接只显示手形，悬停文本显示输入光标。
+- **`ego_wait_for_url` 在导航已完成后仍报 `reached:false`（#71）**：改为两段式——先比对当前 URL（对无 glob 的模式做保守子串匹配），再等待未来导航；失败 payload 带当前 URL 与 `matchedCurrent`，并提示等待只在同一次调用内有效、匹配语义是全 URL 或 `**` glob。
+- **`ego_wait_for_response` 超时直接抛错（#71）**：现在捕获超时并返回结构化 `{ok:false, reached:false, url, error, hint}`，不再让整次调用以退出码 1 结束。
+- **`ego_dialog` 的误导性 "No dialog is showing"（#71）**：描述明确"只对当前正阻塞的 dialog 有效，跨调用的 dialog 已被自动 dismiss"；失败时附当前 URL 与可执行建议（在同一次 `ego_script` 里 `page.once('dialog', d => d.accept())` 后再触发点击）。
+- **`ego_script`/`ego_cli` 忘记哨兵即硬失败（#71）**：描述写出 `@@DSH_RESULT@@` 字面量；新增兜底解析——没有哨兵时取最后一行可解析 JSON，并标记 `result.fallback: true`。
+- **Windows 上孤儿 Chrome 永久占住 agent profile（#70）**：Chrome 在 Windows 只留空 `lockfile`、没有 `SingletonLock` 符号链接，旧 `clearProfileLock()` 永远 no-op；浏览器一旦非优雅退出，之后每次启动都被转交给孤儿进程并耗尽 20s 超时。现在 win32 下按命令行枚举持有本 profile 的 `chrome.exe`，先收集后终止（500ms 释放等待、10s 硬上限），再清 `lockfile`；只按本 profile 路径匹配，不动用户自己的 Chrome。
+- **`ego_login_import` 默认关闭（#69 止损）**：Chrome 155 上 junction 别名 + 无头启动 + 强杀路径读到 0 条 cookie，且被观测到会清空真实 profile 的扩展注册表、重置默认搜索引擎。现在默认 fail-closed，`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 才放行；彻底修复待独立设计。
+- **空闲回收后 Chrome 崩溃恢复复活全部旧标签（#67 止损）**：`--stop` 被 Chrome 记为 crash，`Default/Sessions/` 残留会让下次冷启动静默恢复上一轮标签，而这些页面不在 `state.spaces` 中、`pruneIdle`/`pruneAbandoned`/`--prune-spaces` 都扫不到。现在 `stopBrowser()` 在确认浏览器已停止（或本就没在跑）后清理 `Default/Sessions/`；登录态在 `Network/Cookies`，不受影响。
+- **纯文本/JSON 标签页不再被光标覆盖层糊成"乱码"**：`renderOverlay()` 在 `document.contentType` 非 `text/html` / `application/xhtml+xml` 时不注入覆盖层，并清掉上一个文档残留的 host（本地 runtime 补丁，见 `runtime/PATCHES.md`）。
+
+### 变更
+- **CDP 预览帧默认宽度 960 → 1280**：960 会把 1264 宽的常见笔记本视口先缩小再由面板放大，是"面板里文字发虚/发糊"的直接来源；1280 让常见视口落在原生宽度，更大屏幕可在设置页调到 1600/1920。
+
+### 新增
+- **`--serve` 常驻传输层（PR #63，BeiWay1145，refs #56）**：CLI 新增 NDJSON 常驻模式，一次启动摊掉进程启动与 harness 加载开销（报告者实测 ~350ms → 后续请求 0–1ms 级）。本次只合并传输半边，默认仍走 spawn 路径；插件侧生命周期（spawn 策略/监督/设置开关/客户端重建）留待后续版本接线。
+
+### 社区
+- 合并 PR #63（`--serve` 常驻传输，BeiWay1145）。
+- macOS 适配（#65/#68）暂缓：维护者暂无 Mac 设备验证。
+
 ## [0.8.6] - 2026-09-28 — 登录态导入安全加固 + DSH 0.1.7 设置适配 + 人机验证误报修复
 
 ### 安全

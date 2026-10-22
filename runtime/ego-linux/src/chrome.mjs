@@ -404,8 +404,87 @@ export async function reapOrphanedBrowsers() {
  * answers, so a lock owner that is still alive is an unreachable orphan of ours
  * — a browser we can no longer drive. Since this profile is single-purpose,
  * that orphan is terminated rather than left to block every future run.
+ *
+ * Windows has no SingletonLock symlink at all: it publishes an empty
+ * `<profile>\lockfile` with no pid, so the owner can only be found by its
+ * command line (issue #70). Without the win32 branch below this function was a
+ * permanent no-op there, and one orphan held --user-data-dir forever.
  */
-async function clearProfileLock(profileDir) {
+async function killWindowsProfileOwners(profileDir) {
+  // The command line is the only place Windows records the owner, so enumerate
+  // it there. Collected first, signalled second: killing the parent
+  // mid-enumeration would otherwise shorten the list. The profile path travels
+  // as an environment variable (UTF-16 end to end) because a non-ASCII user name
+  // would not survive a round trip through the console code page. Bounded by
+  // 10 s: a hung sweep would turn "the launch times out" into "the launch never
+  // returns", which is strictly worse.
+  const script = [
+    "$p = $env:EGO_LINUX_PROFILE_DIR;",
+    "$ids = @(Get-CimInstance Win32_Process |",
+    "Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -and $_.CommandLine.Contains($p) } |",
+    "Select-Object -ExpandProperty ProcessId);",
+    "$ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue };",
+    "$ids -join ','",
+  ].join(" ");
+
+  const stdout = await new Promise((resolve) => {
+    let settled = false;
+    let child = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child?.kill();
+      } catch {
+        // already gone
+      }
+      finish("");
+    }, 10000);
+    try {
+      child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        env: { ...process.env, EGO_LINUX_PROFILE_DIR: profileDir },
+      });
+    } catch {
+      finish(""); // a failed sweep must not fail the launch it exists to unblock
+      return;
+    }
+    let out = "";
+    child.stdout.on("data", (chunk) => {
+      out += chunk;
+    });
+    child.on("error", () => finish(""));
+    child.on("close", () => finish(out));
+  });
+
+  const pids = String(stdout)
+    .trim()
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  if (pids.length === 0) return 0;
+  // TerminateProcess returns before the target is gone; the profile lock is
+  // released a beat later, and launching into a held lock is what fails.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  return pids.length;
+}
+
+/** @internal exported for the Windows lock test. */
+export async function clearProfileLock(profileDir) {
+  if (process.platform === "win32") {
+    const killed = await killWindowsProfileOwners(profileDir);
+    await Promise.all(
+      ["lockfile", "SingletonLock", "SingletonSocket", "SingletonCookie"].map((name) =>
+        rm(join(profileDir, name), { force: true }),
+      ),
+    );
+    return killed > 0;
+  }
   const lock = join(profileDir, "SingletonLock");
   let target;
   try {
@@ -856,7 +935,29 @@ export async function stopBrowser() {
   // block the next launch. After a graceful close there is nothing left to
   // clear, and this is a no-op.
   await clearProfileLock(PROFILE_DIR);
+  // A stopped browser must not resurrect its tabs on the next cold start
+  // (issue #67): only touch the restore files when nothing is running, so a
+  // --stop that failed to terminate the browser never edits its live profile.
+  if (stopped || !state) await clearSessionRestore(PROFILE_DIR);
   return stopped;
+}
+
+/**
+ * Forget the tab session so a crashed profile cannot resurrect old tabs.
+ *
+ * Chrome's session-restore data lives in `<profile>/Default/Sessions/`. A stop
+ * that Chrome records as a crash leaves it behind, and the next launch — even
+ * with `--hide-crash-restore-bubble` — silently reopens every tab from the
+ * previous run. Those pages are not in state.spaces, so no pruning pass ever
+ * sees them: the idle reaper frees memory only for Chrome to bring it all back
+ * on the next cold start (issue #67).
+ *
+ * The agent profile is single-purpose and logins live in `Network/Cookies`, so
+ * dropping the tab-restore directory costs nothing but the stale tabs.
+ * Exported for tests.
+ */
+export async function clearSessionRestore(profileDir) {
+  await rm(join(profileDir, "Default", "Sessions"), { recursive: true, force: true });
 }
 
 export async function browserStatus() {

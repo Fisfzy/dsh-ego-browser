@@ -596,6 +596,18 @@ function labelOf(taskState) {
  * every move, and re-creates itself after a navigation blew the old one away.
  */
 function renderOverlay(payload) {
+  // [local patch, see runtime/PATCHES.md] Documents that are not HTML have no
+  // page layout to annotate: a JSON/plain-text/XML/PDF tab is one dense slab of
+  // glyphs, and the frosted #badge composites over it as an unreadable smear
+  // that users report as mojibake. Skip the overlay there, and clear any host a
+  // previous HTML document left behind.
+  const contentType = document.contentType || "";
+  if (contentType !== "text/html" && contentType !== "application/xhtml+xml") {
+    const stale = document.getElementById(payload.hostId);
+    if (stale) stale.remove();
+    return;
+  }
+
   const parent = document.body || document.documentElement;
   if (!parent) return;
 
@@ -682,7 +694,12 @@ function renderOverlay(payload) {
       "transition:opacity 160ms ease,transform 200ms cubic-bezier(.22,.61,.36,1)," +
       "width 200ms ease,height 200ms ease}" +
       "#ring.on{opacity:1}" +
-      "#arrow{position:absolute;left:-1px;top:-1px;display:block;" +
+      // [local patch, see runtime/PATCHES.md] No `display:block` here: an ID
+      // rule outranks `svg.shape{display:none}`, so the arrow stayed painted
+      // after showShape() switched to the hand or beam, and the arrow and the
+      // little hand overlapped at the same anchor. Visibility belongs to
+      // svg.shape / svg.shape.on only; this rule keeps geometry and motion.
+      "#arrow{position:absolute;left:-1px;top:-1px;" +
       // Scaled about its own tip, so pressing squashes the arrow without
       // moving the point it is aiming at. Down is fast and flat; the spring
       // back overshoots, which is what makes it read as a button release.

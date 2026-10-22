@@ -289,9 +289,11 @@ function isPosixRoot(platform: NodeJS.Platform = process.platform): boolean {
   const uid = process.getuid?.()
   return typeof uid === 'number' && uid === 0 && platform !== 'win32'
 }
-/** No display server → headless is required (Linux/macOS headless servers). */
+/** No display server → headless is required (Linux headless servers). */
 function isHeadlessDetected(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): boolean {
-  // Windows and macOS always have a desktop session; only Linux headless servers need to run the backing browser headless.
+  // Windows and macOS always have a desktop session; only Linux headless
+  // servers need to run the backing browser headless. macOS adaptation
+  // (#65/#68) is intentionally left alone until it can be verified on a Mac.
   if (platform === 'win32' || platform === 'darwin') {
     return false
   }
@@ -503,6 +505,30 @@ function parseSentinel(stdout: string): Record<string, unknown> | undefined {
   }
   return undefined
 }
+/**
+ * Parse the result of one script run: the sentinel payload when present, else
+ * the last parseable JSON line as a rescue path (#71: a script that succeeded
+ * but printed plain JSON used to be reported as a hard failure). The sentinel
+ * stays the primary contract; `fallback` marks the rescue so callers can say so.
+ * Exported for tests.
+ */
+export function parseSentinelOrLastJson(
+  stdout: string,
+): { value: Record<string, unknown>; fallback: boolean } | undefined {
+  const sentinel = parseSentinel(stdout)
+  if (sentinel !== undefined) return { value: sentinel, fallback: false }
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const text = lines[i]!.trim()
+    if (text === '' || !/^[[{]/.test(text)) continue
+    try {
+      return { value: JSON.parse(text) as Record<string, unknown>, fallback: true }
+    } catch {
+      // keep scanning upward
+    }
+  }
+  return undefined
+}
 
 /** The live runtime config object built in apply() (getters read the settings bridge). */
 interface EgoRuntimeConfig {
@@ -609,8 +635,8 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
       stderr,
     }
   }
-  const value = parseSentinel(stdout)
-  if (value === undefined) {
+  const parsed = parseSentinelOrLastJson(stdout)
+  if (parsed === undefined) {
     return {
       ok: false,
       error: `ego-browser finished but no ${SENTINEL} JSON payload was found on stdout${describeStderr(
@@ -620,6 +646,7 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
       stderr,
     }
   }
+  const value = parsed.fallback ? { ...parsed.value, fallback: true } : parsed.value
   return { ok: true, value, stdout, stderr }
 }
 // ── tool plumbing ───────────────────────────────────────────────────────────
@@ -1079,12 +1106,23 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
   )
 }
 /** `ego_login_import` — copy login cookies from the system browser (issue #46). */
+/**
+ * #69 stopgap: `ego_login_import` is fail-closed until the Chrome 155 damage is
+ * understood. On Windows/Chrome 155 the junction-alias + headless boot + hard
+ * kill path read 0 cookies AND was observed to wipe the real profile's
+ * extension registry and reset its default search provider. Refusing by
+ * default is the safe stopgap; the env flag is an explicit opt-in for
+ * environments where the feature is known to work (older Chrome, Linux).
+ */
+export function loginImportAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(1|true|yes|on)$/i.test(env.EGO_LINUX_LOGIN_IMPORT_FORCE ?? '')
+}
 function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
   reg(
     defineTool({
       name: 'ego_login_import',
       description:
-        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. Works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
+        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. DISABLED BY DEFAULT since 2026-10 (#69): on Chrome 155 the headless-alias boot + force-kill path reads 0 cookies and was observed to wipe the source profile\'s extension registry / reset its search provider. Set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to run it anyway (older Chrome / Linux only). When enabled it works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
       parameters: {
         source: {
           type: 'string',
@@ -1124,6 +1162,7 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             domains: { type: 'json' },
             closedSource: { type: 'boolean' },
             restoredFromBackup: { type: 'boolean' },
+            disabled: { type: 'boolean' },
             error: { type: 'string' },
           },
         },
@@ -1133,6 +1172,15 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       execute: async (args: Record<string, unknown>) =>
         withEgoLock(async () => {
           try {
+            // Fail-closed stopgap (#69): see loginImportAllowed above.
+            if (!loginImportAllowed()) {
+              return {
+                ok: false,
+                disabled: true,
+                error:
+                  'ego_login_import is disabled by default: on Chrome 155 it reads 0 cookies and was observed to wipe the source profile\'s extension registry / reset its search provider after a junction-alias boot and force-kill. Set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to opt in (older Chrome / Linux only).',
+              }
+            }
             const domains = Array.isArray(args.domains) ? (args.domains as unknown[]).map(String) : undefined
             const source = typeof args.source === 'string' && args.source !== '' ? args.source : 'auto'
             if (!['chrome', 'edge', 'brave', 'auto'].includes(source)) {
@@ -1581,7 +1629,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_wait_for_url',
       description:
-        'Wait until the page navigates to a URL matching a substring / glob / regex. Use to catch login redirects or pagination.',
+        'Wait until the page navigates to a URL matching a substring / glob / regex. Use to catch login redirects or pagination. IMPORTANT: it only observes navigations that happen DURING this call — if the navigation already finished in a previous ego_* call, read ego_page_info instead. Matching is Playwright semantics: a full URL or a ** glob ("**/search**"); a bare substring does not match. The result always carries the current URL.',
       parameters: {
         pattern: {
           type: 'string',
@@ -1599,14 +1647,23 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         const p = str(args.pattern, '').trim()
         if (p === '')
           return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, reached: false, reason: 'ego_wait_for_url: pattern is required' }))\n`
+        // Two-phase: read the current URL first (the navigation may already have
+        // completed before this call — the classic false negative in #71), then
+        // wait for a FUTURE one. The pre-check is deliberately conservative: it
+        // only accepts substring matches for glob-free patterns, so it never
+        // claims a glob/regex was reached without the real wait doing the work.
         return (
           `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
-          `const __ok = await page.waitForURL(${j(p)}, { timeout: ${num(
+          `const __u0 = await page.url()\n` +
+          `const __p = ${j(p)}\n` +
+          `const __isPattern = /[*?[\\\\]]/.test(__p) || __p.startsWith('/')\n` +
+          `const __already = !__isPattern && __u0.includes(__p)\n` +
+          `const __ok = __already || await page.waitForURL(__p, { timeout: ${num(
             args.timeout,
             10000,
           )} }).catch(() => false)\n` +
           `const __u = await page.url()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: !!__ok, reached: !!__ok, url: __u }))\n`
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: !!__ok, reached: !!__ok, url: __u, matchedCurrent: __already, hint: __ok ? undefined : 'waitForURL only sees FUTURE navigations: issue the wait in the same ego_script as the action that navigates, and pass a full URL or a ** glob (a bare substring does not match).' }))\n`
         )
       },
     }),
@@ -1615,7 +1672,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_wait_for_response',
       description:
-        'Wait for a network response matching a URL/glob/regex and return it. Optionally return the body (text or JSON) — ideal for scraping API responses or confirming a submission.',
+        'Wait for a network response matching a URL/glob/regex and return it. Optionally return the body (text or JSON) — ideal for scraping API responses or confirming a submission. It only observes responses that arrive DURING this call: trigger the request and wait in the same ego_script. On timeout the result carries the current URL and a hint instead of throwing.',
       parameters: {
         url: {
           type: 'string',
@@ -1638,14 +1695,23 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         const u = str(args.url, '').trim()
         const mode = str(args.body, 'none')
         const wantBody = mode === 'text' || mode === 'json'
+        // A timeout must not throw: the tool's job is to report "not reached"
+        // with context (current URL) so the caller can decide, not to blow up
+        // the whole ego_* call (#71).
         return (
           `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
-          `const __res = await page.waitForResponse(${j(u)}, { timeout: ${num(
+          `let __res = null, __err = null\n` +
+          `try { __res = await page.waitForResponse(${j(u)}, { timeout: ${num(
             args.timeout,
             10000,
-          )} })\n` +
-          `${wantBody ? `const __body = ${mode === 'json' ? 'await __res.json().catch(()=>null)' : 'await __res.text().catch(()=>null)'}\n` : ''}` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, url: __res.url(), status: __res.status()${wantBody ? ', body: __body' : ''} }))\n`
+          )} }) } catch (e) { __err = String(e && e.message || e) }\n` +
+          `if (!__res) {\n` +
+          `  const __u = await page.url().catch(() => null)\n` +
+          `  console.log('${SENTINEL}' + JSON.stringify({ ok: false, reached: false, url: __u, error: __err, hint: 'no matching response arrived during this call. Issue the request and the wait in the same ego_script; the url pattern is a full URL or glob/regex, not a bare substring.' }))\n` +
+          `} else {\n` +
+          `${wantBody ? `  const __body = ${mode === 'json' ? 'await __res.json().catch(()=>null)' : 'await __res.text().catch(()=>null)'}\n` : ''}` +
+          `  console.log('${SENTINEL}' + JSON.stringify({ ok: true, reached: true, url: __res.url(), status: __res.status()${wantBody ? ', body: __body' : ''} }))\n` +
+          `}\n`
         )
       },
     }),
@@ -1978,7 +2044,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_dialog',
       description:
-        'Accept or dismiss a native browser dialog (alert/confirm/prompt), optionally supplying text for a prompt. Use right after the action that triggers the dialog.',
+        'Accept or dismiss a native browser dialog (alert/confirm/prompt), optionally supplying text for a prompt. This tool only reaches a dialog that is blocking the page RIGHT NOW — a dialog fired by an earlier ego_* call has already been auto-dismissed across the call boundary. To accept a dialog triggered by a click, do both in one call: page.once("dialog", d => d.accept()); await page.click(selector). If a dialog is blocking the page, page.evaluate/snapshot calls hang until it is handled.',
       parameters: {
         accept: { type: 'boolean', description: 'true=Accept/OK (default), false=Dismiss/Cancel.' },
         text: { type: 'string', description: 'Text to type into a prompt dialog.' },
@@ -1992,12 +2058,17 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         } }`
         // Do NOT run any page.evaluate here: while a dialog is showing the page
         // JS is paused, so a Runtime.evaluate would hang. handleJavaScriptDialog
-        // is a CDP command and works even under a blocking dialog.
+        // is a CDP command and works even under a blocking dialog. The URL read
+        // is therefore only attempted on the failure path (no dialog => the page
+        // is not blocked and evaluate is safe), where it tells the caller what
+        // page the dialog "was not on".
         return (
           `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
           `const __r = await cdp("Page.handleJavaScriptDialog", ${params}).catch((e) => ({ error: String(e) }))\n` +
           `const __ok = !!(__r && !__r.error)\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, handled: __ok, accept: ${accept}, error: __r?.error ?? null }))\n`
+          `let __u = null\n` +
+          `if (!__ok) { try { __u = await page.url() } catch {} }\n` +
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, handled: __ok, accept: ${accept}, error: __r?.error ?? null, url: __u, hint: __ok ? undefined : 'no dialog was blocking the page. Dialogs do not survive the call that triggered them — trigger and handle in one ego_script: page.once("dialog", d => d.accept()); await page.click(...)' }))\n`
         )
       },
     }),
@@ -2051,7 +2122,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             type: 'string',
             required: true,
             description:
-              'Full JS script body for the heredoc; ego-browser helpers are preloaded. End with console.log(JSON.stringify(...)) for a parseable sentinel payload.',
+              "Full JS script body for the heredoc; ego-browser helpers are preloaded. End with console.log('@@DSH_RESULT@@' + JSON.stringify({...})) — the literal @@DSH_RESULT@@ sentinel is required. (A trailing plain JSON line is accepted as a fallback, with result.fallback=true.)",
           },
         },
         output: {
@@ -2077,7 +2148,9 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             ok: true,
             stdout: result.stdout,
             stderr: result.stderr,
-            result: parsed ?? null,
+            // result.value carries the plugin's fallback (last JSON line) when
+            // the script forgot the sentinel — keep it visible here too (#71).
+            result: parsed ?? result.value ?? null,
           }
         },
         presentCall: () => ({
@@ -2267,7 +2340,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
             type: 'string',
             required: true,
             description:
-              'Full JS script body; end with console.log(JSON.stringify(...)) for a parseable sentinel payload.',
+              "Full JS script body; end with console.log('@@DSH_RESULT@@' + JSON.stringify({...})) — the literal @@DSH_RESULT@@ sentinel is required. (A trailing plain JSON line is accepted as a fallback, with result.fallback=true.)",
           },
           timeoutMs: { type: 'integer', description: 'Per-run timeout in ms (default plugin grace).' },
         },
@@ -2306,7 +2379,9 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
             ok: true,
             stdout: result.stdout,
             stderr: result.stderr,
-            result: parsed ?? null,
+            // result.value carries the plugin's fallback (last JSON line) when
+            // the script forgot the sentinel — keep it visible here too (#71).
+            result: parsed ?? result.value ?? null,
             durationMs,
             timedOut: false,
           }

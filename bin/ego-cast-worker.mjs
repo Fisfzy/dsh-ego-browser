@@ -5039,7 +5039,7 @@ let castConfig = {
 	ffmpegFallbackReason: "",
 	cdpFps: 20,
 	cdpQuality: 55,
-	cdpMaxWidth: 960,
+	cdpMaxWidth: 1280,
 	cdpBackstopIntervalMs: 3e3,
 	ffmpegFps: 20,
 	ffmpegMaxWidth: 1280,
