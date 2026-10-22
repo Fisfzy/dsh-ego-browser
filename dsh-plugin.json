@@ -50,11 +50,11 @@
               "label": "Space isolation",
               "kind": "boolean",
               "hint": "Use a temporary isolated profile; off keeps the persistent login profile.",
-              "descriptions": {
+              "titles": {
                 "en": "Space isolation",
                 "zh": "任务空间沙盒隔离"
               },
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Use a temporary isolated profile; off keeps the persistent login profile.",
                 "zh": "使用临时隔离空间；关闭时使用持久化登录配置。"
               }
@@ -66,11 +66,11 @@
               "label": "Idle auto-stop (minutes)",
               "kind": "number",
               "hint": "Stop the browser after N minutes without tool calls; 0 disables. Watching is not activity.",
-              "descriptions": {
+              "titles": {
                 "en": "Idle auto-stop (minutes)",
                 "zh": "空闲自动回收（分钟）"
               },
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Stop the browser after N minutes without tool calls; 0 disables. Watching is not activity.",
                 "zh": "N 分钟没有工具调用后关闭浏览器；0 表示关闭回收。观看不算活动。"
               }
@@ -82,11 +82,11 @@
               "label": "Resident executor",
               "kind": "boolean",
               "hint": "Reuse the execution process; default off.",
-              "descriptions": {
+              "titles": {
                 "en": "Resident executor",
                 "zh": "常驻执行进程"
               },
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Reuse the execution process; default off.",
                 "zh": "复用执行进程；默认关闭。"
               }
@@ -98,11 +98,11 @@
               "label": "Resident idle stop (minutes)",
               "kind": "number",
               "hint": "Stop the resident executor after N idle minutes; 0 keeps it until unload.",
-              "descriptions": {
+              "titles": {
                 "en": "Resident idle stop (minutes)",
                 "zh": "常驻空闲停止（分钟）"
               },
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Stop the resident executor after N idle minutes; 0 keeps it until unload.",
                 "zh": "空闲 N 分钟后停止常驻执行进程；0 表示保留到卸载。"
               }
@@ -114,11 +114,11 @@
               "label": "Browser binary path",
               "kind": "text",
               "hint": "Path to Chrome, Chromium or Edge. Empty means auto-detect.",
-              "descriptions": {
+              "titles": {
                 "en": "Browser binary path",
                 "zh": "浏览器程序路径"
               },
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Path to Chrome, Chromium or Edge. Empty means auto-detect.",
                 "zh": "Chrome、Chromium 或 Edge 路径；留空自动检测。"
               }
@@ -143,12 +143,12 @@
                   "label": "FFmpeg"
                 }
               ],
-              "descriptions": {
+              "titles": {
                 "en": "Capture backend",
                 "zh": "画面采集后端"
               },
               "hint": "Choose automatic detection, CDP or FFmpeg.",
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Choose automatic detection, CDP or FFmpeg.",
                 "zh": "选择自动检测、CDP 或 FFmpeg。"
               }
@@ -163,31 +163,31 @@
                 {
                   "value": "low",
                   "label": "Low",
-                  "descriptions": {
+                  "titles": {
                     "zh": "低"
                   }
                 },
                 {
                   "value": "balanced",
                   "label": "Balanced",
-                  "descriptions": {
+                  "titles": {
                     "zh": "均衡"
                   }
                 },
                 {
                   "value": "high",
                   "label": "High",
-                  "descriptions": {
+                  "titles": {
                     "zh": "高"
                   }
                 }
               ],
-              "descriptions": {
+              "titles": {
                 "en": "Quality profile",
                 "zh": "画质预设"
               },
               "hint": "Low reduces bandwidth; balanced is the default; high improves detail.",
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Low reduces bandwidth; balanced is the default; high improves detail.",
                 "zh": "低画质减少带宽；均衡为默认；高画质保留更多细节。"
               }
@@ -199,11 +199,11 @@
               "label": "FFmpeg binary path",
               "kind": "text",
               "hint": "Path to FFmpeg. Empty means auto-detect or on-demand installation.",
-              "descriptions": {
+              "titles": {
                 "en": "FFmpeg binary path",
                 "zh": "FFmpeg 程序路径"
               },
-              "hintDescriptions": {
+              "hintTitles": {
                 "en": "Path to FFmpeg. Empty means auto-detect or on-demand installation.",
                 "zh": "FFmpeg 路径；留空自动检测或按需安装。"
               }

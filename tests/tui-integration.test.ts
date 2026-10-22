@@ -3,7 +3,7 @@ import manifest from '../dsh-plugin.json'
 import { resolveConfig } from '../src/config.ts'
 import { BrowserStateStore } from '../src/browser-state.ts'
 import { installTui } from '../src/tui/integration.ts'
-import { tuiSettingsFields, tuiSettingsSection } from '../src/tui/settings.ts'
+import { manifestSettingsFields, tuiSettingsFields, tuiSettingsSection } from '../src/tui/settings.ts'
 import type { EgoContext } from '../src/types.ts'
 
 function host(services: Record<string, unknown>) {
@@ -27,7 +27,7 @@ describe('optional TUI integration', () => {
     installTui(h.ctx, new BrowserStateStore())
     expect(register).toHaveBeenCalledWith(tuiSettingsSection)
     expect(tuiSettingsSection).toMatchObject({ ns: 'ego-browser', title: 'Agent Browser', page: { id: 'ego-browser' } })
-    expect(tuiSettingsFields).toEqual(manifest.contributes['x-dsh-tui'].find(section => section.kind === 'SettingsSection')!.spec.fields)
+    expect(manifestSettingsFields).toEqual(manifest.contributes['x-dsh-tui'].find(section => section.kind === 'SettingsSection')!.spec.fields)
     expect(tuiSettingsFields.map(field => field.path[0])).toEqual(['isolateSpaces', 'idleTimeoutMin', 'residentExecutor', 'residentIdleMin', 'chromePath', 'captureBackend', 'streamProfile', 'ffmpegPath'])
     for (const field of tuiSettingsFields) {
       expect(field.descriptions?.zh).toBeTruthy()
@@ -36,6 +36,15 @@ describe('optional TUI integration', () => {
     }
     expect(manifest.contributes['x-dsh-tui'].some(section => String(section.kind) === 'Scene')).toBe(false)
     h.cleanup(); expect(dispose).toHaveBeenCalledOnce()
+  })
+  it('keeps manifest fields inside the tui.dsh/v1alpha1 SettingsSection vocabulary', () => {
+    // dsh-TUI's validateSettingsField rejects any other key, which makes the whole manifest invalid.
+    const fieldKeys = new Set(['path', 'label', 'titles', 'hint', 'hintTitles', 'kind', 'options', 'placeholder', 'secretRef'])
+    const optionKeys = new Set(['value', 'label', 'titles'])
+    for (const field of manifestSettingsFields) {
+      expect(Object.keys(field).filter(key => !fieldKeys.has(key))).toEqual([])
+      for (const option of field.options ?? []) expect(Object.keys(option).filter(key => !optionKeys.has(key))).toEqual([])
+    }
   })
   it('deduplicates unchanged status, displays action and error, and cleans subscriptions', () => {
     const dispose = vi.fn(), setField = vi.fn((_key: string, _text: string, _options: unknown) => dispose)
