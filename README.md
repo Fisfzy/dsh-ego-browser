@@ -82,7 +82,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.1
 | 监控窗鼠标**直接操作**真实浏览器（点击/拖拽/滚动回传 CDP） | ✅ 有 | ❌ 无 |
 | worker 单实例守卫 + 崩溃/重复自愈 | ✅ 有 | ❌ 无 |
 | 下载捕获 `ego_download` / 人机验证检测 `ego_captcha`/`ego_page_info` | ✅ 有 | ❌ 无 |
-| 平台自适应（Linux/Windows 自动探测 + root/无头/`--no-sandbox` 兜底；macOS 需手动配置，见「已知限制」） | ✅ Linux/Windows 开箱用；macOS 部分支持 | 仅 Windows 预览宿主，需手动配 |
+| 平台自适应（Linux/Windows/macOS 自动探测 + root/无头/`--no-sandbox` 兜底） | ✅ 三平台开箱用（macOS 由社区真机验证） | 仅 Windows 预览宿主，需手动配 |
 | 登录态落盘持久化 `ego_auth_flush` | ✅ 有 | ⚠️ 仅文档级说明 |
 
 **关键差异两条：**
@@ -293,7 +293,7 @@ pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-ca
 ## 已知限制（诚实说明）
 
 - **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。v0.8.7 修复了孤儿 Chrome 占锁（#70），v0.8.8 起崩溃/回收后遗留的孤儿标签会被自动清扫（#67），但强杀/崩溃后的 profile 恢复仍建议非必要不中断浏览器进程。
-- **macOS**：需要**手动**在设置里填 `chromePath`（`.app` 路径），`COMMON_CHROME_BINS` 不含 macOS 路径；且无 `$DISPLAY` 时 headed 路径会去找 Xvfb（macOS 上不存在）。这两点（#65/#68）待社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72)（`.app` 探测 + headed 免 Xvfb，作者称已在 macOS arm64 + Chrome 154 真机验证）rebase 合并后即可开箱使用；合并前可手动填 `chromePath` 临时可用。
+- **macOS**：开箱可用（#65/#68 已修，社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72) 已移植）。`darwinChromeCandidates()` 探测 `.app` bundle 内的二进制（Chrome / Chromium / Edge / Brave，含 `~/Applications`），`resolveEgoEnv()` 与 Windows 同构地把结果注入 `EGO_LINUX_CHROME`；headed 路径也不再要求 Xvfb。`isHeadlessDetected` 继续排除 darwin——macOS 的 GUI 是 Aqua/Quartz、永不导出 `$DISPLAY`，把它判成"无头"正是 #16 的回归。实测环境：macOS arm64 + Chrome 154（社区真机），冷启动后 navigate / 截图 / `ego_doctor` 全通。
 - **登录态导入**：v0.8.7 起 `ego_login_import` 定向禁用——仅 **Windows + Chrome ≥155** 拒绝（原因见 #69），Linux / macOS / 旧版 Chrome 正常可用；确认环境无风险后用 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 可在任何环境放行。
 - **FFmpeg 平台捕获**：Windows 已使用 `gfxcapture(HWND)`，需要包含该 filter 的新构建；PATH 中的旧 FFmpeg 会被跳过并提示下载兼容版本。Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop；macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
 - **安装环境**：本仓库的 DSH peer 包不全在公共 npm registry。普通 `pnpm install` 可能在解析 `@deepseek-ai/*` peer 时失败；DSH profile 安装应提供这些 peer。CDP 不依赖 FFmpeg，也不会在插件安装阶段下载二进制。

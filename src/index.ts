@@ -187,6 +187,7 @@ const BUNDLED_WRAPPER = fileURLToPath(
   new URL('../bin/ego-chrome-wrapper.sh', import.meta.url),
 )
 const IS_WIN = process.platform === 'win32'
+const IS_DARWIN = process.platform === 'darwin'
 const AUTO_ADAPT_OFF = /^(0|false|no)$/i.test(
   process.env.EGO_BROWSER_AUTO_ADAPT ?? '',
 )
@@ -221,6 +222,33 @@ function windowsChromeCandidates(): string[] {
     b(local) + '\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   ]
   return out.filter(Boolean) as string[]
+}
+/**
+ * macOS registry-free probe of the usual `.app` bundles (no subprocess).
+ *
+ * Chrome on macOS is never on PATH: the launcher lives inside the bundle at
+ * `<App>.app/Contents/MacOS/<binary>`. Both the system-wide and per-user
+ * `/Applications` locations are probed, Chrome first so that a machine with
+ * several browsers picks the same one the README documents.
+ */
+function darwinChromeCandidates(): string[] {
+  const roots = ['/Applications']
+  if (process.env.HOME) {
+    roots.push(`${process.env.HOME}/Applications`)
+  }
+  const bundles = [
+    'Google Chrome.app/Contents/MacOS/Google Chrome',
+    'Chromium.app/Contents/MacOS/Chromium',
+    'Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    'Brave Browser.app/Contents/MacOS/Brave Browser',
+  ]
+  const out: string[] = []
+  for (const root of roots) {
+    for (const bundle of bundles) {
+      out.push(`${root}/${bundle}`)
+    }
+  }
+  return out
 }
 /** Find a usable Chrome binary by scanning PATH + common fixed locations. */
 export function findChromeBinary(): string | undefined {
@@ -264,6 +292,21 @@ export function findChromeBinary(): string | undefined {
     }
     return undefined
   }
+  // macOS: Chrome lives inside a `.app` bundle, never on PATH. Probe the bundle
+  // locations and stop there — the POSIX PATH walk below cannot find it (there
+  // is no `google-chrome` shim on macOS), so falling through only wastes time.
+  if (IS_DARWIN) {
+    for (const p of darwinChromeCandidates()) {
+      try {
+        if (existsSync(p)) {
+          return p
+        }
+      } catch {
+        // fall through
+      }
+    }
+    return undefined
+  }
   // POSIX: absolute + PATH walk.
   for (const name of COMMON_CHROME_BINS) {
     if (name.includes('/')) {
@@ -300,8 +343,14 @@ function isPosixRoot(platform: NodeJS.Platform = process.platform): boolean {
 /** No display server → headless is required (Linux headless servers). */
 function isHeadlessDetected(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): boolean {
   // Windows and macOS always have a desktop session; only Linux headless
-  // servers need to run the backing browser headless. macOS adaptation
-  // (#65/#68) is intentionally left alone until it can be verified on a Mac.
+  // servers need to run the backing browser headless.
+  //
+  // macOS must keep returning false here, and this is not the "adaptation" for
+  // #65: macOS GUI sessions are Aqua/Quartz and never export `$DISPLAY`, so its
+  // absence says nothing about whether a window can be shown — treating it as
+  // headless is precisely the regression that issue #16 fixed. The headed path
+  // works on darwin because the vendored runtime's ensureXDisplay() skips the
+  // Xvfb requirement on darwin exactly as it already does on win32 (#65).
   if (platform === 'win32' || platform === 'darwin') {
     return false
   }
@@ -344,7 +393,13 @@ export function resolveEgoEnv(cfg: Partial<ResolvedConfig>, { platform = process
   // the bundled wrapper is a POSIX shell script that cannot run here. Pass the
   // binary path directly so the vendored runtime (which uses POSIX `which`)
   // doesn't have to resolve it itself.
-  if (env.EGO_LINUX_CHROME === undefined && platform === 'win32' && chrome) {
+  //
+  // macOS shares both properties: no sandbox gate (the wrapper exists only to
+  // add --no-sandbox for root/Docker on Linux), and the vendored runtime's
+  // name-based lookup would never find a path inside a `.app` bundle. Without
+  // this branch `EGO_LINUX_CHROME` is never injected on darwin and the first
+  // cold start fails with "no Chrome/Chromium binary found" (issue #68).
+  if (env.EGO_LINUX_CHROME === undefined && (platform === 'win32' || platform === 'darwin') && chrome) {
     env.EGO_LINUX_CHROME = chrome
   }
   // Headless servers (no DISPLAY) must run the backing browser headless.
