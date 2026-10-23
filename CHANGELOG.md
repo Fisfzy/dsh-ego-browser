@@ -2,7 +2,9 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [Unreleased]
+## [0.9.2] - 2026-10-23 — macOS 开箱支持（#65/#68，社区 PR #72 移植）
+
+本版把 macOS 从"需手动填 chromePath、headed 路径找 Xvfb"变成**开箱即用**：自动探测 `.app` 内的 Chrome/Chromium/Edge/Brave 并注入运行时，headed 启动不再依赖 X11/Xvfb，同时保留 #16 要求的真实窗口能力。社区贡献者 @syjnzh918 提供实现与 macOS arm64 真机验证。
 
 ### 修复
 - **macOS 开箱可用（#65、#68）**：两处平台缺口叠在一起，使 macOS 首装第一次调用任意 `ego_*` 工具必然失败。其一，`COMMON_CHROME_BINS` 只列 Linux 路径、`resolveEgoEnv()` 的注入条件也不含 darwin，而 macOS 上 Chrome 不在 `PATH` 里（只在 `.app` bundle 内），于是报 `no Chrome/Chromium binary found`；现在由 `darwinChromeCandidates()` 探测 Chrome / Chromium / Edge / Brave（含 `~/Applications`），并像 win32 一样把结果注入 `EGO_LINUX_CHROME`。其二，填好路径后仍会撞运行时 `ensureXDisplay()`：它只给 win32 留了"有桌面会话、无 X server"的豁免，而 macOS 在这一点上完全同形（GUI 是 Aqua/Quartz，永不导出 `$DISPLAY`，Xvfb 也不存在于该生态），现在同样豁免。`isHeadlessDetected` 保持排除 darwin——把缺 `$DISPLAY` 当成无头正是 #16 的回归。真机验证：macOS arm64 + Chrome 154，冷启动 → navigate → 截图 → `ego_doctor` 全通。
