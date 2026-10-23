@@ -77,6 +77,11 @@ export class ResidentProcess {
     return this.child !== null && this.deadReason === null
   }
 
+  /** PID of the live resident (null when stopped/never started). */
+  get pid(): number | null {
+    return this.child?.pid ?? null
+  }
+
   /** Spawn the process if it is not running. Idempotent. */
   start(): void {
     if (this.alive || this.stopping) return

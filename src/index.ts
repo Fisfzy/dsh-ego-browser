@@ -649,12 +649,64 @@ let residentTransportKey = ''
  */
 let residentCooldownUntil = 0
 
+// ── #73 phase 2: executor diagnostics + failure supervision ────────────────
+// The panel/settings need to answer "is this call going through the resident,
+// how old is it, and why was it last rebuilt?" without DevTools. Supervision
+// stops the park → one-shot → respawn loop: after three consecutive cold-start
+// failures the resident stays parked (one-shot keeps working) until the user
+// toggles the setting or the plugin restarts.
+let residentConsecutiveFailures = 0
+let residentStartedAt = 0
+let residentLastRebuildReason = 'not started'
+let residentParkReason: string | null = null
+
+/** @internal exported for tests: the supervision state machine. */
+export function superviseResidentFailure(failures: number, error: string): { failures: number; parkReason: string | null } {
+  const next = failures + 1
+  return {
+    failures: next,
+    parkReason: next >= 3 ? `resident failed ${next} times in a row; last error: ${error}` : null,
+  }
+}
+
+export interface ResidentDiagnostics {
+  enabled: boolean
+  mode: 'resident' | 'one-shot'
+  running: boolean
+  pid: number | null
+  ageMs: number | null
+  consecutiveFailures: number
+  lastRebuildReason: string
+  parked: boolean
+  parkReason: string | null
+}
+
+/** @internal exported for tests (also used by /api/ego/executor + ego_status). */
+export function residentDiagnostics(cfg: EgoRuntimeConfig): ResidentDiagnostics {
+  const running = residentTransport !== null && residentTransport.alive
+  return {
+    enabled: cfg.residentExecutor === true,
+    mode: cfg.residentExecutor === true && residentParkReason === null && Date.now() >= residentCooldownUntil ? 'resident' : 'one-shot',
+    running,
+    pid: running ? residentTransport?.pid ?? null : null,
+    ageMs: running && residentStartedAt > 0 ? Date.now() - residentStartedAt : null,
+    consecutiveFailures: residentConsecutiveFailures,
+    lastRebuildReason: residentLastRebuildReason,
+    parked: residentParkReason !== null,
+    parkReason: residentParkReason,
+  }
+}
+
 /** @internal exported for tests */
 export function resetResidentTransportForTests(): void {
   const transport = residentTransport
   residentTransport = null
   residentTransportKey = ''
   residentCooldownUntil = 0
+  residentConsecutiveFailures = 0
+  residentStartedAt = 0
+  residentLastRebuildReason = 'not started'
+  residentParkReason = null
   transport?.stop()
 }
 
@@ -675,6 +727,7 @@ export function ensureResidentTransport(cfg: EgoRuntimeConfig): ResidentProcess 
   if (residentTransport !== null && residentTransportKey === key && residentTransport.alive) {
     return residentTransport
   }
+  const rebuilding = residentTransport !== null
   stopResidentTransport()
   residentTransportKey = key
   residentTransport = new ResidentProcess({
@@ -689,6 +742,8 @@ export function ensureResidentTransport(cfg: EgoRuntimeConfig): ResidentProcess 
     },
   })
   residentTransport.start()
+  residentStartedAt = Date.now()
+  residentLastRebuildReason = rebuilding ? 'rebuilt: configuration changed' : 'created'
   return residentTransport
 }
 
@@ -738,12 +793,27 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
           ...(Number.isFinite(graceOverrideMs) && graceOverrideMs! > 0 ? { graceMs: graceOverrideMs! } : {}),
         })
         const result = residentFrameToResult(frame)
-        if (result.ok || !isColdStartError(result.error ?? '')) return result
+        if (result.ok) {
+          residentConsecutiveFailures = 0
+          residentParkReason = null
+          return result
+        }
+        if (!isColdStartError(result.error ?? '')) return result
         // Cold-start failure: the script never reached the browser (dead CDP
         // channel, or a relaunch that has not settled). Safe to retry — park
         // the resident and let the one-shot path below (with its launch
-        // retries) run this call; a later call starts a fresh resident.
-        residentCooldownUntil = Date.now() + 10_000
+        // retries) run this call. Three consecutive failures park it for good
+        // (until the setting is toggled or the plugin restarts), so we stop
+        // alternating park -> one-shot -> respawn (issue #73).
+        const supervision = superviseResidentFailure(residentConsecutiveFailures, result.error ?? 'cold start')
+        residentConsecutiveFailures = supervision.failures
+        residentLastRebuildReason = `cold-start failure: ${result.error ?? 'unknown'}`
+        if (supervision.parkReason !== null) {
+          residentParkReason = supervision.parkReason
+          residentCooldownUntil = Number.MAX_SAFE_INTEGER
+        } else {
+          residentCooldownUntil = Date.now() + 10_000
+        }
         stopResidentTransport()
       } catch (err) {
         if (!(err instanceof ResidentNotRunningError)) {
@@ -757,8 +827,13 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
         // not written → retry through the one-shot path
       }
     }
-  } else if (!cfg.residentExecutor && residentTransport !== null) {
-    stopResidentTransport()
+  } else if (!cfg.residentExecutor) {
+    if (residentTransport !== null) stopResidentTransport()
+    if (residentParkReason !== null || residentConsecutiveFailures !== 0) {
+      residentConsecutiveFailures = 0
+      residentParkReason = null
+      residentLastRebuildReason = 'disabled by setting'
+    }
   }
   let handle
   try {
@@ -1082,6 +1157,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
         ffmpegManager,
         () => openAgentWindow(ctx, cfg),
         (opts) => importLoginCookies(opts, { subprocess: ctx.subprocess }),
+        () => residentDiagnostics(cfg) as unknown as Record<string, unknown>,
       )
     } catch (err) {
       ctx.logger?.warn?.(

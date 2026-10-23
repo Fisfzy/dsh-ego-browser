@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { ResidentProcess, ResidentNotRunningError } from "../src/resident.ts";
-import { isColdStartError } from "../src/index.ts";
+import { isColdStartError, superviseResidentFailure } from "../src/index.ts";
 
 /** Minimal `--serve`-shaped peer: echoes each request back as a frame. */
 const ECHO = `
@@ -114,5 +114,17 @@ describe("resident transport error contract (#56)", () => {
 
   it("does not classify ordinary script failures as transport failures", () => {
     expect(isColdStartError("ego-browser script failed: element not found")).toBe(false);
+  });
+});
+
+// #73 — supervision: after three consecutive cold-start failures the resident
+// stays parked (one-shot keeps working) instead of cycling park -> respawn.
+describe("resident supervision (#73)", () => {
+  it("parks after three consecutive cold-start failures", () => {
+    expect(superviseResidentFailure(0, "cold start")).toEqual({ failures: 1, parkReason: null });
+    expect(superviseResidentFailure(1, "cold start")).toEqual({ failures: 2, parkReason: null });
+    const third = superviseResidentFailure(2, "cold start");
+    expect(third.failures).toBe(3);
+    expect(third.parkReason).toContain("cold start");
   });
 });

@@ -187,6 +187,9 @@ declare function require(id: string): any
 			sizePresetsHint: 'Set the agent browser window to a fixed aspect ratio',
 			resizeHint: 'Drag to resize the agent browser window',
 			sizeApiOutdated: 'Size API not loaded — restart DSH to pick up the new host build',
+			executorResident: 'resident',
+			executorOneShot: 'one-shot',
+			executorParked: 'resident parked',
 			noUrl: 'No URL to open',
 			closeTab: 'Close tab',
 			newTab: '(new tab)',
@@ -240,6 +243,9 @@ declare function require(id: string): any
 			sizePresetsHint: '按固定比例设置 agent 浏览器窗口',
 			resizeHint: '拖动调整 agent 浏览器窗口大小',
 			sizeApiOutdated: '尺寸接口未就绪：请重启 DSH 以加载最新 host 构建',
+			executorResident: '常驻',
+			executorOneShot: '一次性',
+			executorParked: '常驻已停用',
 			noUrl: '无可打开的地址',
 			closeTab: '关闭标签',
 			newTab: '(新标签页)',
@@ -3738,6 +3744,24 @@ clearTimeout((panel as any)._dshHideT)
 			var sizeSyncOn = sizeSyncState[0]
 			var setSizeSyncOn = sizeSyncState[1]
 
+			// #73: executor diagnostics from the host (resident/one-shot, pid,
+			// age, last rebuild reason). Polled slowly; failures are silent.
+			var residentState = React.useState(null)
+			var residentInfo = residentState[0]
+			var setResidentInfo = residentState[1]
+			React.useEffect(function () {
+				var disposed = false
+				var load = function () {
+					fetch('/api/ego/executor', { cache: 'no-store' })
+						.then(function (r) { return r.ok ? r.json() : null })
+						.then(function (json) { if (!disposed && json && json.ok) setResidentInfo(json) })
+						.catch(function () {})
+				}
+				load()
+				var timer = window.setInterval(load, 15000)
+				return function () { disposed = true; window.clearInterval(timer) }
+			}, [])
+
 			// Aspect-ratio presets: one-shot resizes, independent of the drag
 			// toggle. The worker keeps the current width and derives the height.
 			var presetState = React.useState(false)
@@ -4052,7 +4076,13 @@ clearTimeout((panel as any)._dshHideT)
 						h('div', { className: 'dsh-ego-side-livebadge' },
 							h('div', { className: 'dsh-ego-side-badgeline' },
 								h('span', { className: 'dsh-ego-side-state-dot' + (state.pinned ? ' pin' : state.busy ? ' busy' : '') }),
-								h('span', { className: 'dsh-ego-side-badgestatus' }, (state.backend === 'ffmpeg' ? 'FFmpeg · H.264' : 'CDP') + ' · ' + (state.streamState === 'failed' ? (state.streamMessage || wt('failed')) : state.streamState) + (state.currentTargetId ? (state.wiringStale ? ' · ' + wt('stale') : ' · ' + wt('captured')) : '')),
+								h('span', {
+									className: 'dsh-ego-side-badgestatus',
+									title: residentInfo ? ('executor: ' + (residentInfo.mode || '') + (residentInfo.pid ? ' pid=' + residentInfo.pid : '') + ' · ' + (residentInfo.parkReason || residentInfo.lastRebuildReason || '')) : undefined,
+								},
+									(state.backend === 'ffmpeg' ? 'FFmpeg · H.264' : 'CDP') + ' · ' + (state.streamState === 'failed' ? (state.streamMessage || wt('failed')) : state.streamState) + (state.currentTargetId ? (state.wiringStale ? ' · ' + wt('stale') : ' · ' + wt('captured')) : '')
+									+ (residentInfo ? ' · ' + (residentInfo.mode === 'resident' ? wt('executorResident') + (residentInfo.ageMs ? ' ' + Math.round(residentInfo.ageMs / 60000) + 'm' : '') : (residentInfo.parked ? wt('executorParked') : wt('executorOneShot'))) : ''),
+								),
 								h('span', { style: { flex: 1 } }),
 								state.pinned
 									? h('button', {

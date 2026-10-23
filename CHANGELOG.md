@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### 新增
+- **常驻执行器可视化与失败监督（#73 phase 2）**：新增 host 路由 `/api/ego/executor`，观察窗状态行显示当前执行模式（`常驻` + 运行时长 / `一次性` / `常驻已停用`），悬停可看到 pid、最后一次重建原因或停用原因。监督逻辑：连续 3 次冷启动失败后常驻进程保持停用（`parked`），一次性 spawn 继续工作，直到用户切换设置或插件重启，避免 park → one-shot → respawn 循环。默认保持 opt-in（`residentExecutor` 默认关）：尚无"一整天浸泡无回归"的数据，先不做默认开启决策。设置持久化（gateway 写入后重启回退）仍需真机复现，留待验证。
+
 ### 修复
 - **headless UA 版本与实际 Chromium 不一致（#79）**：headless 启动时注入的 UA 一直是硬编码 `Chrome/152.0.0.0`，而 `navigator.userAgentData` 来自真实二进制（社区实测 Termux 上外部 Chromium 为 155）。这种自相矛盾的指纹会被风控标记。现在运行时首次 headless 启动会用 `<binary> --version` 探测真实主版本（缓存，2s 超时，失败才回落 152）；Windows 上为避免 `chrome.exe --version` 弹窗不做探测，继续使用兜底值。新增 `parseChromeVersionMajor()` 单测。
 

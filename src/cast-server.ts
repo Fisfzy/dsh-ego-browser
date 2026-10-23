@@ -367,6 +367,7 @@ export function initCastServer(
   ffmpegManager: FfmpegInstallationManager | null,
   openAgentWindow: () => Promise<{ ok: boolean; error?: string }> = async () => ({ ok: false, error: 'raise not supported by this host build' }),
   loginImport: (opts: LoginImportOptions) => Promise<LoginImportReport> = async () => ({ ok: false, error: 'login import not supported by this host build' }),
+  getExecutorStatus: () => Record<string, unknown> = () => ({}),
 ): void {
   const ensureWorker = makeEnsureWorker(ctx, cfg, ffmpegManager)
   const pushConfig = makePushConfig(ensureWorker, ffmpegManager)
@@ -700,11 +701,24 @@ export function initCastServer(
     },
   })
 
+  // GET /api/ego/executor — resident // one-shot executor diagnostics (#73).
+  // Host-level state only (no worker), so it works even before the browser is up.
+  const disposeExecutor = server.register({
+    kind: 'exact', path: '/api/ego/executor',
+    handler: async (_req: unknown, resRaw: unknown) => {
+      const res = resRaw as ServerResponse
+      let status: Record<string, unknown> = {}
+      try { status = getExecutorStatus() } catch { /* ignore */ }
+      return sendJson(res, 200, { ok: true, ...status })
+    },
+  })
+
   ctx.effect?.(() => () => {
     try { disposeSpaces() } catch { /* ignore */ }
     try { disposeStream() } catch { /* ignore */ }
     try { disposeInput() } catch { /* ignore */ }
     try { disposeWindowSize() } catch { /* ignore */ }
+    try { disposeExecutor() } catch { /* ignore */ }
     try { disposeClose() } catch { /* ignore */ }
     try { disposeFlush() } catch { /* ignore */ }
     try { disposeRaise() } catch { /* ignore */ }
