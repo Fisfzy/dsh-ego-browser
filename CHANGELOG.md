@@ -2,6 +2,14 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [Unreleased]
+
+### 修复
+- **macOS 开箱可用（#65、#68）**：两处平台缺口叠在一起，使 macOS 首装第一次调用任意 `ego_*` 工具必然失败。其一，`COMMON_CHROME_BINS` 只列 Linux 路径、`resolveEgoEnv()` 的注入条件也不含 darwin，而 macOS 上 Chrome 不在 `PATH` 里（只在 `.app` bundle 内），于是报 `no Chrome/Chromium binary found`；现在由 `darwinChromeCandidates()` 探测 Chrome / Chromium / Edge / Brave（含 `~/Applications`），并像 win32 一样把结果注入 `EGO_LINUX_CHROME`。其二，填好路径后仍会撞运行时 `ensureXDisplay()`：它只给 win32 留了"有桌面会话、无 X server"的豁免，而 macOS 在这一点上完全同形（GUI 是 Aqua/Quartz，永不导出 `$DISPLAY`，Xvfb 也不存在于该生态），现在同样豁免。`isHeadlessDetected` 保持排除 darwin——把缺 `$DISPLAY` 当成无头正是 #16 的回归。真机验证：macOS arm64 + Chrome 154，冷启动 → navigate → 截图 → `ego_doctor` 全通。
+
+### 社区
+- macOS 适配（#65/#68）来自社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72)（@syjnzh918），由其基于当时主干提交并附 macOS arm64 真机冷启动验证；本次将其移植到 0.9.1 后的主线上（解冲突、保留后续 win32/no-Xvfb、常驻执行器与观察窗改动，并补回归测试）。
+
 ## [0.9.1] - 2026-10-23 — 观察窗尺寸同步 / 帧链路性能 / 输入映射修复
 
 本版把观察窗从"只能看"扩展成"能直接改真实窗口大小"：尺寸同步开关 + 比例预设 + 边缘拖拽，同时把串流 CPU 砍到约一半，并修复窗口缩放后的点击偏移与拖动卡顿。
