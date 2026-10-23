@@ -189,6 +189,22 @@ dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.2.tgz
 
 无需宿主侧任何配置：`resolveEgoEnv` 自动探测 root / 无显示器并兜底。观察窗 host 路由（`/api/ego/spaces` 等）仅在有 HTTP server 时注册，headless 是安全 no-op。
 
+### Termux / Android
+
+`dsh-ego-browser` 在 Termux 上可开箱使用（社区实测：Android 16 / arm64，Chromium 155 from `x11` repo）：
+
+```sh
+pkg install chromium            # Termux x11 仓库；约 159 MB deb / 644 MB 安装后
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.2
+```
+
+- `chromium-browser` 已在 `COMMON_CHROME_BINS` 中，`ego_doctor` 会自动探测 `/data/data/com.termux/files/usr/bin/chromium-browser`，**无需**设置 `chromePath`
+- 没有 `$DISPLAY`、也没有 Xvfb 时会自动选择 headless；`ego_navigate` / `ego_screenshot` / `ego_snapshot` / `ego_fill` / `ego_click` / 脚本求值均可用
+- Android 版 Chromium 不需要 `--no-sandbox`（干净 profile 的 `--headless=new --dump-dom` 可直接渲染）
+- stderr 里的 `Failed to connect to the bus` / NetworkManager DBus 报错是无害噪音
+- 手机终端建议在设置里开启 `disableFrameRelay: true`：不传任何画面、不启动 cast worker，只保留 `ego_*` 工具
+- headless UA 的版本号会从实际二进制探测（#79），与 `navigator.userAgentData` 保持一致
+
 ## 在 dsh-TUI 中
 
 提供可选 `tuiSettingsSections`、`tuiStatus`、`tuiToast` 服务的 DSH TUI 宿主会按能力启用以下功能：
@@ -249,6 +265,8 @@ When the existing metadata response includes `capture`, the panel displays its b
 | 元工具 | `ego_help` `ego_doctor` `ego_http` |
 
 > 导航/等待语义（v0.8.7）：`ego_wait_for_url` 先比对当前 URL 再等未来导航，结果带 `matchedCurrent`；`ego_wait_for_response` 超时返回结构化 `reached:false`，不再抛错；两个等待都只观察**本次调用期间**的事件——触发动作与等待要放在同一个 `ego_script` 里。`ego_script`/`ego_cli` 的脚本需以 `console.log('@@DSH_RESULT@@' + JSON.stringify({...}))` 结尾（忘记哨兵时会兜底解析最后一行 JSON，并标记 `fallback: true`）。
+
+> **`ego_script` 的 `page` 不是 Playwright API**（#80）：可用方法为 `goto reload info url title locator getByRole getByText getByLabel getByPlaceholder getByAltText getByTitle getByTestId waitForTimeout waitForLoadState waitForSelector waitForFunction waitForURL waitForRequest waitForResponse waitForEvent evaluate screenshot snapshot snapshotRaw elementCenter drainEvents screencast keyboard mouse`；**没有** `fill / click / type / press`——交互请用 `ego_fill` / `ego_click`，或 `page.locator(...)` 配合 `ego_*`。`page.goto()` 返回的也不是 Playwright Response，需要状态码请用 `ego_wait_for_response` 或 `page.info()`。
 
 ## 观察窗怎么用
 

@@ -23,6 +23,6 @@ export const EGO_HELP_INDEX: Record<string, string> = {
   download: 'ego_download: 等下载事件并落到指定路径(triggerSelector/triggerScript + 可选 savePath)。',
   captcha: 'ego_captcha: 检测页面人机验证(CAPTCHA)并返回{detected,kind}; 检测到请让用户去 ego 浏览器完成; ego_page_info 也附带 humanCheck。',
   login: 'ego_auth_flush: 把登录cookie落盘到ego profile; 观察窗登录引导条+『已登录,保存』按钮触发同一动作。ego_login_import: 从系统浏览器(Chrome/Edge/Brave)按域名导入登录cookie(source/domains/dryRun; 先dryRun看可导入项; ego浏览器须已在运行)。',
-  script: 'ego_cli / ego_script: 原样运行任意 ego-browser nodejs heredoc脚本(page/browser/taskSpaces/site/fetch/cdp预载)。ego_script额外返回 duration/timedOut。',
+  script: 'ego_cli / ego_script: 原样运行任意 ego-browser nodejs heredoc脚本(page/browser/taskSpaces/site/fetch/cdp预载)。ego_script额外返回 duration/timedOut。注意 page 是本 runtime 的页面门面、不是 Playwright API：可用 goto/reload/info/url/title/locator/getByRole/getByText/getByLabel/getByPlaceholder/getByAltText/getByTitle/getByTestId/waitForTimeout/waitForLoadState/waitForSelector/waitForFunction/waitForURL/waitForRequest/waitForResponse/waitForEvent/evaluate/screenshot/snapshot/snapshotRaw/elementCenter/drainEvents/screencast/keyboard/mouse；没有 fill/click/type/press——交互用 ego_fill/ego_click 或 page.locator(...)。page.goto() 不返回 Playwright Response，取状态码用 ego_wait_for_response 或 page.info()。',
   doctor: 'ego_doctor: 体检环境(浏览器候选、vendored runtime、状态目录、CDP端口、任务空间)。',
 }

@@ -2598,7 +2598,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         if (configured) {
           lines.push(`browser binary: ${configured} (from settings)`)
         } else {
-          lines.push(`browser binary: ${chrome || '(none found — set chromePath in settings, or set EGO_LINUX_CHROME, or install Chrome/Edge/Brave)'}`)
+          lines.push(`browser binary: ${chrome || '(none found — set chromePath in settings, or set EGO_LINUX_CHROME, or install Chrome/Edge/Brave; on Termux/Android: pkg install chromium)'}`)
         }
         // User-configured extra CLI args (effective after filtering). ego-CLI
         // args take effect on the next ego_* call; Chrome args only on the next
@@ -2652,7 +2652,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       const def = defineTool({
         name: 'ego_script',
         description:
-          'Run an arbitrary `ego-browser nodejs` heredoc script in ONE invocation (same runtime/API as ego_cli: page/…locator/browser/taskSpaces/site/fetch/cdp preloaded), and return structured {ok, stdout, stderr, result, durationMs, timedOut}. Use for a full multi-step browser task as a single script.',
+          'Run an arbitrary `ego-browser nodejs` heredoc script in ONE invocation (same runtime/API as ego_cli: page/…locator/browser/taskSpaces/site/fetch/cdp preloaded), and return structured {ok, stdout, stderr, result, durationMs, timedOut}. Use for a full multi-step browser task as a single script. NOTE: `page` is the ego runtime page facade, NOT Playwright — it has goto/reload/info/url/title/locator/getBy*/waitFor*/evaluate/screenshot/snapshot/drainEvents/keyboard/mouse but no fill/click/type/press; use ego_fill/ego_click or page.locator(...). page.goto() does not return a Playwright Response; get status via ego_wait_for_response or page.info().',
         parameters: {
           script: {
             type: 'string',

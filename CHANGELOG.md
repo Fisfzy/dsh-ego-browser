@@ -2,6 +2,15 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [Unreleased]
+
+### 修复
+- **headless UA 版本与实际 Chromium 不一致（#79）**：headless 启动时注入的 UA 一直是硬编码 `Chrome/152.0.0.0`，而 `navigator.userAgentData` 来自真实二进制（社区实测 Termux 上外部 Chromium 为 155）。这种自相矛盾的指纹会被风控标记。现在运行时首次 headless 启动会用 `<binary> --version` 探测真实主版本（缓存，2s 超时，失败才回落 152）；Windows 上为避免 `chrome.exe --version` 弹窗不做探测，继续使用兜底值。新增 `parseChromeVersionMajor()` 单测。
+
+### 文档
+- **Termux / Android 开箱说明（#78）**：README 新增 Termux 小节——`pkg install chromium`（x11 repo）、`chromium-browser` 已在候选列表中、无 `$DISPLAY`/Xvfb 自动 headless、无需 `--no-sandbox`、DBus 报错无害、手机终端建议 `disableFrameRelay: true`；`ego_doctor` 的“未找到浏览器”提示补充 `pkg install chromium`。
+- **`ego_script` 的 page 门面不是 Playwright API（#80）**：`ego_help script`、`ego_script` 工具描述与 README 都列出完整 page 方法清单，并明确没有 `fill/click/type/press`（用 `ego_fill`/`ego_click` 或 `page.locator(...)`），`page.goto()` 不返回 Playwright Response。
+
 ## [0.9.2] - 2026-10-23 — macOS 开箱支持（#65/#68，社区 PR #72 移植）
 
 本版把 macOS 从"需手动填 chromePath、headed 路径找 Xvfb"变成**开箱即用**：自动探测 `.app` 内的 Chrome/Chromium/Edge/Brave 并注入运行时，headed 启动不再依赖 X11/Xvfb，同时保留 #16 要求的真实窗口能力。社区贡献者 @syjnzh918 提供实现与 macOS arm64 真机验证。

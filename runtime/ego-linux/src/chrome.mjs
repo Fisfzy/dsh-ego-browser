@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { access, mkdir, readdir, readFile, readlink, writeFile, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -726,8 +726,48 @@ async function spawnAndAwait(binary, args, plan, lastError) {
   }
 }
 
+/**
+ * Parse the major version out of `chrome --version` / `chromium --version`
+ * output ("Google Chrome 154.0.1.2", "Chromium 155.0.8059.79", ...). Returns
+ * null when the text does not look like a Chrome version.
+ */
+export function parseChromeVersionMajor(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(/(?:Chrome|Chromium|HeadlessChrome)[\/ ](\d+)/i);
+  if (!match) return null;
+  const major = Number.parseInt(match[1], 10);
+  return Number.isFinite(major) && major > 0 ? major : null;
+}
+
+/**
+ * Probe the resolved browser binary for its major version so the headless UA
+ * override agrees with Client Hints (`navigator.userAgentData`). Issue #79: an
+ * external Chromium advertises e.g. 155 via UA-CH while the old hardcoded UA
+ * said 152 — a self-contradictory fingerprint. Best effort only: on Windows
+ * `chrome.exe --version` would open a window, so probing is skipped there and
+ * the fallback value is used.
+ */
+const chromeVersionCache = new Map();
+async function detectChromeVersionMajor(binary) {
+  if (process.platform === "win32") return null;
+  if (chromeVersionCache.has(binary)) return chromeVersionCache.get(binary);
+  const major = await new Promise((resolve) => {
+    execFile(binary, ["--version"], { timeout: 2000, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) return resolve(null);
+      resolve(parseChromeVersionMajor(`${stdout}\n${stderr}`));
+    });
+  }).catch(() => null);
+  chromeVersionCache.set(binary, major);
+  return major;
+}
+
+function headlessUserAgent(major) {
+  return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
+
 async function launch({ headless }) {
   const binary = await resolveBinary();
+  const uaMajor = headless ? ((await detectChromeVersionMajor(binary)) ?? 152) : null;
   await mkdir(PROFILE_DIR, { recursive: true });
   // Ours now exists, so it cannot be mistaken for an orphan below.
   await reapOrphanedBrowsers();
@@ -741,11 +781,11 @@ async function launch({ headless }) {
       // Headless fingerprint stripping (issue #2): the `-headless` UA and
       // navigator.webdriver flag both mark us as automation to high-risk
       // sites (Douyin/Doubao reject agent sessions otherwise). Only inject on
-      // the headless path so a headed window keeps its real UA. The UA version
-      // tracks the bundled Chromium major (152 in this runtime snapshot); if a
-      // future update bumps the vendored Chromium, bump it here too.
+      // the headless path so a headed window keeps its real UA. The major
+      // version is probed from the resolved binary so the UA string matches
+      // Client Hints (issue #79); 152 is only the fallback when probing fails.
       "--disable-blink-features=AutomationControlled",
-      "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      `--user-agent=${headlessUserAgent(uaMajor)}`,
     ] : []),
     // Optional HTTP proxy for the agent browser, e.g. EGO_LINUX_PROXY=http://host:7890
     // (WSL2 -> Windows Clash). Explicit flags are used instead of relying on

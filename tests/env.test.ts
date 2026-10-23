@@ -546,3 +546,16 @@ describe("runtime chrome.mjs (macOS X display)", () => {
     }
   });
 });
+
+// ─── runtime/ego-linux/src/chrome.mjs (headless UA version) ────────────────
+
+describe("runtime chrome.mjs (headless UA version, #79)", () => {
+  it("parses the major version from chrome/chromium --version output", async () => {
+    // @ts-ignore — runtime .mjs is excluded from tsconfig
+    const mod = await import("../runtime/ego-linux/src/chrome.mjs");
+    expect(mod.parseChromeVersionMajor("Google Chrome 154.0.1.2")).toBe(154);
+    expect(mod.parseChromeVersionMajor("Chromium 155.0.8059.79")).toBe(155);
+    expect(mod.parseChromeVersionMajor("HeadlessChrome/155.0.0.0")).toBe(155);
+    expect(mod.parseChromeVersionMajor("not a browser")).toBe(null);
+  });
+});
