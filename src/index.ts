@@ -1305,6 +1305,7 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
             available: { type: 'boolean', required: true },
             path: { type: 'string' },
             exitCode: { type: 'integer' },
+            resident: { type: 'object', additionalProperties: true },
           },
         },
         render: renderText,
@@ -1335,6 +1336,7 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
               available: outcome.exitCode === 0 && out !== '',
               path: cfg.egoBin,
               exitCode: outcome.exitCode,
+              resident: residentDiagnostics(cfg),
             }
           } catch (err) {
             return {
