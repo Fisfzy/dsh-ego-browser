@@ -11,6 +11,7 @@
 - **headless UA 版本与实际 Chromium 不一致（#79）**：headless 启动时注入的 UA 一直是硬编码 `Chrome/152.0.0.0`，而 `navigator.userAgentData` 来自真实二进制（社区实测 Termux 上外部 Chromium 为 155）。这种自相矛盾的指纹会被风控标记。现在运行时首次 headless 启动会用 `<binary> --version` 探测真实主版本（缓存，2s 超时，失败才回落 152）；Windows 上为避免 `chrome.exe --version` 弹窗不做探测，继续使用兜底值。新增 `parseChromeVersionMajor()` 单测。
 
 ### 文档
+- **macOS 27 / Chrome 156 复测通过（#68）**：社区在 0.9.2 上复测（macOS 27.0.1 arm64 + Chrome 156.0.8078.47，去掉 `chromePath`/`--headless` 两个旧 workaround）——`.app` 自动探测、headed 冷启动、navigate/截图/`ego_doctor` 全通；README 的 macOS 实测记录已补充该环境（此前为 macOS arm64 + Chrome 154）。
 - **Termux / Android 开箱说明（#78）**：README 新增 Termux 小节——`pkg install chromium`（x11 repo）、`chromium-browser` 已在候选列表中、无 `$DISPLAY`/Xvfb 自动 headless、无需 `--no-sandbox`、DBus 报错无害、手机终端建议 `disableFrameRelay: true`；`ego_doctor` 的“未找到浏览器”提示补充 `pkg install chromium`。
 - **`ego_script` 的 page 门面不是 Playwright API（#80）**：`ego_help script`、`ego_script` 工具描述与 README 都列出完整 page 方法清单，并明确没有 `fill/click/type/press`（用 `ego_fill`/`ego_click` 或 `page.locator(...)`），`page.goto()` 不返回 Playwright Response。
 
