@@ -21,7 +21,7 @@
 | 依赖 | 最低版本 | 推荐版本 | 说明 |
 |---|---|---|---|
 | **DSH** (DeepSeek Harness) | `0.1.2-rc.1` | `≥ 0.1.2-rc.1`（v0.8.6 起适配 0.1.7 settings；v0.8.8 起支持 0.2.1 原生右侧边栏，截至 0.2.1 验证通过） | `engines.dsh` 声明地板；peer 依赖同步锁定 `>=0.1.2-rc.1`。0.1.0-rc.x / 0.1.1-rc.x 请使用 v0.8.0 及更早版本 |
-| **dsh-better-sidebar** | `0.12.2`（可选） | `≥ 0.17.1` | 未安装时自动回退浮动观察球；`< 0.12.2` 可运行但外部链接拦截（`urlTarget`）静默降级 |
+| **dsh-better-sidebar** | `0.12.2`（可选） | `≥ 0.17.1` | 官方右侧边栏不可用时的可选侧栏回退（v0.9.3 起不再回退浮动球）；`< 0.12.2` 可运行但外部链接拦截（`urlTarget`）静默降级 |
 | **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、纯文字侧栏面板；缺席时静默跳过，无额外 I/O |
 | **Node.js** | `22` | — | harness 环境自带 |
 
@@ -64,7 +64,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.2
 
 1. 在 DSH 会话里说一句让 agent 用浏览器的话，例如：
    > 打开 https://example.com ，截图并告诉我页面标题
-2. agent 第一次调用 `ego_*` 时，右侧边栏的「Agent 浏览器」标签会自动出现（没有原生侧边栏时回退到 `dsh-better-sidebar`，再没有就是右下角浮动球），实时显示它正在操作的页面。
+2. agent 第一次调用 `ego_*` 时，右侧边栏的「Agent 浏览器」标签会自动出现（没有原生侧边栏时回退到 `dsh-better-sidebar`；两者都没有时不显示侧栏面板），实时显示它正在操作的页面。
 3. 想接手时，直接在观察窗里点击 / 输入 / 滚动；需要完整浏览器窗口就点面板上的「弹出窗口」。
 
 > 宿主侧无需配置：Chrome/Edge/Brave 自动探测，root / 无头自动兜底。第一次启动约 2–4 秒。如果观察窗没出现，先跑一次 `ego_doctor` 看环境；更换浏览器路径后需要让 agent 浏览器冷启动才生效（见「已知限制」）。
@@ -127,7 +127,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.2
 - **v0.9.2**：**macOS 开箱可用**（#65/#68，社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72) 由 @syjnzh918 提供并移植到当前主线）——自动探测 `/Applications` 与 `~/Applications` 下 Chrome / Chromium / Edge / Brave 的 `.app` 内二进制，并像 Windows 一样注入 `EGO_LINUX_CHROME`；headed 路径不再要求 Xvfb（macOS GUI 是 Aqua/Quartz、永不导出 `$DISPLAY`，`isHeadlessDetected` 继续排除 darwin 以保留 #16 的真实窗口能力）。社区真机复测（0.9.2）：**macOS 27.0.1 arm64 + Chrome 156.0.8078.47**（此前另有一次 macOS arm64 + Chrome 154 验证），`chromePath` 留空、无 `--headless`，冷启动 → navigate → 截图 → `ego_doctor` 全通。
 - **v0.9.1**：**观察窗尺寸同步真实窗口**——面板「打开真实页 / 弹出窗口」行新增 **🔒/🔓 尺寸同步** 开关：解锁后拖动侧边栏宽度、或直接拖画面右侧/底部/右下角手柄，会按拖动**增量** 1:1 缩放 agent 浏览器真实窗口；**尺寸预设**（16:9 / 4:3 / 21:9 / 1:1 / 9:16）一键设定窗口比例；页面标题与 URL 移入实时状态栏。**帧链路性能**：按 `cdpFps` 做源端抽帧、采集宽度跟随面板尺寸、窗口隐藏/最小化自动停流、TUI 设置新增「关闭实时画面传输」，实测总 CPU 约减半。**输入与稳定性修复**：窗口缩放后点击坐标不再偏移；拖动缩放不再卡顿；面板先于浏览器打开时 SSE 会自动重连接上。
 - **v0.9.0**：**dsh-TUI 支持**——在 dsh-TUI 宿主中可选注册 Agent Browser 设置页、工具活动状态栏与有限通知；右侧栏面板展示浏览器状态、按任务空间分组的标签、人机验证提示与最近动作，并支持键盘操作（选标签、弹出真实窗口、关标签、落盘登录态、刷新）；v0.9.3 起 TUI 面板改为**纯文字**（不再显示缩略图，也不请求任何截图/画面）。所有 TUI 服务缺席时静默降级，Web/桌面端行为不变。合并社区 PR #74/#75/#76（ccch1mneyyy）。
-- **v0.8.8**：**原生右侧边栏**——观察窗优先注册进 DSH 自带的右侧边栏（`sidebar.right.pane.tab` + guide 入口 + 自绘图标），`dsh-better-sidebar` 与浮动球依次回退；服务晚于插件就绪时用 `ctx.inject` 等待。**常驻执行器（可选）**——`ego_*` 调用复用同一个 `ego-browser --serve` 进程，首次启动后每次 ~1–2 ms（一次性 spawn 约 340 ms）；浏览器被停/崩溃后自动回退一次性 spawn 恢复，再回到常驻；已写出的请求不重试。**稳定性**——`reconcile()` 清扫不属于任何 space 的孤儿标签（#67），冷启动不再堆积标签；Windows 上浏览器启动失败不再空等 Xvfb。**登录导入**——`ego_login_import` 从"全禁"改为仅 Windows + Chrome ≥155 拒绝（#69；v0.9.3 起扩展到 Windows + Chrome/Edge ≥127，理由见下）。
+- **v0.8.8**：**原生右侧边栏**——观察窗优先注册进 DSH 自带的右侧边栏（`sidebar.right.pane.tab` + guide 入口 + 自绘图标），`dsh-better-sidebar` 作为可选回退（v0.9.3 起移除浮动球回退）；服务晚于插件就绪时用 `ctx.inject` 等待。**常驻执行器（可选）**——`ego_*` 调用复用同一个 `ego-browser --serve` 进程，首次启动后每次 ~1–2 ms（一次性 spawn 约 340 ms）；浏览器被停/崩溃后自动回退一次性 spawn 恢复，再回到常驻；已写出的请求不重试。**稳定性**——`reconcile()` 清扫不属于任何 space 的孤儿标签（#67），冷启动不再堆积标签；Windows 上浏览器启动失败不再空等 Xvfb。**登录导入**——`ego_login_import` 从"全禁"改为仅 Windows + Chrome ≥155 拒绝（#69；v0.9.3 起扩展到 Windows + Chrome/Edge ≥127，理由见下）。
 - **v0.8.7**：**工具语义修复**——`ego_wait_for_url` 先比对当前 URL 再等未来导航（带 `matchedCurrent`）、`ego_wait_for_response` 超时不再抛错、`ego_dialog` 失败时给出可执行提示、`ego_script`/`ego_cli` 文档写明 `@@DSH_RESULT@@` 哨兵并支持最后一行 JSON 兜底。**Windows 稳定性**——`clearProfileLock()` 在 win32 上真正清理孤儿 Chrome（此前是永久 no-op，一次非优雅退出会让 agent 浏览器再也打不开）。**安全**——`ego_login_import` 默认禁用（fail-closed，`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 才放行）。**回收器**——`--stop` 后清理 `Default/Sessions/`，冷启动不再静默复活旧标签。**观感**——光标箭头与手形不再重叠；CDP 预览默认宽度 960 → 1280。合并 PR #63（`--serve` 常驻传输，默认仍走 spawn 路径）。
 - **v0.8.6**：登录态导入安全加固（#61 不再可能损坏源 cookie 库）、人机验证误报修复（#62，loopback 不探测、要求挑战短语）、DSH 0.1.7 设置页适配（插件页行配置 + `settings/document-updated` 订阅）。
 - **v0.8.0**：**侧边栏 Tab 集成**——当 `dsh-better-sidebar` 可用时，实时查看窗注册为侧边栏原生 Tab（而非浮动浮窗），`ego_browser` 工具首次调用自动展开；内置 `EgoBrowserTab` React 组件 + `LivePreviewController` 实时帧管道。`dsh-better-sidebar` **不是 peer 依赖**（`ctx.get()` 机会性消费），没装就退回浮动浮窗，两种部署都干净。

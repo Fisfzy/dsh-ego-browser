@@ -4,11 +4,12 @@ import { readFile } from "node:fs/promises";
 const source = await readFile(new URL("../src/client/index.ts", import.meta.url), "utf8");
 
 describe("watch panel input and capture status", () => {
-  it("provides local keyboard proxies for floating and sidebar views", () => {
+  it("provides a local keyboard proxy for the sidebar watch view", () => {
     expect(source).toMatch(/function createKeyboardProxy\(send\)/);
     expect(source).toMatch(/compositionend/);
     expect(source).toMatch(/send\([^,]+, 'insertText'/);
-    expect((source.match(/keyboardProxy\.focusAt\(e,/g) || []).length).toBe(2);
+    // Floating FAB/overlay was removed in 0.9.3; only the sidebar tab remains.
+    expect((source.match(/keyboardProxy\.focusAt\(e,/g) || []).length).toBe(1);
   });
 
   it("does not gate control input on stream state or default missing status to CDP", () => {

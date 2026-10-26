@@ -8,6 +8,7 @@
 - **常驻执行器可视化与失败监督（#73 phase 2）**：新增 host 路由 `/api/ego/executor`，观察窗状态行显示当前执行模式（`常驻` + 运行时长 / `一次性` / `常驻已停用`），悬停可看到 pid、最后一次重建原因或停用原因。监督逻辑：连续 3 次冷启动失败后常驻进程保持停用（`parked`），一次性 spawn 继续工作，直到用户切换设置或插件重启，避免 park → one-shot → respawn 循环。默认保持 opt-in（`residentExecutor` 默认关）：尚无"一整天浸泡无回归"的数据，先不做默认开启决策。设置持久化（gateway 写入后重启回退）仍需真机复现，留待验证。
 
 ### 修复
+- **移除悬浮球回退**：DSH 官方右侧边栏已覆盖观察窗，删除浮动 FAB / 浮窗、拖拽吸附、其专用 CSS/图标/常量与键盘代理代码（client bundle 明显减小），只保留原生侧边栏 Tab + 可选 `dsh-better-sidebar` 回退；两者都不可用时不再显示侧栏面板。
 - **侧栏实时画面黑闪（#81 / #82）**：`<img src>` 逐帧替换会在新 JPEG 解码完成前丢掉已绘制的位图，面板整块露出黑色背景（macOS 无头 CDP 链路尤其明显，Windows 也可复现）。原生侧栏改为**双缓冲**：语义 `<img>` 只负责布局与指针/缩放（`opacity:0`），上方两层层叠 `<img>` 承载可见像素，新帧在隐藏层 `load`/`decode` 完成后才交换可见层，旧帧始终保留；挂载/切标签时用缓存的上一帧做种子，避免首帧空窗。旧浮动面板同样改为**先预加载/解码、再换可见帧**。另修 `maxWidthHint`：在 `root.clientWidth` 为 0 时不再锁成 480；宽度测量提前到首次 watch 之前，`ResizeObserver` 更新后若与当前采集宽度差 >20% 则防抖重启一次 watch，避免 Retina 上一直用 800 采集导致发虚。验证：staging 中两层交替、可见层始终有帧、指针映射不受影响、采集宽度 653px。macOS 实机复测待 #81 报告者确认。
 - **TUI 面板改为纯文字（无画面）**：TUI 没有浏览器视窗渲染能力，面板不再使用 `ui.Image`/`/api/snapshot`/SSE 帧，只显示标签、状态、人机验证、当前工具/错误、最近动作与快捷键；同时把标签元数据与 `disableFrameRelay` 解耦（禁用 Web 画面回传时 TUI 仍能看到标签列表）。选中项改为按 **`targetId`** 保持，标签增删/重排后 `x`/`o` 不会作用到错误的页面。
 - **登录导入安全范围扩大（#69）**：Windows 上从仅拒绝 Chrome ≥155 扩展为拒绝 **Chrome/Edge ≥127**（App-Bound Encryption 范围）。127–154 同样存在"junction 启动真实 profile + 强杀"的破坏性路径，本次先 fail-closed；`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 仍可覆盖。Linux/macOS 与 Windows 上 Chrome <127 不受影响。
