@@ -5,7 +5,7 @@
 ## [Unreleased]
 
 ### 新增
-- **Agent 浏览器面板 UI 重做（macOS 风格）**：状态行改为状态 chip（绿点 + `CDP · streaming`）与执行器 chip；操作按钮分为「打开/弹出」「尺寸」两组 segmented 控件，全部换成 14px 线性 SVG 图标（不再用 Emoji），统一 22px 高、7px 圆角、hover/active/focus 状态；**「连接/复用 Chrome 登录态」移到顶部标题栏右侧**，页面标题/URL 移到标签栏下方；配对面板改为锚定在标题栏下方的悬浮 popover（不挤占实时画面）。同时修掉整行 `opacity:.6` 导致所有按钮发灰的问题，标签栏活动态改为柔和蓝底。
+- **Agent 浏览器面板 UI 重做（Chrome 配色）**：移除「需要账号登录时…」引导条；改用 Chrome 调色板（`#f1f3f4` 工具栏、`#202124/#5f6368` 文字、`#1a73e8` 强调，深色模式跟随 `prefers-color-scheme`）；标题栏为浅灰工具区 + 蓝色实心「连接/复用 Chrome 登录态」主按钮；标签栏改为 Chrome 式活动白标签；页面标题/URL 放在标签栏下方；状态改为轻量 dot + 文本 + 执行器 chip；操作按钮改为扁平 ghost 样式（26px 高、4px 圆角、hover/focus 状态）；配对面板为 Chrome 风白色浮层（锚定在页面信息下方）。同时修掉整行 `opacity:.6` 导致按钮发灰的问题。
 - **`ego_tabs` 工具（0.9.4）**：一个工具管理标签页——`list`（返回 targetId/title/url/active/index）、`switch`（按 targetId 切换）、`open`（按 url 新建，默认 about:blank）、`close`（按 targetId 关闭），每次操作后返回最新标签列表。底层复用 runtime 的 `browser.listTabs/switchTab/closeTab` 与 `ego.createTab`，targetId 与 `ego_space_open`/`ego_navigate` 返回一致。真机脚本已验证 list → open → switch → close 全链路。
 - **`ego_login_import` 双安全路径（#69 E + A）**：
   - **E 安全复制**：删除 junction/symlink 启动真实 profile + 强杀的旧路径；现在只复制 `Local State` + Cookies 到临时 profile 读取，真实 profile **从不被浏览器打开/写入**。Chrome/Edge 127+ 因 ABE 复制读到 0 条 cookie，工具明确报错而不是回退到破坏性路径。真机验证：源 Cookies SHA-256 前后一致。

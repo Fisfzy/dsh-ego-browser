@@ -1509,29 +1509,54 @@ declare function require(id: string): any
   display: flex; flex-direction: column; height: 100%; min-height: 0;
   overflow: hidden; color: inherit; background: transparent;
   position: relative;
+  /* Chrome-inspired palette (light); dark values flip below. */
+  --ego-surface: #ffffff;
+  --ego-toolbar: #f1f3f4;
+  --ego-text: #202124;
+  --ego-text-2: #5f6368;
+  --ego-accent: #1a73e8;
+  --ego-on-accent: #ffffff;
+  --ego-hover: rgba(60, 64, 67, .08);
+  --ego-border: rgba(60, 64, 67, .16);
+  --ego-tab-active: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  .dsh-ego-side-root {
+    --ego-surface: #202124;
+    --ego-toolbar: #292a2d;
+    --ego-text: #e8eaed;
+    --ego-text-2: #9aa0a6;
+    --ego-accent: #8ab4f8;
+    --ego-on-accent: #202124;
+    --ego-hover: rgba(232, 234, 237, .08);
+    --ego-border: rgba(232, 234, 237, .16);
+    --ego-tab-active: #35363a;
+  }
 }
 .dsh-ego-side-root * { box-sizing: border-box; }
 
 .dsh-ego-side-head {
-  display: flex; align-items: center; gap: 4px; padding: 8px 10px;
-  border-bottom: 1px solid rgba(128,128,128,.18); flex-shrink: 0;
+  display: flex; align-items: center; gap: 4px; padding: 7px 10px;
+  border-bottom: 1px solid var(--ego-border); flex-shrink: 0;
+  background: var(--ego-toolbar); color: var(--ego-text);
 }
 .dsh-ego-side-title {
-  flex: 1; font-size: 12.5px; font-weight: 600; letter-spacing: .2px;
+  flex: 1; font-size: 13px; font-weight: 500; letter-spacing: .1px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  display: flex; align-items: center; gap: 5px; opacity: .85;
+  display: flex; align-items: center; gap: 6px;
+  color: var(--ego-text);
 }
-.dsh-ego-side-title svg { width: 14px; height: 14px; flex-shrink: 0; }
+.dsh-ego-side-title svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--ego-text-2); }
 .dsh-ego-side-iconbtn {
   background: transparent; border: none; cursor: pointer;
-  width: 26px; height: 26px; border-radius: 7px; padding: 0;
+  width: 28px; height: 28px; border-radius: 50%; padding: 0;
   display: flex; align-items: center; justify-content: center;
-  color: inherit; opacity: .6;
-  transition: background .15s ease, opacity .15s ease;
+  color: var(--ego-text-2);
+  transition: background .15s ease, color .15s ease;
 }
-.dsh-ego-side-iconbtn:hover { background: rgba(128,128,128,.18); opacity: 1; }
-.dsh-ego-side-iconbtn.off { opacity: .4; }
+.dsh-ego-side-iconbtn:hover { background: var(--ego-hover); color: var(--ego-text); }
+.dsh-ego-side-iconbtn.off { opacity: .45; }
 .dsh-ego-side-iconbtn.spinning svg { animation: dsh-ego-side-spin .7s linear infinite; }
 @keyframes dsh-ego-side-spin { to { transform: rotate(360deg); } }
 
@@ -1565,31 +1590,32 @@ declare function require(id: string): any
 
 /* ---- tab strip: frosted pills ---- */
 .dsh-ego-side-tabs {
-  display: flex; gap: 5px; padding: 7px 10px; flex-shrink: 0;
-  border-bottom: 1px solid rgba(128,128,128,.12);
+  display: flex; gap: 3px; padding: 5px 10px 0; flex-shrink: 0;
+  background: var(--ego-toolbar);
   overflow-x: auto; scrollbar-width: thin;
 }
 .dsh-ego-side-tabs:empty { display: none; }
 .dsh-ego-side-tab {
-  display: inline-flex; align-items: center; gap: 5px; max-width: 160px;
-  white-space: nowrap; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; max-width: 160px;
+  white-space: nowrap; padding: 6px 10px; border-radius: 7px 7px 0 0; cursor: pointer;
   font-size: 11px; flex-shrink: 0;
-  border: 1px solid rgba(128,128,128,.2); background: rgba(128,128,128,.12);
-  opacity: .7; transition: background .15s, opacity .15s, border-color .15s;
+  border: 1px solid transparent; background: transparent;
+  color: var(--ego-text-2);
+  transition: background .15s, color .15s, border-color .15s;
 }
 .dsh-ego-side-tab > .dsh-ego-side-tabtxt { overflow: hidden; text-overflow: ellipsis; }
-.dsh-ego-side-tab:hover { opacity: 1; background: rgba(128,128,128,.2); }
+.dsh-ego-side-tab:hover { background: var(--ego-hover); color: var(--ego-text); }
 .dsh-ego-side-tab.active {
-  background: rgba(10,132,255,.14); color: #0a84ff; border-color: rgba(10,132,255,.28);
-  opacity: 1; box-shadow: none;
+  background: var(--ego-tab-active); color: var(--ego-text);
+  border-color: var(--ego-border); box-shadow: 0 1px 2px rgba(0,0,0,.10);
 }
-.dsh-ego-side-tabdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; flex-shrink: 0; }
-.dsh-ego-side-tab.active .dsh-ego-side-tabdot { background: currentColor; opacity: 1; }
+.dsh-ego-side-tabdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .45; flex-shrink: 0; }
+.dsh-ego-side-tab.active .dsh-ego-side-tabdot { background: var(--ego-accent); opacity: 1; }
 .dsh-ego-side-tabclose {
-  flex-shrink: 0; width: 13px; height: 13px; line-height: 12px; text-align: center;
+  flex-shrink: 0; width: 14px; height: 14px; line-height: 13px; text-align: center;
   border-radius: 50%; font-size: 11px; opacity: .5; margin-left: 1px;
 }
-.dsh-ego-side-tabclose:hover { background: rgba(128,128,128,.20); color: #ff453a; opacity: 1; }
+.dsh-ego-side-tabclose:hover { background: var(--ego-hover); color: #c5221f; opacity: 1; }
 
 /* ---- main body ---- */
 .dsh-ego-side-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; }
@@ -1607,23 +1633,19 @@ declare function require(id: string): any
 .dsh-ego-side-actionline { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; position: relative; }
 .dsh-ego-side-statuschip {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 2px 8px; border-radius: 999px;
-  background: rgba(128,128,128,.10); border: 1px solid rgba(128,128,128,.16);
+  padding: 0 2px; color: var(--ego-text-2);
 }
 .dsh-ego-side-execchip {
-  font-size: 9.5px; opacity: .65; padding: 2px 7px; border-radius: 999px;
-  background: rgba(128,128,128,.07); white-space: nowrap;
+  font-size: 9.5px; color: var(--ego-text-2); padding: 0 2px; white-space: nowrap;
 }
 .dsh-ego-side-btngroup {
-  display: inline-flex; align-items: center; gap: 1px; padding: 2px;
-  border-radius: 8px; background: rgba(128,128,128,.08);
-  border: 1px solid rgba(128,128,128,.14);
+  display: inline-flex; align-items: center; gap: 2px;
+  border-radius: 4px; background: transparent;
 }
-.dsh-ego-side-btngroup .dsh-ego-side-back { border: 0; background: transparent; border-radius: 6px; }
-.dsh-ego-side-btngroup .dsh-ego-side-back:hover { background: rgba(128,128,128,.18); }
+.dsh-ego-side-btngroup .dsh-ego-side-back { border: 0; background: transparent; border-radius: 4px; }
+.dsh-ego-side-btngroup .dsh-ego-side-back:hover { background: var(--ego-hover); }
 .dsh-ego-side-btngroup .dsh-ego-side-back-on {
-  background: rgba(10,132,255,.14); color: #0a84ff;
-  box-shadow: inset 0 0 0 1px rgba(10,132,255,.26);
+  background: rgba(26,115,232,.10); color: var(--ego-accent);
 }
 .dsh-ego-side-btnico { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; opacity: .85; }
 .dsh-ego-side-btnico svg { display: block; }
@@ -1634,18 +1656,21 @@ declare function require(id: string): any
 .dsh-ego-side-badgestatus { white-space: nowrap; opacity: .82; }
 .dsh-ego-side-pageinfo {
   flex-basis: 100%; display: flex; align-items: baseline; gap: 8px;
-  min-width: 0; font-size: 10.5px;
+  min-width: 0; font-size: 10.5px; color: var(--ego-text-2);
+  background: var(--ego-surface);
 }
-.dsh-ego-side-pageinfo-tabs { flex-basis: auto; flex-shrink: 0; padding: 7px 10px 0; }
+.dsh-ego-side-pageinfo-tabs { flex-basis: auto; flex-shrink: 0; padding: 7px 10px 5px; }
 .dsh-ego-side-pagemessage {
-  flex-shrink: 0; padding: 2px 10px 0; font-size: 10px; opacity: .55;
+  flex-shrink: 0; padding: 2px 10px 0; font-size: 10px; color: var(--ego-text-2); opacity: .85;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dsh-ego-side-pageinfo .dsh-ego-side-livetitle {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 62%; flex: none;
+  color: var(--ego-text); font-size: 12.5px; font-weight: 500;
 }
 .dsh-ego-side-pageinfo .dsh-ego-side-liveurl {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+  color: var(--ego-text-2); font-size: 11px;
 }
 .dsh-ego-side-presets {
   position: absolute; top: 24px; right: 0; z-index: 30;
@@ -1697,59 +1722,58 @@ declare function require(id: string): any
   50%      { box-shadow: 0 0 10px #30d158ee; opacity: 1; }
 }
 .dsh-ego-side-back {
-  height: 22px; padding: 0 8px;
-  background: rgba(128,128,128,.08); border: 1px solid rgba(128,128,128,.16);
-  border-radius: 7px; cursor: pointer; font-size: 10.5px; font-weight: 500;
-  display: inline-flex; align-items: center; gap: 4px;
+  height: 26px; padding: 0 8px;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 5px;
   transition: background .14s ease, color .14s ease, transform .08s ease;
-  color: inherit; white-space: nowrap;
+  color: var(--ego-text-2); white-space: nowrap;
 }
-.dsh-ego-side-back:hover { background: rgba(128,128,128,.16); }
+.dsh-ego-side-back:hover { background: var(--ego-hover); color: var(--ego-text); }
 .dsh-ego-side-back:active { transform: scale(.98); }
-.dsh-ego-side-back:focus-visible { outline: 2px solid rgba(10,132,255,.55); outline-offset: 1px; }
-.dsh-ego-side-back-on {
-  color: #0a84ff; background: rgba(10,132,255,.12);
-  box-shadow: inset 0 0 0 1px rgba(10,132,255,.26);
-}
-/* Primary action: one-click Chrome login-state import (brand accent, toned). */
+.dsh-ego-side-back:focus-visible { outline: 2px solid var(--ego-accent); outline-offset: 1px; }
+.dsh-ego-side-back-on { color: var(--ego-accent); background: rgba(26,115,232,.10); }
+/* Primary action: Chrome-blue filled button (primary sign-in affordance). */
 .dsh-ego-side-loginbtn {
-  color: #d97757; border-color: rgba(217,119,87,.42);
-  background: rgba(217,119,87,.11);
+  background: var(--ego-accent); color: var(--ego-on-accent);
+  border-color: transparent; border-radius: 4px; font-weight: 500;
 }
-.dsh-ego-side-loginbtn:hover { background: rgba(217,119,87,.18); }
-.dsh-ego-side-loginbtn-ready { color: #7fbf8a; border-color: rgba(127,191,138,.4); background: rgba(127,191,138,.10); }
-.dsh-ego-side-loginbtn-ready:hover { background: rgba(127,191,138,.18); }
-.dsh-ego-side-loginbtn-head { height: 22px; margin-left: 2px; }
+.dsh-ego-side-loginbtn:hover { background: var(--ego-accent); color: var(--ego-on-accent); filter: brightness(.96); }
+.dsh-ego-side-loginbtn-ready {
+  background: transparent; color: var(--ego-accent);
+  border-color: var(--ego-border);
+}
+.dsh-ego-side-loginbtn-ready:hover { background: var(--ego-hover); color: var(--ego-accent); filter: none; }
+.dsh-ego-side-loginbtn-head { height: 26px; margin-left: 2px; }
 .dsh-ego-side-loginbtn-busy { opacity: .65; pointer-events: none; }
-/* Pairing popover: anchored under the toolbar, floats over the stage instead
-   of pushing the live frame down. */
+/* Pairing popover: Chrome-style white card, anchored under the header. */
 .dsh-ego-side-pairbox {
-  position: absolute; top: 46px; right: 8px; z-index: 95;
-  width: min(320px, calc(100% - 16px));
-  padding: 12px;
-  border: 1px solid rgba(128,128,128,.22); border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-1, #fff);
-  box-shadow: 0 16px 40px rgba(0,0,0,.22), 0 1px 0 rgba(255,255,255,.35) inset;
+  position: absolute; top: 104px; right: 10px; z-index: 95;
+  width: min(320px, calc(100% - 20px));
+  padding: 14px;
+  border: 1px solid var(--ego-border); border-radius: 8px;
+  background: var(--ego-surface); color: var(--ego-text);
+  box-shadow: 0 4px 16px rgba(0,0,0,.20);
   display: flex; flex-direction: column; gap: 6px;
-  font-size: 10.5px; line-height: 1.55;
+  font-size: 11px; line-height: 1.55;
 }
-.dsh-ego-side-pairhead { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 11.5px; }
+.dsh-ego-side-pairhead { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 13px; color: var(--ego-text); }
 .dsh-ego-side-pairhead > span:first-child { flex: 1; }
 .dsh-ego-side-pairclose {
-  border: 0; background: transparent; color: inherit; opacity: .55;
-  font-size: 15px; line-height: 1; cursor: pointer; padding: 0 2px;
+  border: 0; background: transparent; color: var(--ego-text-2); opacity: .7;
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px;
 }
-.dsh-ego-side-pairclose:hover { opacity: 1; }
+.dsh-ego-side-pairclose:hover { opacity: 1; background: var(--ego-hover); border-radius: 50%; }
 .dsh-ego-side-pairstep { opacity: .8; }
 .dsh-ego-side-paircode {
   font-size: 24px; font-weight: 700; letter-spacing: 6px;
-  color: #d97757; text-align: center; padding: 2px 0 4px;
+  color: var(--ego-accent); text-align: center; padding: 2px 0 4px;
   font-variant-numeric: tabular-nums;
 }
 .dsh-ego-side-pairpath {
   font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px;
   opacity: .65; word-break: break-all;
-  background: rgba(128,128,128,.10); border-radius: 6px; padding: 4px 6px;
+  background: var(--ego-hover); color: var(--ego-text-2); border-radius: 4px; padding: 4px 6px;
 }
 .dsh-ego-side-liveimg {
   width: 100%; border-radius: 9px; display: block;
@@ -3081,11 +3105,9 @@ declare function require(id: string): any
 				)
 			}
 
-			// Guide strips
+			// Guide strips (human verification only; the old “log in, then save”
+			// banner was removed — the login action lives in the title bar now).
 			var guides = []
-			if (state.showLoginGuide) {
-				guides.push(h(EgoLoginGuide, { key: 'login', controller: controller }))
-			}
 			if (state.captchaKind) {
 				guides.push(h(EgoCaptchaGuide, { key: 'captcha', kind: state.captchaKind, controller: controller }))
 			}
