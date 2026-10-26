@@ -3,10 +3,14 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  createLoginExtensionPairingCode,
   getOrCreateLoginExtensionToken,
   importLoginCookiesFromExtension,
   loginExtensionTokenPath,
   receiveExtensionCookies,
+  startLoginExtensionJob,
+  stopLoginExtensionBridge,
+  LOGIN_EXTENSION_PORT,
 } from '../src/login-extension.ts'
 
 const cookie = {
@@ -72,11 +76,11 @@ describe('login extension bridge (#69 A)', () => {
 
   it('runs a dry-run import through the loopback receiver', async () => {
     const state = await mkdtemp(join(tmpdir(), 'ego-ext-import-'))
-    const port = 53822
+    const port = LOGIN_EXTENSION_PORT
     try {
-      const pending = importLoginCookiesFromExtension({ domains: ['example.com'], dryRun: true, stateDir: state, port, timeoutMs: 8000 })
+      const pending = importLoginCookiesFromExtension({ domains: ['example.com'], dryRun: true, timeoutMs: 8000 })
       await waitForPing(port)
-      const token = await getOrCreateLoginExtensionToken(state)
+      const token = await getOrCreateLoginExtensionToken()
       const res = await fetch(`http://127.0.0.1:${port}/cookies`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ token, domains: ['example.com'], cookies: [cookie] }),
@@ -86,7 +90,36 @@ describe('login extension bridge (#69 A)', () => {
       expect(report).toMatchObject({ ok: true, dryRun: true, source: 'Chrome extension', totalRead: 1, matched: 1, written: 0 })
       expect(report.domains).toEqual([{ domain: '.example.com', cookies: 1 }])
     } finally {
+      stopLoginExtensionBridge()
       await rm(state, { recursive: true, force: true })
+    }
+  })
+
+  it('pairs with a one-time code and lets the extension poll a waiting job', async () => {
+    const port = LOGIN_EXTENSION_PORT
+    try {
+      const pairing = await createLoginExtensionPairingCode()
+      expect(pairing.ok).toBe(true)
+      expect(pairing.code).toMatch(/^\d{6}$/)
+      const pairRes = await fetch(`http://127.0.0.1:${port}/pair`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: pairing.code }),
+      })
+      const paired = (await pairRes.json()) as { ok?: boolean; token?: string }
+      expect(paired.ok).toBe(true)
+      expect(paired.token).toBeTruthy()
+      const job = await startLoginExtensionJob({ domains: ['example.com'], dryRun: true, timeoutMs: 5000 })
+      const pending = await fetch(`http://127.0.0.1:${port}/pending`, { headers: { 'x-ego-token': paired.token! } })
+      const pj = (await pending.json()) as { jobId?: string }
+      expect(pj.jobId).toBe(job.jobId)
+      await fetch(`http://127.0.0.1:${port}/cookies`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: paired.token, jobId: job.jobId, cookies: [cookie] }),
+      })
+      const report = await job.done
+      expect(report).toMatchObject({ ok: true, dryRun: true, totalRead: 1, matched: 1, written: 0 })
+    } finally {
+      stopLoginExtensionBridge()
     }
   })
 })

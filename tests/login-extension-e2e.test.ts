@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { getOrCreateLoginExtensionToken, importLoginCookiesFromExtension } from '../src/login-extension.ts'
+import { createLoginExtensionPairingCode, stopLoginExtensionBridge, importLoginCookiesFromExtension } from '../src/login-extension.ts'
 import { resolveEgoStateDir } from '../src/login-import.ts'
 
 // Gated real-browser test for the #69 (A) extension bridge:
@@ -73,17 +73,16 @@ describe.skipIf(!real)('login extension bridge (real Chrome)', () => {
     const stateDir = resolveEgoStateDir()
     const profileDir = await mkdtemp(join(tmpdir(), 'ego-ext-e2e-profile-'))
     const port = 53831
+    process.env.EGO_LOGIN_EXTENSION_PORT = String(port)
     const cookieName = '__ego_ext_test_' + Date.now()
     let child: ReturnType<typeof spawn> | null = null
     let client: Cdp | null = null
     try {
       const pending = importLoginCookiesFromExtension({ domains: ['example.com'], dryRun: false, stateDir, port, timeoutMs: 45_000 })
-      // Wait for the receiver, then read the token it created.
       for (let i = 0; i < 100; i++) {
         try { if ((await fetch(`http://127.0.0.1:${port}/ping`)).ok) break } catch { /* wait */ }
         await sleep(50)
       }
-      const token = await getOrCreateLoginExtensionToken(stateDir)
 
       child = spawn(CHROME, [
         `--user-data-dir=${profileDir}`,
@@ -139,7 +138,7 @@ describe.skipIf(!real)('login extension bridge (real Chrome)', () => {
             if (ready.result?.value === 'complete') break
             await sleep(100)
           }
-          const has = await evalIn(s, "!!document.getElementById('domains')")
+          const has = await evalIn(s, "!!document.getElementById('pair')")
           if (has.result?.value === true) {
             extensionId = id
             popupSession = s
@@ -157,14 +156,16 @@ describe.skipIf(!real)('login extension bridge (real Chrome)', () => {
         name: cookieName, value: 'bridge-ok', url: 'https://example.com/', domain: '.example.com', path: '/', secure: true,
       }, pageSession)
 
-      const click = await evalIn(popupSession, `(async () => {
-          document.getElementById('domains').value = 'example.com';
-          document.getElementById('port').value = '${port}';
-          document.getElementById('token').value = '${token}';
-          document.getElementById('export').click();
-          return 'clicked';
-        })()`, true)
-      expect(click.result?.value).toBe('clicked')
+      // Real pairing flow: fetch a one-time code from the bridge, then let the
+      // extension exchange it for a token (exactly what the popup does).
+      const pairing = await createLoginExtensionPairingCode()
+      expect(pairing.ok).toBe(true)
+      const paired = await evalIn(popupSession, `fetch('http://127.0.0.1:${port}/pair', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ code: '${pairing.code}' }),
+        }).then(r => r.json()).then(j => j.ok ? chrome.storage.local.set({ token: j.token, port: '${port}' }) : Promise.reject(j.error))`, true)
+      expect(paired.exceptionDetails).toBeUndefined()
 
       const report = await pending
       expect(report.ok).toBe(true)
@@ -189,6 +190,8 @@ describe.skipIf(!real)('login extension bridge (real Chrome)', () => {
       try { client?.close() } catch { /* ignore */ }
       try { child?.kill() } catch { /* ignore */ }
       await sleep(500)
+      try { stopLoginExtensionBridge() } catch { /* ignore */ }
+      delete process.env.EGO_LOGIN_EXTENSION_PORT
       await rm(profileDir, { recursive: true, force: true }).catch(() => null)
     }
   }, 180_000)

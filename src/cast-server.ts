@@ -17,6 +17,13 @@ import type { EgoContext, RegisterRouteOptions, ResolvedConfig, WebServerLike } 
 import type { SettingsBridge } from './settings.ts'
 import type { FfmpegInstallationManager } from './ffmpeg-installation.ts'
 import type { LoginImportOptions, LoginImportReport } from './login-import.ts'
+import {
+  createLoginExtensionPairingCode,
+  getLoginExtensionHealth,
+  getLoginExtensionJob,
+  startLoginExtensionJob,
+  stopLoginExtensionBridge,
+} from './login-extension.ts'
 
 import { captureConfig, isProcessAlive, knownWorkerState, makeEnsureWorker, proxyFrom, proxyPost, type EnsureWorker } from './worker-client.ts'
 export { proxyPost } from './worker-client.ts'
@@ -713,12 +720,66 @@ export function initCastServer(
     },
   })
 
+  // #69 v2 — one-click login-state bridge for the panel: pairing code, health
+  // and job status. The extension itself talks to the loopback server in
+  // login-extension.ts; these routes are for the in-panel UI.
+  const disposeLoginBridge = [
+    server.register({
+      kind: 'exact', path: '/api/ego/login-extension/health',
+      handler: async (_req: unknown, resRaw: unknown) => {
+        const res = resRaw as ServerResponse
+        try { return sendJson(res, 200, await getLoginExtensionHealth()) }
+        catch (err) { return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) }) }
+      },
+    }),
+    server.register({
+      kind: 'exact', path: '/api/ego/login-extension/pair-code',
+      handler: async (_req: unknown, resRaw: unknown) => {
+        const res = resRaw as ServerResponse
+        try { return sendJson(res, 200, await createLoginExtensionPairingCode()) }
+        catch (err) { return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) }) }
+      },
+    }),
+    server.register({
+      kind: 'exact', path: '/api/ego/login-extension/import',
+      handler: async (reqRaw: unknown, resRaw: unknown) => {
+        const req = reqRaw as IncomingMessage
+        const res = resRaw as ServerResponse
+        try {
+          const body = (await readJsonBody(req).catch(() => ({}))) as { domains?: unknown }
+          const domains = Array.isArray(body.domains) ? body.domains.map(String).filter(Boolean) : []
+          if (domains.length === 0) return sendJson(res, 400, { ok: false, error: 'domains is required' })
+          const job = await startLoginExtensionJob({ domains })
+          return sendJson(res, 200, { ok: true, jobId: job.jobId })
+        } catch (err) {
+          return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) })
+        }
+      },
+    }),
+    server.register({
+      kind: 'exact', path: '/api/ego/login-extension/status',
+      handler: async (reqRaw: unknown, resRaw: unknown) => {
+        const req = reqRaw as IncomingMessage
+        const res = resRaw as ServerResponse
+        try {
+          const id = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('id') ?? ''
+          if (!id) return sendJson(res, 400, { ok: false, error: 'id is required' })
+          return sendJson(res, 200, await getLoginExtensionJob(id))
+        } catch (err) {
+          return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) })
+        }
+      },
+    }),
+  ]
+
   ctx.effect?.(() => () => {
     try { disposeSpaces() } catch { /* ignore */ }
     try { disposeStream() } catch { /* ignore */ }
     try { disposeInput() } catch { /* ignore */ }
     try { disposeWindowSize() } catch { /* ignore */ }
     try { disposeExecutor() } catch { /* ignore */ }
+    try { disposeLoginBridge.forEach((dispose) => dispose()) } catch { /* ignore */ }
+    try { stopLoginExtensionBridge() } catch { /* ignore */ }
     try { disposeClose() } catch { /* ignore */ }
     try { disposeFlush() } catch { /* ignore */ }
     try { disposeRaise() } catch { /* ignore */ }

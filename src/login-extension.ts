@@ -24,6 +24,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   browserWsUrl,
   connectCdp,
@@ -229,31 +230,246 @@ export interface ExtensionImportOptions {
   timeoutMs?: number
 }
 
-/** #69 (A): import cookies from the companion Chrome extension. */
+/** #69 (A): import cookies from the companion Chrome extension (bridge v2). */
 export async function importLoginCookiesFromExtension(opts: ExtensionImportOptions = {}): Promise<LoginImportReport> {
-  const stateDir = opts.stateDir ?? resolveEgoStateDir()
-  const token = await getOrCreateLoginExtensionToken(stateDir)
-  let received
-  try {
-    received = await receiveExtensionCookies({
-      token,
-      domains: opts.domains ?? [],
-      ...(opts.port !== undefined ? { port: opts.port } : {}),
-      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
-    })
-  } catch (err) {
-    return { ok: false, error: String((err as Error)?.message || err) }
-  }
-  const cookies = received.cookies
+  const job = await startLoginExtensionJob(opts)
+  return await job.done
+}
+
+// ── persistent bridge: pairing + job queue (one-click panel UX) ─────────────
+//
+// v1 started a one-shot receiver per tool call and required the user to open the
+// extension popup and click Export every time. v2 keeps a loopback server alive:
+// the extension pairs once (6-digit code), then polls /pending in the background
+// and auto-exports for each job. The panel starts a job with one click.
+
+export interface LoginExtensionHealth {
+  ok: boolean
+  paired: boolean
+  port: number
+  tokenPath: string
+  extensionPath: string
+  error?: string
+}
+
+export interface LoginExtensionPairing {
+  ok: boolean
+  code?: string
+  expiresAt?: number
+  port?: number
+  error?: string
+}
+
+interface ExtensionJob {
+  id: string
+  domains: string[]
+  dryRun: boolean
+  state: 'waiting' | 'done'
+  createdAt: number
+  report?: LoginImportReport
+}
+
+interface BridgeState {
+  server: ReturnType<typeof createServer>
+  token: string
+  port: number
+  lastSeenAt: number
+  pairCode: string
+  pairExpiresAt: number
+  jobs: Map<string, ExtensionJob>
+  waiters: Map<string, (report: LoginImportReport) => void>
+  started: Promise<void>
+}
+
+let bridge: BridgeState | null = null
+let bridgeStarting: Promise<BridgeState> | null = null
+let jobSeq = 0
+
+async function buildExtensionReport(cookies: CdpCookie[], received: number, dryRun: boolean, stateDir: string): Promise<LoginImportReport> {
   const byDomain = new Map<string, number>()
   for (const c of cookies) byDomain.set(c.domain, (byDomain.get(c.domain) || 0) + 1)
   const domains = [...byDomain.entries()].map(([domain, count]) => ({ domain, cookies: count })).sort((a, b) => b.cookies - a.cookies)
-  if (opts.dryRun) {
-    return { ok: true, source: 'Chrome extension', profile: 'extension', dryRun: true, closedSource: false, totalRead: received.received, matched: cookies.length, written: 0, domains }
+  if (dryRun) {
+    return { ok: true, source: 'Chrome extension', profile: 'extension', dryRun: true, closedSource: false, totalRead: received, matched: cookies.length, written: 0, domains }
   }
   const write = await writeCookiesToEgo(cookies, stateDir)
   if (write.error !== undefined) {
-    return { ok: false, source: 'Chrome extension', profile: 'extension', dryRun: false, closedSource: false, totalRead: received.received, matched: cookies.length, written: write.written, domains, error: write.error }
+    return { ok: false, source: 'Chrome extension', profile: 'extension', dryRun: false, closedSource: false, totalRead: received, matched: cookies.length, written: write.written, domains, error: write.error }
   }
-  return { ok: true, source: 'Chrome extension', profile: 'extension', dryRun: false, closedSource: false, totalRead: received.received, matched: cookies.length, written: write.written, domains }
+  return { ok: true, source: 'Chrome extension', profile: 'extension', dryRun: false, closedSource: false, totalRead: received, matched: cookies.length, written: write.written, domains }
+}
+
+function settlement(job: ExtensionJob, report: LoginImportReport): void {
+  job.state = 'done'
+  job.report = report
+  const waiter = bridge?.waiters.get(job.id)
+  if (waiter) {
+    bridge!.waiters.delete(job.id)
+    waiter(report)
+  }
+}
+
+async function ensureBridge(): Promise<BridgeState> {
+  if (bridge) return bridge
+  if (bridgeStarting) return await bridgeStarting
+  bridgeStarting = (async () => {
+    const port = Number(process.env.EGO_LOGIN_EXTENSION_PORT) || LOGIN_EXTENSION_PORT
+    const stateDir = resolveEgoStateDir()
+    const token = await getOrCreateLoginExtensionToken(stateDir)
+    const state: BridgeState = {
+      server: createServer(() => {}),
+      token,
+      port,
+      lastSeenAt: 0,
+      pairCode: '',
+      pairExpiresAt: 0,
+      jobs: new Map(),
+      waiters: new Map(),
+      started: Promise.resolve(),
+    }
+    state.server = createServer(async (req, res) => {
+      try {
+        if (req.method === 'OPTIONS') { sendJson(res, 204, {}); return }
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+        if (req.method === 'GET' && (url.pathname === '/ping' || url.pathname === '/health')) {
+          sendJson(res, 200, { ok: true, app: 'ego-browser-login', port: state.port, paired: Date.now() - state.lastSeenAt < 20_000 })
+          return
+        }
+        if (req.method === 'POST' && url.pathname === '/pair') {
+          const body = (await readJsonBody(req)) as { code?: unknown }
+          if (typeof body.code !== 'string' || body.code !== state.pairCode || Date.now() > state.pairExpiresAt) {
+            sendJson(res, 403, { ok: false, error: 'pairing code expired or invalid' })
+            return
+          }
+          state.lastSeenAt = Date.now()
+          sendJson(res, 200, { ok: true, token: state.token, port: state.port })
+          return
+        }
+        if (req.method === 'GET' && url.pathname === '/pending') {
+          const token = req.headers['x-ego-token']
+          if (!tokenMatches(state.token, token)) { sendJson(res, 403, { ok: false, error: 'bad token' }); return }
+          state.lastSeenAt = Date.now()
+          const job = [...state.jobs.values()].find((j) => j.state === 'waiting')
+          if (!job) { sendJson(res, 204, {}); return }
+          sendJson(res, 200, { jobId: job.id, domains: job.domains, dryRun: job.dryRun })
+          return
+        }
+        if (req.method === 'POST' && url.pathname === '/cookies') {
+          const body = (await readJsonBody(req)) as { token?: unknown; jobId?: unknown; cookies?: unknown }
+          if (!tokenMatches(state.token, body.token)) { sendJson(res, 403, { ok: false, error: 'bad token' }); return }
+          state.lastSeenAt = Date.now()
+          const jobs = [...state.jobs.values()].filter((j) => j.state === 'waiting')
+          const job = (typeof body.jobId === 'string' ? state.jobs.get(body.jobId) : undefined) || jobs[0]
+          if (!job || job.state !== 'waiting') { sendJson(res, 409, { ok: false, error: 'no waiting import job' }); return }
+          const raw = Array.isArray(body.cookies) ? body.cookies : []
+          const cookies = raw.map(toCdpCookie).filter((c): c is CdpCookie => c !== null)
+          const filtered = cookies.filter((c) => cookieMatchesDomains(c.domain, job.domains))
+          sendJson(res, 200, { ok: true, received: cookies.length, matched: filtered.length })
+          void buildExtensionReport(filtered, cookies.length, job.dryRun, resolveEgoStateDir()).then((report) => settlement(job, report))
+          return
+        }
+        sendJson(res, 404, { ok: false, error: 'not found' })
+      } catch (err) {
+        sendJson(res, 400, { ok: false, error: String((err as Error)?.message || err) })
+      }
+    })
+    await new Promise<void>((resolve, reject) => {
+      state.server.once('error', (err) => reject(new Error(`could not start login-extension bridge on 127.0.0.1:${port}: ${(err as Error).message}`)))
+      state.server.listen(port, '127.0.0.1', () => resolve())
+    })
+    bridge = state
+    return state
+  })()
+  try {
+    return await bridgeStarting
+  } catch (err) {
+    bridgeStarting = null
+    throw err
+  }
+}
+
+export async function getLoginExtensionHealth(): Promise<LoginExtensionHealth> {
+  try {
+    const state = await ensureBridge()
+    return {
+      ok: true,
+      paired: Date.now() - state.lastSeenAt < 20_000,
+      port: state.port,
+      tokenPath: loginExtensionTokenPath(),
+      extensionPath: fileURLToPath(new URL('../extension', import.meta.url)),
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      paired: false,
+      port: Number(process.env.EGO_LOGIN_EXTENSION_PORT) || LOGIN_EXTENSION_PORT,
+      tokenPath: loginExtensionTokenPath(),
+      extensionPath: fileURLToPath(new URL('../extension', import.meta.url)),
+      error: String((err as Error)?.message || err),
+    }
+  }
+}
+
+export async function createLoginExtensionPairingCode(): Promise<LoginExtensionPairing> {
+  try {
+    const state = await ensureBridge()
+    state.pairCode = String(Math.floor(100000 + Math.random() * 900000))
+    state.pairExpiresAt = Date.now() + 120_000
+    return { ok: true, code: state.pairCode, expiresAt: state.pairExpiresAt, port: state.port }
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message || err) }
+  }
+}
+
+export async function startLoginExtensionJob(opts: ExtensionImportOptions = {}): Promise<{ jobId: string; done: Promise<LoginImportReport> }> {
+  const state = await ensureBridge()
+  const timeoutMs = opts.timeoutMs ?? 120_000
+  const job: ExtensionJob = {
+    id: 'job-' + (++jobSeq),
+    domains: opts.domains ?? [],
+    dryRun: opts.dryRun === true,
+    state: 'waiting',
+    createdAt: Date.now(),
+  }
+  state.jobs.set(job.id, job)
+  const done = new Promise<LoginImportReport>((resolve) => {
+    state.waiters.set(job.id, resolve)
+    setTimeout(() => {
+      if (job.state !== 'waiting') return
+      settlement(job, {
+        ok: false,
+        source: 'Chrome extension',
+        profile: 'extension',
+        dryRun: job.dryRun,
+        closedSource: false,
+        totalRead: 0,
+        matched: 0,
+        written: 0,
+        domains: [],
+        error: `the Chrome extension did not pick up the job within ${Math.round(timeoutMs / 1000)}s — pair it once in the extension popup (code from the panel) and keep Chrome running`,
+      })
+    }, timeoutMs).unref?.()
+  })
+  // Keep only recent jobs to bound memory.
+  if (state.jobs.size > 20) {
+    for (const [id, old] of state.jobs) if (old.state !== 'waiting' && id !== job.id) state.jobs.delete(id)
+  }
+  return { jobId: job.id, done }
+}
+
+export async function getLoginExtensionJob(jobId: string): Promise<{ ok: boolean; state?: string; report?: LoginImportReport; error?: string }> {
+  try {
+    const state = await ensureBridge()
+    const job = state.jobs.get(jobId)
+    if (!job) return { ok: false, error: 'job not found' }
+    return { ok: true, state: job.state, ...(job.report ? { report: job.report } : {}) }
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message || err) }
+  }
+}
+
+export function stopLoginExtensionBridge(): void {
+  try { bridge?.server.close() } catch { /* ignore */ }
+  bridge = null
+  bridgeStarting = null
 }

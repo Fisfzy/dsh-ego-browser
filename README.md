@@ -43,7 +43,7 @@
 
 **登录态导入（v0.8.5 新增；v0.9.4 起 #69 安全重构）**：工具 `ego_login_import` 把你日常 Chrome/Edge/Brave 里的登录 cookie **按域名**复制进 agent 浏览器。现在有两条安全路径：
 
-1. **扩展桥接（推荐，Chrome 保持打开，支持 Chrome 127+ ABE）**：在 `chrome://extensions` 开启开发者模式 → **Load unpacked** 选择插件目录下的 `extension/`；首次把 `<ego state dir>/login-extension-token`（Windows 默认 `%LOCALAPPDATA%\ego-lite-linux\login-extension-token`）里的 token 填进扩展弹窗。之后调用 `ego_login_import`（`source: "extension"`，带 `domains`），再点扩展里的 **Export cookies**，cookie 经 `127.0.0.1` 回环 POST 给插件并写入 agent 浏览器。全程不复制 profile、不关闭浏览器、不做离线解密。
+1. **扩展桥接（推荐，Chrome 保持打开，支持 Chrome 127+ ABE）**：在 Agent 浏览器面板点 **「连接 Chrome 登录态」** → 面板显示 6 位配对码；在 Chrome 的 `chrome://extensions` 开启开发者模式 → **Load unpacked** 选择插件目录下的 `extension/`，打开扩展弹窗输入配对码并点 **Pair**。之后每次只需在面板点 **「复用 Chrome 登录态」**——扩展在后台轮询本地桥接（30 秒内）并自动导出当前网站 cookie，不需要再打开 Chrome UI、不需要手动点 Export，也不需要复制 token。Agent 侧仍可调用 `ego_login_import`（`source: "extension"`，带 `domains`），行为相同。全程不复制 profile、不关闭浏览器、不做离线解密。
 2. **安全复制（旧版浏览器 / 已关闭的浏览器）**：只复制 `Local State` + Cookies 数据库到临时目录再用无头浏览器读取；**真实 profile 从不被浏览器打开、也不会被写入**。Chrome/Edge 127+ 的 ABE 绑定原始路径，复制会读到 0 条 cookie，工具会明确报错并提示改用扩展路径。
 
 cookie 值不出现在任何日志与输出中；导入是单次快照。配合磁盘持久化 Profile，导入的登录态跨重启保留。
