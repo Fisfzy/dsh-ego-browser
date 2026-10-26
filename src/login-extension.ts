@@ -414,7 +414,7 @@ export async function createLoginExtensionPairingCode(): Promise<LoginExtensionP
   try {
     const state = await ensureBridge()
     state.pairCode = String(Math.floor(100000 + Math.random() * 900000))
-    state.pairExpiresAt = Date.now() + 120_000
+    state.pairExpiresAt = Date.now() + 600_000
     return { ok: true, code: state.pairCode, expiresAt: state.pairExpiresAt, port: state.port }
   } catch (err) {
     return { ok: false, error: String((err as Error)?.message || err) }
