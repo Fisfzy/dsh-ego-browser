@@ -1508,6 +1508,7 @@ declare function require(id: string): any
 .dsh-ego-side-root {
   display: flex; flex-direction: column; height: 100%; min-height: 0;
   overflow: hidden; color: inherit; background: transparent;
+  position: relative;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 .dsh-ego-side-root * { box-sizing: border-box; }
@@ -1635,6 +1636,11 @@ declare function require(id: string): any
   flex-basis: 100%; display: flex; align-items: baseline; gap: 8px;
   min-width: 0; font-size: 10.5px;
 }
+.dsh-ego-side-pageinfo-tabs { flex-basis: auto; flex-shrink: 0; padding: 7px 10px 0; }
+.dsh-ego-side-pagemessage {
+  flex-shrink: 0; padding: 2px 10px 0; font-size: 10px; opacity: .55;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .dsh-ego-side-pageinfo .dsh-ego-side-livetitle {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 62%; flex: none;
 }
@@ -1713,12 +1719,13 @@ declare function require(id: string): any
 .dsh-ego-side-loginbtn:hover { background: rgba(217,119,87,.18); }
 .dsh-ego-side-loginbtn-ready { color: #7fbf8a; border-color: rgba(127,191,138,.4); background: rgba(127,191,138,.10); }
 .dsh-ego-side-loginbtn-ready:hover { background: rgba(127,191,138,.18); }
+.dsh-ego-side-loginbtn-head { height: 22px; margin-left: 2px; }
 .dsh-ego-side-loginbtn-busy { opacity: .65; pointer-events: none; }
 /* Pairing popover: anchored under the toolbar, floats over the stage instead
    of pushing the live frame down. */
 .dsh-ego-side-pairbox {
-  position: absolute; top: calc(100% + 4px); right: 0; z-index: 95;
-  width: min(320px, calc(100% - 4px));
+  position: absolute; top: 46px; right: 8px; z-index: 95;
+  width: min(320px, calc(100% - 16px));
   padding: 12px;
   border: 1px solid rgba(128,128,128,.22); border-radius: 12px;
   background: var(--dsw-alias-bg-layer-1, #fff);
@@ -2990,6 +2997,16 @@ declare function require(id: string): any
 					h('span', { dangerouslySetInnerHTML: { __html: ICON_AGENT_BROWSER } }),
 					h('span', { style: { marginLeft: '5px' } }, state.busy ? wt('titleLive') : wt('title'))
 				),
+				// Primary login-state action lives in the title bar (top row).
+				h('button', {
+					className: 'dsh-ego-side-back dsh-ego-side-loginbtn dsh-ego-side-loginbtn-head'
+						+ (chromeLogin.paired ? ' dsh-ego-side-loginbtn-ready' : '')
+						+ (chromeLogin.busy ? ' dsh-ego-side-loginbtn-busy' : ''),
+					type: 'button',
+					title: chromeLogin.message || wt('chromeLoginHint'),
+					disabled: chromeLogin.busy,
+					onClick: startChromeLogin,
+				}, icon(chromeLogin.paired ? ICON_LOCK : ICON_KEY), chromeLogin.busy ? wt('chromeLoginWaiting') : chromeLogin.paired ? wt('chromeLoginReuse') : wt('chromeLoginConnect')),
 				h('button', {
 					className: 'dsh-ego-side-iconbtn' + (state.busy ? ' spinning' : ''),
 					title: wt('refresh'),
@@ -3004,11 +3021,37 @@ declare function require(id: string): any
 				}, h('span', { dangerouslySetInnerHTML: { __html: ICON_CLOCK } }))
 			)
 
+			// Pairing popover lives at the root so it can anchor under the header
+			// (the login button is in the title bar now).
+			var pairbox = pairOpen
+				? h('div', { className: 'dsh-ego-side-pairbox' },
+					h('div', { className: 'dsh-ego-side-pairhead' },
+						h('span', null, wt('chromeLoginPairTitle')),
+						h('button', { className: 'dsh-ego-side-pairclose', type: 'button', title: wt('chromeLoginClose'), onClick: function () { setPairOpen(false) } }, '×')
+					),
+					h('div', { className: 'dsh-ego-side-pairstep' }, wt('chromeLoginPairStep1')),
+					h('div', { className: 'dsh-ego-side-pairstep' }, wt('chromeLoginPairStep2')),
+					h('div', { className: 'dsh-ego-side-paircode' }, chromeLogin.code || '······'),
+					h('div', { className: 'dsh-ego-side-pairstep' }, wt('chromeLoginPairStep3')),
+					h('div', { className: 'dsh-ego-side-pairpath' }, chromeLogin.extensionPath || wt('chromeLoginPathHint')),
+					h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+						h('button', { className: 'dsh-ego-side-back', type: 'button', onClick: function () { try { navigator.clipboard.writeText(chromeLogin.extensionPath || '') } catch (e) {} } }, wt('chromeLoginCopyPath')),
+						!chromeLogin.paired
+							? h('button', { className: 'dsh-ego-side-back', type: 'button', onClick: startChromeLogin }, wt('chromeLoginNewCode'))
+							: null
+					),
+					chromeLogin.paired
+						? h('div', { className: 'dsh-ego-side-pairstep', style: { color: '#7fbf8a' } }, wt('chromeLoginPaired'))
+						: null
+				)
+				: null
+
 			// History overlay: covers the body area
 			if (state.historyOpen) {
 				var sorted = state.spaces.slice().sort(function (a, b) { return (a.lastActive || 0) - (b.lastActive || 0) })
 				return h('div', { className: 'dsh-ego-side-root' },
 					header,
+					pairbox,
 					h('div', { className: 'dsh-ego-side-history' },
 						h('div', { className: 'dsh-ego-side-historyhead' },
 							h('span', { dangerouslySetInnerHTML: { __html: ICON_CLOCK } }),
@@ -3129,40 +3172,7 @@ declare function require(id: string): any
 									h('button', { className: 'dsh-ego-side-back' + (presetOpen ? ' dsh-ego-side-back-on' : ''), type: 'button', title: wt('sizePresetsHint'), onClick: function () { setPresetOpen(!presetOpen) } }, icon(ICON_ASPECT), wt('sizePresets'))
 								),
 								presetOpen ? h('div', { className: 'dsh-ego-side-presets', ref: presetRef }, PRESETS.map(function (preset) { return h('button', { key: preset.label, type: 'button', className: 'dsh-ego-side-preset-item', onClick: function () { applyPreset(preset.ratio) } }, preset.label) })) : null,
-								h('span', { style: { flex: 1 } }),
-								h('button', { className: 'dsh-ego-side-back dsh-ego-side-loginbtn' + (chromeLogin.paired ? ' dsh-ego-side-loginbtn-ready' : '') + (chromeLogin.busy ? ' dsh-ego-side-loginbtn-busy' : ''), type: 'button', title: chromeLogin.message || wt('chromeLoginHint'), disabled: chromeLogin.busy, onClick: startChromeLogin }, icon(ICON_KEY), chromeLogin.busy ? wt('chromeLoginWaiting') : chromeLogin.paired ? wt('chromeLoginReuse') : wt('chromeLoginConnect'))
 							),
-							h('div', { className: 'dsh-ego-side-pageinfo' },
-								h('span', { className: 'dsh-ego-side-livetitle', title: currentSpace.title || currentSpace.url || '' }, currentSpace.title || currentSpace.url || wt('newTab')),
-								h('span', { className: 'dsh-ego-side-liveurl' + ((state.zoomHint || sizeNotice) ? ' dsh-ego-side-hint' : '') }, sizeNotice || state.zoomHint || currentSpace.url || '')
-							),
-							chromeLogin.message && !pairOpen ? h('div', { className: 'dsh-ego-side-pageinfo' }, h('span', { className: 'dsh-ego-side-liveurl' }, chromeLogin.message)) : null,
-							chromeLogin.message && !pairOpen
-								? h('div', { className: 'dsh-ego-side-pageinfo' },
-									h('span', { className: 'dsh-ego-side-liveurl' }, chromeLogin.message))
-								: null,
-							pairOpen
-								? h('div', { className: 'dsh-ego-side-pairbox' },
-									h('div', { className: 'dsh-ego-side-pairhead' },
-										h('span', null, wt('chromeLoginPairTitle')),
-										h('button', { className: 'dsh-ego-side-pairclose', type: 'button', title: wt('chromeLoginClose'), onClick: function () { setPairOpen(false) } }, '×')
-									),
-									h('div', { className: 'dsh-ego-side-pairstep' }, wt('chromeLoginPairStep1')),
-									h('div', { className: 'dsh-ego-side-pairstep' }, wt('chromeLoginPairStep2')),
-									h('div', { className: 'dsh-ego-side-paircode' }, chromeLogin.code || '······'),
-									h('div', { className: 'dsh-ego-side-pairstep' }, wt('chromeLoginPairStep3')),
-									h('div', { className: 'dsh-ego-side-pairpath' }, chromeLogin.extensionPath || wt('chromeLoginPathHint')),
-									h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-										h('button', { className: 'dsh-ego-side-back', type: 'button', onClick: function () { try { navigator.clipboard.writeText(chromeLogin.extensionPath || '') } catch (e) {} } }, wt('chromeLoginCopyPath')),
-										!chromeLogin.paired
-											? h('button', { className: 'dsh-ego-side-back', type: 'button', onClick: startChromeLogin }, wt('chromeLoginNewCode'))
-											: null
-									),
-									chromeLogin.paired
-										? h('div', { className: 'dsh-ego-side-pairstep', style: { color: '#7fbf8a' } }, wt('chromeLoginPaired'))
-										: null
-								)
-								: null
 						),
 						h('div', { className: 'dsh-ego-side-stage' + (sizeSyncOn ? ' dsh-ego-size-unlocked' : '') },
 							liveImg,
@@ -3174,7 +3184,22 @@ declare function require(id: string): any
 				)
 			}
 
-			return h('div', { className: 'dsh-ego-side-root', ref: rootRef }, header, guides, tabsEl, body)
+			return h('div', { className: 'dsh-ego-side-root', ref: rootRef },
+				header,
+				guides,
+				tabsEl,
+				currentSpace
+					? h('div', { className: 'dsh-ego-side-pageinfo dsh-ego-side-pageinfo-tabs' },
+						h('span', { className: 'dsh-ego-side-livetitle', title: currentSpace.title || currentSpace.url || '' }, currentSpace.title || currentSpace.url || wt('newTab')),
+						h('span', { className: 'dsh-ego-side-liveurl' + ((state.zoomHint || sizeNotice) ? ' dsh-ego-side-hint' : '') }, sizeNotice || state.zoomHint || currentSpace.url || '')
+					)
+					: null,
+				chromeLogin.message && !pairOpen
+					? h('div', { className: 'dsh-ego-side-pagemessage' }, chromeLogin.message)
+					: null,
+				body,
+				pairbox
+			)
 		}
 
 		function EgoLoginGuide(props) {
