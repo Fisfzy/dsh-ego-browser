@@ -17,7 +17,8 @@ describe('browser panel layout', () => {
     expect(rows.length).toBeLessThanOrEqual(12)
     expect(rows.every(row => displayWidth(row.text) <= 28)).toBe(true)
     expect(rows.some(row => row.text.startsWith('›'))).toBe(true)
-    expect(rows[0]?.text).toContain('global')
+    expect(rows[0]?.text).toContain('Global')
+    expect(rows.some(row => row.text.startsWith('Capture'))).toBe(false)
     expect(layoutPanel(store.getSnapshot(), 1, 1, 8).every(row => displayWidth(row.text) <= 1)).toBe(true)
   })
   it('preserves real groups but labels the existing flat worker data honestly', () => {
@@ -77,17 +78,17 @@ describe('browser panel lifecycle', () => {
     await vi.advanceTimersByTimeAsync(6000)
     expect(wire.get).toHaveBeenCalledTimes(4)
   })
-  it('does not start a worker or read browser files when relay is disabled', async () => {
+  it('keeps tab metadata available when the frame relay is disabled (text-only TUI)', async () => {
     const store = new BrowserStateStore(), wire = transport()
     const controller = createPanelController(store, { disableFrameRelay: true }, wire)
     controller.setVisible(true)
     await controller.refresh()
-    await controller.close('1')
-    await controller.flush()
-    expect(wire.readBrowserState).not.toHaveBeenCalled()
-    expect(wire.readTaskSpaceGroups).not.toHaveBeenCalled()
-    expect(wire.ensureWorker).not.toHaveBeenCalled()
-    expect(store.getSnapshot().frameRelayDisabled).toBe(true)
+    expect(wire.readBrowserState).toHaveBeenCalled()
+    expect(wire.readTaskSpaceGroups).toHaveBeenCalled()
+    expect(wire.ensureWorker).toHaveBeenCalled()
+    expect(wire.get).toHaveBeenCalledWith(1234, '/api/spaces')
+    expect(store.getSnapshot().spaces[0]?.tabs).toHaveLength(9)
+    expect(store.getSnapshot().frameRelayDisabled).toBe(false)
     controller.dispose()
   })
   it('does not continue an in-flight visible refresh after hiding', async () => {
@@ -288,7 +289,7 @@ vi.mock('../src/worker-client.ts', () => ({
   requestSnapshot: vi.fn(async () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAGklEQVR4nGPgEpH7b2Ok0cBwYssCBxGNAAYAL2AFOuzF1YgAAAAASUVORK5CYII=', 'base64')),
 }))
 
-it('renders decoded RGBA through the host Image with terminal-cell dimensions and a text fallback', async () => {
+it('renders a text-only panel (no Image element) and unsubscribes when hidden', async () => {
   const panels = { register: vi.fn((descriptor: { component: (props: TuiPanelProps) => unknown }) => vi.fn()), list: () => [{ id: 'owned:browser', title: 'Agent Browser' }], open: vi.fn(), badge: vi.fn() }
   const h = installHarness({ tuiPanels: panels })
   installBrowserPanel(h.ctx, { disableFrameRelay: false, tuiAutoOpenPanel: false }, h.store, h.bridge, h.dependencies)
@@ -300,16 +301,11 @@ it('renders decoded RGBA through the host Image with terminal-cell dimensions an
   const unsubscribe = vi.fn()
   h.store.subscribe = vi.fn(listener => { const off = originalSubscribe(listener); return () => { unsubscribe(); off() } })
   type Element = { type: string; props: Record<string, any>; children: Element[] }
-  let tree = renderer.render(component, props) as Element
-  await vi.waitFor(() => {
-    tree = renderer.render(component, props) as Element
-    expect(tree.children[0]?.props.source?.data).toBeInstanceOf(Uint8Array)
-  })
-  const image = tree.children[0]!
-  expect(image.type).toBe('img')
-  expect(image.props).toMatchObject({ width: 28, height: 5, presentation: 'preview', source: { width: 2, height: 2 } })
-  expect(image.props.alt).toContain('preview')
-  expect(image.children[0]?.type).toBe('span')
+  const tree = renderer.render(component, props) as Element
+  expect(tree.type).toBe('div')
+  expect(tree.children.length).toBeGreaterThan(0)
+  expect(tree.children.every(child => child.type === 'span')).toBe(true)
+  expect(tree.children.some(child => child.type === 'img')).toBe(false)
   props.visible = false
   renderer.render(component, props)
   expect(unsubscribe).toHaveBeenCalledOnce()

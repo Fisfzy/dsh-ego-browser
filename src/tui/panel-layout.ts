@@ -31,13 +31,9 @@ export function layoutPanel(snapshot: BrowserSnapshot, width: number, height: nu
   const add = (text: string, tone?: PanelRow['tone']) => rows.push({ text: truncateCells(text, width), tone })
   const tabs = panelTabs(snapshot)
   const active = tabs.find(tab => tab.active)
-  add('Browser: global (all sessions)', 'dim')
-  if (snapshot.frameRelayDisabled) add('Preview disabled by settings', 'warning')
-  else add(snapshot.browser?.running ? `◎ running${snapshot.browser.headless === undefined ? '' : snapshot.browser.headless ? ' · headless' : ' · windowed'}` : snapshot.browser ? '◎ stopped' : '◎ browser state unavailable', snapshot.browser?.running ? 'success' : 'dim')
-  if (!snapshot.frameRelayDisabled && snapshot.capture) {
-    const { backend, state, code } = snapshot.capture
-    add(`Capture ${backend} · ${state}${code ? ` · ${code}` : ''}`, state === 'failed' ? 'warning' : 'dim')
-  }
+  // Text-only panel: TUI has no image surface, so no preview/capture rows.
+  add(snapshot.spaces?.length === 1 ? `◎ Agent Browser · ${snapshot.spaces[0]?.name ?? ''}` : '◎ Agent Browser', 'dim')
+  if (snapshot.browser) add(snapshot.browser.running ? `◎ running${snapshot.browser.headless === undefined ? '' : snapshot.browser.headless ? ' · headless' : ' · windowed'}` : '◎ stopped', snapshot.browser.running ? 'success' : 'dim')
   if (active) {
     add(active.title || '(untitled)', 'accent')
     add(active.url, 'dim')
@@ -60,6 +56,6 @@ export function layoutPanel(snapshot: BrowserSnapshot, width: number, height: nu
   }
   if (actions.length) add('Recent actions', 'dim')
   for (const action of actions) add(`${action.ok ? '✓' : '✗'} ${action.ms}ms ${action.name} · ${action.summary}`, action.ok ? 'success' : 'error')
-  const hint: PanelRow = { text: truncateCells('↑↓ tabs o open x close f r', width), tone: 'dim' }
+  const hint: PanelRow = { text: truncateCells('↑↓ select · o open · x close · f login · r refresh', width), tone: 'dim' }
   return [...rows.slice(0, Math.max(0, height - 1)), hint].slice(0, Math.max(0, height))
 }

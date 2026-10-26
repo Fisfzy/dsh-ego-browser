@@ -64,24 +64,23 @@ export function createPanelController(store: BrowserStateStore, config: { readon
   let queued = false
   const refresh = (): Promise<void> => {
     if (disposed) return Promise.resolve()
-    if (config.disableFrameRelay) {
-      store.update({ frameRelayDisabled: true, spaces: [], capture: undefined, lastError: undefined })
-      return Promise.resolve()
-    }
+    // The TUI panel is text-only and never displays frames, so metadata
+    // (tabs/spaces/status) must keep working even when the web preview relay is
+    // disabled. disableFrameRelay only affects frame/snapshot delivery.
     if (pending) { queued = true; return pending }
     const epoch = generation
     pending = (async () => {
       const browser = await transport.readBrowserState()
-      if (disposed || epoch !== generation || config.disableFrameRelay) return
+      if (disposed || epoch !== generation) return
       store.update({ browser, frameRelayDisabled: false })
       if (!browser.running) { store.update({ spaces: [], capture: undefined }); return }
       const port = await transport.ensureWorker()
-      if (disposed || epoch !== generation || config.disableFrameRelay) return
+      if (disposed || epoch !== generation) return
       if (!port) { store.update({ lastError: 'Browser worker unavailable' }); return }
       const payload = await transport.get(port, '/api/spaces')
-      if (disposed || epoch !== generation || config.disableFrameRelay) return
+      if (disposed || epoch !== generation) return
       const groups = payload ? await transport.readTaskSpaceGroups?.() ?? [] : []
-      if (disposed || epoch !== generation || config.disableFrameRelay) return
+      if (disposed || epoch !== generation) return
       store.update(payload ? { spaces: parseSpaces(payload, groups), capture: parseCapture(payload), lastError: undefined } : { lastError: 'Could not refresh browser tabs' })
     })().catch(error => {
       if (!disposed && epoch === generation) store.update({ lastError: sanitizeText(String(error)) })
@@ -92,9 +91,9 @@ export function createPanelController(store: BrowserStateStore, config: { readon
     return pending
   }
   const post = async (path: string, body: unknown): Promise<void> => {
-    if (disposed || config.disableFrameRelay) return
+    if (disposed) return
     const port = await transport.ensureWorker()
-    if (!port || disposed || config.disableFrameRelay) return
+    if (!port || disposed) return
     const result = await transport.post(port, path, body)
     if (disposed) return
     if (!result || result.status < 200 || result.status >= 300) {

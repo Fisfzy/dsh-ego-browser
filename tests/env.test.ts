@@ -386,13 +386,14 @@ describe("runtime chrome.mjs (EGO_LINUX_EXTRA_ARGS spread)", () => {
 // ─── ego_login_import scoped guard (#69) ────────────────────────────────
 
 describe("loginImportPolicy (#69)", () => {
-  it("refuses Windows + Chrome 155+", () => {
+  it("refuses Windows + Chrome/Edge 127+ (App-Bound Encryption range)", () => {
+    expect(loginImportPolicy({ platform: "win32", chromeMajor: 127, force: false }).allowed).toBe(false);
     expect(loginImportPolicy({ platform: "win32", chromeMajor: 155, force: false }).allowed).toBe(false);
     expect(loginImportPolicy({ platform: "win32", chromeMajor: 160, force: false }).allowed).toBe(false);
   });
 
-  it("allows Windows + older Chrome", () => {
-    expect(loginImportPolicy({ platform: "win32", chromeMajor: 154, force: false }).allowed).toBe(true);
+  it("allows Windows + pre-ABE Chrome", () => {
+    expect(loginImportPolicy({ platform: "win32", chromeMajor: 126, force: false }).allowed).toBe(true);
     expect(loginImportPolicy({ platform: "win32", chromeMajor: 120, force: false }).allowed).toBe(true);
   });
 

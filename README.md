@@ -22,7 +22,7 @@
 |---|---|---|---|
 | **DSH** (DeepSeek Harness) | `0.1.2-rc.1` | `≥ 0.1.2-rc.1`（v0.8.6 起适配 0.1.7 settings；v0.8.8 起支持 0.2.1 原生右侧边栏，截至 0.2.1 验证通过） | `engines.dsh` 声明地板；peer 依赖同步锁定 `>=0.1.2-rc.1`。0.1.0-rc.x / 0.1.1-rc.x 请使用 v0.8.0 及更早版本 |
 | **dsh-better-sidebar** | `0.12.2`（可选） | `≥ 0.17.1` | 未安装时自动回退浮动观察球；`< 0.12.2` 可运行但外部链接拦截（`urlTarget`）静默降级 |
-| **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、侧栏面板与缩略图；缺席时静默跳过，无额外 I/O |
+| **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、纯文字侧栏面板；缺席时静默跳过，无额外 I/O |
 | **Node.js** | `22` | — | harness 环境自带 |
 
 **DSH 全版本适配说明**：v0.9.2 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
@@ -43,7 +43,7 @@
 
 **登录态导入（v0.8.5 新增；v0.8.7 起定向禁用；v0.8.8 起仅危险环境拒绝）**：设置页「从系统浏览器导入登录态」或工具 `ego_login_import`，把你日常 Chrome/Edge/Brave 里的登录 cookie **按域名**复制进 agent 浏览器（真实二进制无头启动 + CDP 透传读取，兼容 Chrome 127+ 的 App-Bound Encryption，不做离线解密；源浏览器运行中可选择优雅关闭后导入，窗口下次启动自动恢复）。cookie 值不出现在任何日志与输出中；导入前自动备份源 cookie 库，异常清空自动还原。配合默认的磁盘持久化 Profile，导入的登录态跨重启永久保留。
 
-> ⚠️ **仅 Windows + Chrome ≥ 155 会被拒绝**：该组合上 junction 别名 + 无头启动 + 强杀路径读到 0 条 cookie，且被观测到会清空源 profile 的扩展注册表并重置默认搜索引擎（详见 [#69](https://github.com/Fisfzy/dsh-ego-browser/issues/69)）。Linux / macOS / 旧版 Chrome 正常可用；确认环境不受影响后，可设 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 在任何环境放行。彻底修复仍在跟踪中。
+> ⚠️ **Windows + Chrome/Edge ≥ 127 会被拒绝**：Chrome 127+ 的 App-Bound Encryption 让 junction 别名 + 无头启动 + 强杀路径既读到 0 条 cookie，又可能清空源 profile 的扩展注册表并重置默认搜索引擎（详见 [#69](https://github.com/Fisfzy/dsh-ego-browser/issues/69)）。Linux / macOS / Windows 上 Chrome <127 正常可用；确认环境不受影响后，可设 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 在任何环境放行。彻底修复仍在跟踪中。
 
 **常驻执行器（v0.8.8，可选，默认关闭）**：设置页「常驻执行进程」开启后，`ego_*` 调用复用同一个 `ego-browser --serve` 进程——首次调用支付启动开销，之后每次 **~1–2 ms**（一次性 spawn 基准 ~340 ms）。浏览器被空闲回收或崩溃后，下一次调用自动回退到一次性 spawn 并重新拉起浏览器（带启动重试），随后恢复常驻；**已经写出的请求不会重试**，避免重复点击/填表。空闲停止时间可配（默认 30 分钟）。
 
@@ -126,8 +126,8 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.2
 
 - **v0.9.2**：**macOS 开箱可用**（#65/#68，社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72) 由 @syjnzh918 提供并移植到当前主线）——自动探测 `/Applications` 与 `~/Applications` 下 Chrome / Chromium / Edge / Brave 的 `.app` 内二进制，并像 Windows 一样注入 `EGO_LINUX_CHROME`；headed 路径不再要求 Xvfb（macOS GUI 是 Aqua/Quartz、永不导出 `$DISPLAY`，`isHeadlessDetected` 继续排除 darwin 以保留 #16 的真实窗口能力）。社区真机复测（0.9.2）：**macOS 27.0.1 arm64 + Chrome 156.0.8078.47**（此前另有一次 macOS arm64 + Chrome 154 验证），`chromePath` 留空、无 `--headless`，冷启动 → navigate → 截图 → `ego_doctor` 全通。
 - **v0.9.1**：**观察窗尺寸同步真实窗口**——面板「打开真实页 / 弹出窗口」行新增 **🔒/🔓 尺寸同步** 开关：解锁后拖动侧边栏宽度、或直接拖画面右侧/底部/右下角手柄，会按拖动**增量** 1:1 缩放 agent 浏览器真实窗口；**尺寸预设**（16:9 / 4:3 / 21:9 / 1:1 / 9:16）一键设定窗口比例；页面标题与 URL 移入实时状态栏。**帧链路性能**：按 `cdpFps` 做源端抽帧、采集宽度跟随面板尺寸、窗口隐藏/最小化自动停流、TUI 设置新增「关闭实时画面传输」，实测总 CPU 约减半。**输入与稳定性修复**：窗口缩放后点击坐标不再偏移；拖动缩放不再卡顿；面板先于浏览器打开时 SSE 会自动重连接上。
-- **v0.9.0**：**dsh-TUI 支持**——在 dsh-TUI 宿主中可选注册 Agent Browser 设置页、工具活动状态栏与有限通知；右侧栏面板展示浏览器状态、按任务空间分组的标签、人机验证提示与最近动作，并支持键盘操作（选标签、弹出真实窗口、关标签、落盘登录态、刷新）；选中标签时通过 worker 的独立截图端点显示页面缩略图与捕获状态（不占用工具锁、不启动直播订阅，终端无图形协议时回退文字）。所有 TUI 服务缺席时静默降级，Web/桌面端行为不变。合并社区 PR #74/#75/#76（ccch1mneyyy）。
-- **v0.8.8**：**原生右侧边栏**——观察窗优先注册进 DSH 自带的右侧边栏（`sidebar.right.pane.tab` + guide 入口 + 自绘图标），`dsh-better-sidebar` 与浮动球依次回退；服务晚于插件就绪时用 `ctx.inject` 等待。**常驻执行器（可选）**——`ego_*` 调用复用同一个 `ego-browser --serve` 进程，首次启动后每次 ~1–2 ms（一次性 spawn 约 340 ms）；浏览器被停/崩溃后自动回退一次性 spawn 恢复，再回到常驻；已写出的请求不重试。**稳定性**——`reconcile()` 清扫不属于任何 space 的孤儿标签（#67），冷启动不再堆积标签；Windows 上浏览器启动失败不再空等 Xvfb。**登录导入**——`ego_login_import` 从"全禁"改为仅 Windows + Chrome ≥155 拒绝（#69）。
+- **v0.9.0**：**dsh-TUI 支持**——在 dsh-TUI 宿主中可选注册 Agent Browser 设置页、工具活动状态栏与有限通知；右侧栏面板展示浏览器状态、按任务空间分组的标签、人机验证提示与最近动作，并支持键盘操作（选标签、弹出真实窗口、关标签、落盘登录态、刷新）；v0.9.3 起 TUI 面板改为**纯文字**（不再显示缩略图，也不请求任何截图/画面）。所有 TUI 服务缺席时静默降级，Web/桌面端行为不变。合并社区 PR #74/#75/#76（ccch1mneyyy）。
+- **v0.8.8**：**原生右侧边栏**——观察窗优先注册进 DSH 自带的右侧边栏（`sidebar.right.pane.tab` + guide 入口 + 自绘图标），`dsh-better-sidebar` 与浮动球依次回退；服务晚于插件就绪时用 `ctx.inject` 等待。**常驻执行器（可选）**——`ego_*` 调用复用同一个 `ego-browser --serve` 进程，首次启动后每次 ~1–2 ms（一次性 spawn 约 340 ms）；浏览器被停/崩溃后自动回退一次性 spawn 恢复，再回到常驻；已写出的请求不重试。**稳定性**——`reconcile()` 清扫不属于任何 space 的孤儿标签（#67），冷启动不再堆积标签；Windows 上浏览器启动失败不再空等 Xvfb。**登录导入**——`ego_login_import` 从"全禁"改为仅 Windows + Chrome ≥155 拒绝（#69；v0.9.3 起扩展到 Windows + Chrome/Edge ≥127，理由见下）。
 - **v0.8.7**：**工具语义修复**——`ego_wait_for_url` 先比对当前 URL 再等未来导航（带 `matchedCurrent`）、`ego_wait_for_response` 超时不再抛错、`ego_dialog` 失败时给出可执行提示、`ego_script`/`ego_cli` 文档写明 `@@DSH_RESULT@@` 哨兵并支持最后一行 JSON 兜底。**Windows 稳定性**——`clearProfileLock()` 在 win32 上真正清理孤儿 Chrome（此前是永久 no-op，一次非优雅退出会让 agent 浏览器再也打不开）。**安全**——`ego_login_import` 默认禁用（fail-closed，`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 才放行）。**回收器**——`--stop` 后清理 `Default/Sessions/`，冷启动不再静默复活旧标签。**观感**——光标箭头与手形不再重叠；CDP 预览默认宽度 960 → 1280。合并 PR #63（`--serve` 常驻传输，默认仍走 spawn 路径）。
 - **v0.8.6**：登录态导入安全加固（#61 不再可能损坏源 cookie 库）、人机验证误报修复（#62，loopback 不探测、要求挑战短语）、DSH 0.1.7 设置页适配（插件页行配置 + `settings/document-updated` 订阅）。
 - **v0.8.0**：**侧边栏 Tab 集成**——当 `dsh-better-sidebar` 可用时，实时查看窗注册为侧边栏原生 Tab（而非浮动浮窗），`ego_browser` 工具首次调用自动展开；内置 `EgoBrowserTab` React 组件 + `LivePreviewController` 实时帧管道。`dsh-better-sidebar` **不是 peer 依赖**（`ctx.get()` 机会性消费），没装就退回浮动浮窗，两种部署都干净。
@@ -227,17 +227,15 @@ dsh plugin --profile <profile> add dsh-ego-browser@0.9.2
 
 默认首次 `ego_*` 调用只增加提示角标，**不会自动打开面板**。设置 `tuiAutoOpenPanel=true` 可选择自动打开；面板打开请求至少间隔 5 秒。人机验证首次出现时增加 warning 角标并显示按 `o` 接管的通知，底栏状态变为 warning，点击可打开面板；持续验证不会重复通知。下载完成通知暂未实现，因为当前 worker 没有下载事件数据。
 
-面板可见时约每 2 秒读取状态，隐藏或卸载立即停止定时轮询；工具完成可触发一次刷新。`disableFrameRelay=true` 时不读取浏览器进程状态、不启动 worker，也不请求标签；面板仍显示工具活动及禁用原因。无 `tuiPanels` 服务时不创建面板控制器或新增轮询。宿主 React 通过面板 props 提供，插件宿主包不引入 React 运行时。真实 DSH TUI 和 Chrome 的显示、窗口接管仍需在目标环境验证。
+面板可见时约每 2 秒读取状态，隐藏或卸载立即停止定时轮询；工具完成可触发一次刷新。`disableFrameRelay=true` 只关闭 Web 侧画面回传，**TUI 仍读取浏览器进程状态与标签元数据**（面板本身不渲染任何画面）；无 `tuiPanels` 服务时不创建面板控制器或新增轮询。宿主 React 通过面板 props 提供，插件宿主包不引入 React 运行时。真实 DSH TUI 和 Chrome 的显示、窗口接管仍需在目标环境验证。
 
-### 页面缩略图
+### TUI 侧栏（纯文字）
 
-worker 的状态响应包含 `capture` 时，面板另显示一行捕获后端、状态和可选状态码；它来自已有状态刷新，不额外轮询或启动直播，禁用回传或浏览器停止后清除。
+TUI 没有浏览器视窗渲染能力，面板**不请求也不渲染任何截图/实时画面**：不使用 `ui.Image`、`/api/snapshot` 或 SSE 帧。侧栏只显示：运行/无头状态、当前标签标题与 URL、人机验证提示、当前工具与最近错误、按任务空间分组的标签列表、最近动作，以及键盘提示。
 
-有足够面板高度时，顶部通过宿主 `ui.Image` 展示所选标签的单帧预览。选择标签、可见面板内工具执行结束以及按 `r` 会刷新一次；没有持续截图计时器，不实现可选的 `l` 实时模式，面板隐藏时不会发起截图。正在进行的请求在面板隐藏、选择变化或卸载后不会更新旧预览。`disableFrameRelay=true` 时不启动截图工作。
+面板可见时约每 2 秒刷新元数据，隐藏/卸载立即停止；工具完成可触发一次刷新。`disableFrameRelay=true` 仅影响 Web 侧画面回传，不影响 TUI 的标签/状态元数据（禁用回传时仍能看到标签列表）。选中项按 `targetId` 保持，标签增删/重排不会关错或打开错页面。快捷键：`↑/↓` 选择、`o` 打开真实窗口、`x` 关闭（两步确认/宿主对话框）、`f` 落盘登录态、`r` 刷新。
 
-截图由 worker 的 `/api/snapshot?targetId=…&maxWidth=…` 通过既有 CDP 控制会话产生 PNG，不调用 `ego_screenshot`、不进入工具互斥锁、不启动直播订阅。缩略图按面板列数乘以常规 8 像素的单元宽度请求，并由宿主按终端列/行渲染；PNG 解码得到的 `source.width/height` 保留真实像素维度，`Image.width/height` 是终端单元数。每帧独立分配 RGBA 字节缓冲区，不原地改写已经交给宿主的图像。
-
-图像使用 `presentation: 'preview'`，可由宿主选择 Kitty 或 Sixel；不支持图形的终端、截图不可用或 PNG 解码失败时显示 `alt` 和子文本后备内容，标签列表与快捷键仍可使用。这里只验证了像素解码、刷新生命周期和宿主组件参数；尚未在真实终端图形协议或真实 DSH/Chrome 环境验证观感。
+无 `tuiPanels` 服务时不创建面板控制器或新增轮询；宿主 React 通过面板 props 提供，插件宿主包不引入 React 运行时。
 
 ### In dsh-TUI (English)
 
@@ -245,7 +243,7 @@ Each integration is enabled only when its optional host service is available. `t
 
 `tuiPanels` adds the **◎ Agent Browser** panel, using the host's React and UI components. The browser is global across sessions. The panel shows running/headless state, the active page, real task-space groups joined by persisted target ids, verification warnings and recent action results. Missing membership metadata falls back to an explicitly labeled global group; unassigned tabs remain visible. With focus, use `↑/↓` to select a tab, `o` to open the existing browser takeover window, `x` to close the selected tab, `f` to flush cookies, and `r` to refresh. `tuiDialogs` provides close confirmation when present; otherwise press `x` twice consecutively. The first browser-tool call adds a badge without opening the panel unless auto-open is explicitly enabled.
 
-Metadata polling runs about every two seconds only while the panel is visible; tool completion may request one refresh while hidden. When there is enough vertical space, a selected-page thumbnail refreshes on visible selection changes, tool completion and `r`. It uses a one-shot worker PNG capture through the existing CDP session, independent of the tool execution lock. Fresh RGBA pixels are passed to `ui.Image` with terminal-cell dimensions, `presentation: 'preview'`, alt text and a text fallback. No continuous screenshot mode is enabled. Pixel width is estimated from columns using an eight-pixel cell; the host handles terminal graphics rendering.
+Metadata polling runs about every two seconds only while the panel is visible; tool completion may request one refresh while hidden. The panel is **text-only**: it never requests or renders screenshots/frames (no `ui.Image`, `/api/snapshot` or SSE frames), so `disableFrameRelay=true` only stops the web preview relay and still leaves tab/status metadata available. Selection is tracked by `targetId`, so tab churn cannot make `x`/`o` act on the wrong page.
 
 `disableFrameRelay` suppresses TUI browser/membership reads, worker startup and screenshot requests while retaining tool activity and an explanation. Missing services silently omit their contributions; if all TUI services are absent, this integration adds no I/O or polling. Hide/unmount and plugin teardown release the relevant timers and subscriptions. The existing web/desktop watch routes and worker policy are unchanged; shared safe tool-card titles apply to both surfaces. Real DSH/dsh-TUI, Chrome takeover and Kitty/Sixel rendering still require verification on the target installation.
 
@@ -261,7 +259,7 @@ When the existing metadata response includes `capture`, the panel displays its b
 | 交互 | `ego_click` `ego_fill` `ego_hover` `ego_drag` `ego_select` `ego_check` `ego_key` `ego_scroll` |
 | 执行/调试 | `ego_js`（页面求值） `ego_cdp`（原始 CDP） `ego_cli`（任意 heredoc） `ego_script`（多步脚本） |
 | 输出 | `ego_screenshot` `ego_download` `ego_upload` |
-| 会话/安全 | `ego_auth_flush`（登录落盘） `ego_login_import`（系统浏览器登录态导入，v0.8.7 起定向禁用：仅 Windows+Chrome≥155） `ego_captcha` `ego_dialog` |
+| 会话/安全 | `ego_auth_flush`（登录落盘） `ego_login_import`（系统浏览器登录态导入，v0.8.7 起定向禁用：仅 Windows+Chrome/Edge≥127） `ego_captcha` `ego_dialog` |
 | 元工具 | `ego_help` `ego_doctor` `ego_http` |
 
 > 导航/等待语义（v0.8.7）：`ego_wait_for_url` 先比对当前 URL 再等未来导航，结果带 `matchedCurrent`；`ego_wait_for_response` 超时返回结构化 `reached:false`，不再抛错；两个等待都只观察**本次调用期间**的事件——触发动作与等待要放在同一个 `ego_script` 里。`ego_script`/`ego_cli` 的脚本需以 `console.log('@@DSH_RESULT@@' + JSON.stringify({...}))` 结尾（忘记哨兵时会兜底解析最后一行 JSON，并标记 `fallback: true`）。
@@ -313,7 +311,7 @@ pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-ca
 
 - **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。v0.8.7 修复了孤儿 Chrome 占锁（#70），v0.8.8 起崩溃/回收后遗留的孤儿标签会被自动清扫（#67），但强杀/崩溃后的 profile 恢复仍建议非必要不中断浏览器进程。
 - **macOS**：开箱可用（#65/#68 已修，社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72) 已移植）。`darwinChromeCandidates()` 探测 `.app` bundle 内的二进制（Chrome / Chromium / Edge / Brave，含 `~/Applications`），`resolveEgoEnv()` 与 Windows 同构地把结果注入 `EGO_LINUX_CHROME`；headed 路径也不再要求 Xvfb。`isHeadlessDetected` 继续排除 darwin——macOS 的 GUI 是 Aqua/Quartz、永不导出 `$DISPLAY`，把它判成"无头"正是 #16 的回归。实测环境（0.9.2，社区真机）：macOS 27.0.1 arm64 + Chrome 156.0.8078.47（另有 macOS arm64 + Chrome 154 的早期验证），`chromePath` 留空、无 `--headless`，冷启动后 navigate / 截图 / `ego_doctor` 全通。
-- **登录态导入**：v0.8.7 起 `ego_login_import` 定向禁用——仅 **Windows + Chrome ≥155** 拒绝（原因见 #69），Linux / macOS / 旧版 Chrome 正常可用；确认环境无风险后用 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 可在任何环境放行。
+- **登录态导入**：v0.8.7 起 `ego_login_import` 定向禁用——**Windows + Chrome/Edge ≥127**（App-Bound Encryption 范围）拒绝（原因见 #69），Linux / macOS / Windows 上 Chrome <127 正常可用；确认环境无风险后用 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 可在任何环境放行。
 - **FFmpeg 平台捕获**：Windows 已使用 `gfxcapture(HWND)`，需要包含该 filter 的新构建；PATH 中的旧 FFmpeg 会被跳过并提示下载兼容版本。Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop；macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
 - **安装环境**：本仓库的 DSH peer 包不全在公共 npm registry。普通 `pnpm install` 可能在解析 `@deepseek-ai/*` peer 时失败；DSH profile 安装应提供这些 peer。CDP 不依赖 FFmpeg，也不会在插件安装阶段下载二进制。
 - **快照质量**：Linux 用 CDP `DOMSnapshot` 重建语义树，非 macOS 内核级，复杂 iframe/画布场景可能降级。

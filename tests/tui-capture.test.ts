@@ -20,12 +20,12 @@ describe('existing worker capture status', () => {
     get.mockResolvedValueOnce({ spaces: [] })
     await controller.refresh()
     expect(store.getSnapshot().capture).toBeUndefined()
+    // Text-only TUI: the preview relay setting no longer suppresses metadata.
     config.disableFrameRelay = true
     await controller.refresh()
-    expect(store.getSnapshot().capture).toBeUndefined()
-    expect(get).toHaveBeenCalledTimes(2)
+    expect(store.getSnapshot().capture).toEqual({ backend: 'cdp', state: 'idle' })
+    expect(get).toHaveBeenCalledTimes(3)
     config.disableFrameRelay = false
-    await controller.refresh()
     readBrowserState.mockResolvedValue({ running: false })
     await controller.refresh()
     expect(store.getSnapshot().capture).toBeUndefined()
@@ -33,7 +33,7 @@ describe('existing worker capture status', () => {
     controller.dispose()
   })
 
-  it('owns an immutable capture copy and bounds its status row to terminal cells', () => {
+  it('owns an immutable capture copy and has no capture row in the text-only layout', () => {
     const store = new BrowserStateStore()
     const capture = { backend: 'cdp', state: 'failed', code: '中文错误描述'.repeat(12) }
     store.update({ browser: { running: true }, capture })
@@ -41,7 +41,7 @@ describe('existing worker capture status', () => {
     expect(store.getSnapshot().capture?.backend).toBe('cdp')
     expect(Object.isFrozen(store.getSnapshot().capture)).toBe(true)
     const rows = layoutPanel(store.getSnapshot(), 28, 12, 0)
-    expect(rows.find(row => row.text.startsWith('Capture'))?.text).toContain('cdp · failed')
+    expect(rows.some(row => row.text.startsWith('Capture'))).toBe(false)
     expect(rows.every(row => displayWidth(row.text) <= 28)).toBe(true)
     const previous = store.getSnapshot()
     store.update({ capture: { ...previous.capture! } })

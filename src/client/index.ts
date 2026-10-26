@@ -188,6 +188,7 @@ declare function require(id: string): any
 			resizeHint: 'Drag to resize the agent browser window',
 			sizeApiOutdated: 'Size API not loaded — restart DSH to pick up the new host build',
 			executorResident: 'resident',
+			executorStarting: 'resident · starting',
 			executorOneShot: 'one-shot',
 			executorParked: 'resident parked',
 			noUrl: 'No URL to open',
@@ -244,6 +245,7 @@ declare function require(id: string): any
 			resizeHint: '拖动调整 agent 浏览器窗口大小',
 			sizeApiOutdated: '尺寸接口未就绪：请重启 DSH 以加载最新 host 构建',
 			executorResident: '常驻',
+			executorStarting: '常驻·启动中',
 			executorOneShot: '一次性',
 			executorParked: '常驻已停用',
 			noUrl: '无可打开的地址',
@@ -1877,6 +1879,36 @@ declare function require(id: string): any
 				let captureBackend = 'cdp', streamGeneration = 0, streamState = 'idle', streamMessage = '', streamMime = 'video/mp4; codecs="avc1.42E01E"', videoCleanup = null
 				const effectiveVisible = () => !panel.hidden && !document.hidden
 				const stopVideo = () => { if (videoCleanup) try { videoCleanup() } catch {}; videoCleanup = null }
+				// Legacy/floating panel: preload + decode each frame off-screen before
+				// swapping the visible <img>, so the old frame never blanks (#81/#82
+				// also affect this fallback UI, not only the native sidebar).
+				const legacyFrameState = new WeakMap()
+				const presentLegacyFrame = (img, url) => {
+					if (!img || !url) return
+					let state = legacyFrameState.get(img)
+					if (!state) { state = { pending: null, loading: false }; legacyFrameState.set(img, state) }
+					state.pending = url
+					const run = () => {
+						const next = state.pending
+						state.pending = null
+						if (!next) { state.loading = false; return }
+						state.loading = true
+						const preload = new Image()
+						let settled = false
+						const finish = () => {
+							if (settled) return
+							settled = true
+							try { img.src = next } catch {}
+							state.loading = false
+							if (state.pending) run()
+						}
+						preload.onload = finish
+						preload.onerror = finish
+						try { preload.src = next } catch { finish() }
+						try { if (preload.decode) preload.decode().then(finish, finish) } catch {}
+					}
+					if (!state.loading) run()
+				}
 				const applyCaptureStatus = (status) => {
 					if (!status || typeof status !== 'object') return
 					if (Number.isFinite(status.generation) && status.generation < streamGeneration) return
@@ -2452,7 +2484,7 @@ declare function require(id: string): any
 							liveFlushRaf = window.requestAnimationFrame(() => {
 								liveFlushRaf = null
 								if (disposed || !liveImg || pendingLiveFrame == null) return
-								try { liveImg.src = pendingLiveFrame } catch {}
+								presentLegacyFrame(liveImg, pendingLiveFrame)
 								pendingLiveFrame = null
 							})
 						}
@@ -3040,6 +3072,8 @@ clearTimeout((panel as any)._dshHideT)
 			// made Chrome encode, ship and decode ~5x the pixels the user can
 			// actually see; the worker caps this against the configured max.
 			this.maxWidthHint = 800
+			this.watchMaxWidth = 0
+			this._maxWidthTimer = null
 			this.watchStarted = false
 			this.watchTargetId = null
 			this.watchRenewTimer = null
@@ -3205,6 +3239,8 @@ clearTimeout((panel as any)._dshHideT)
 			if (this.followTimer) window.clearTimeout(this.followTimer)
 			if (this.reconnectFallbackTimer) window.clearTimeout(this.reconnectFallbackTimer)
 			if (this._zoomHintTimer) window.clearTimeout(this._zoomHintTimer)
+			if (this._maxWidthTimer) window.clearTimeout(this._maxWidthTimer)
+			this._maxWidthTimer = null
 			document.removeEventListener('visibilitychange', this.onDocumentVisibility)
 			if (this.watchRenewTimer) window.clearInterval(this.watchRenewTimer)
 			if (this.watchStopTimer) window.clearTimeout(this.watchStopTimer)
@@ -3237,6 +3273,25 @@ clearTimeout((panel as any)._dshHideT)
 				this._destroyVideo()
 			}
 		}
+		// The panel width can settle after the first watch/start (macOS pane was
+		// 0-width at mount, #81). When the measured width differs a lot from the
+		// one the running capture was started with, restart the watch once so the
+		// stream is re-created at the right resolution instead of staying blurry.
+		LivePreviewController.prototype.scheduleMaxWidthRefresh = function () {
+			var self = this
+			if (this.disposed || this._maxWidthTimer) return
+			this._maxWidthTimer = window.setTimeout(function () {
+				self._maxWidthTimer = null
+				if (self.disposed || !self.visible || !self.watchStarted || self.watchTargetId == null) return
+				var applied = self.watchMaxWidth || 0
+				var next = self.maxWidthHint || 0
+				if (!(applied > 0) || !(next > 0)) return
+				if (Math.abs(next - applied) < applied * 0.2) return
+				var target = self.watchTargetId
+				self.watchStarted = false
+				self._syncWatch(target)
+			}, 700)
+		}
 		LivePreviewController.prototype._requestWatch = function (route, body) {
 			if (this.watchRequest) return null
 			var self = this
@@ -3267,6 +3322,7 @@ clearTimeout((panel as any)._dshHideT)
 			request.then(function (status) {
 				self.watchStarted = status && status.ok !== false
 				self.watchTargetId = status && status.targetId || targetId
+				self.watchMaxWidth = self.maxWidthHint
 				if (self.watchTargetId !== targetId) { self.selectedTabId = null; self.currentActiveId = self.watchTargetId }
 				self._applyCaptureStatus(status)
 				if (!self.visible) self._stopWatch(true)
@@ -4010,7 +4066,10 @@ clearTimeout((panel as any)._dshHideT)
 				var update = function () {
 					var width = root.clientWidth
 					if (!(width > 0)) return
-					controller.maxWidthHint = Math.max(480, Math.min(1280, Math.round(width * dpr * 1.15)))
+					var next = Math.max(480, Math.min(1280, Math.round(width * dpr * 1.15)))
+					if (next === controller.maxWidthHint) return
+					controller.maxWidthHint = next
+					controller.scheduleMaxWidthRefresh()
 				}
 				update()
 				var observer = null
@@ -4196,7 +4255,7 @@ clearTimeout((panel as any)._dshHideT)
 									title: residentInfo ? ('executor: ' + (residentInfo.mode || '') + (residentInfo.pid ? ' pid=' + residentInfo.pid : '') + ' · ' + (residentInfo.parkReason || residentInfo.lastRebuildReason || '')) : undefined,
 								},
 									(state.backend === 'ffmpeg' ? 'FFmpeg · H.264' : 'CDP') + ' · ' + (state.streamState === 'failed' ? (state.streamMessage || wt('failed')) : state.streamState) + (state.currentTargetId ? (state.wiringStale ? ' · ' + wt('stale') : ' · ' + wt('captured')) : '')
-									+ (residentInfo ? ' · ' + (residentInfo.mode === 'resident' ? wt('executorResident') + (residentInfo.ageMs ? ' ' + Math.round(residentInfo.ageMs / 60000) + 'm' : '') : (residentInfo.parked ? wt('executorParked') : wt('executorOneShot'))) : ''),
+									+ (residentInfo ? ' · ' + (residentInfo.mode === 'resident' ? wt('executorResident') + (residentInfo.ageMs ? ' ' + Math.round(residentInfo.ageMs / 60000) + 'm' : '') : residentInfo.parked ? wt('executorParked') : residentInfo.mode === 'starting' ? wt('executorStarting') : wt('executorOneShot')) : ''),
 								),
 								h('span', { style: { flex: 1 } }),
 								state.pinned

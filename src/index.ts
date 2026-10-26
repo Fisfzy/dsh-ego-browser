@@ -671,7 +671,7 @@ export function superviseResidentFailure(failures: number, error: string): { fai
 
 export interface ResidentDiagnostics {
   enabled: boolean
-  mode: 'resident' | 'one-shot'
+  mode: 'resident' | 'starting' | 'one-shot'
   running: boolean
   pid: number | null
   ageMs: number | null
@@ -684,9 +684,10 @@ export interface ResidentDiagnostics {
 /** @internal exported for tests (also used by /api/ego/executor + ego_status). */
 export function residentDiagnostics(cfg: EgoRuntimeConfig): ResidentDiagnostics {
   const running = residentTransport !== null && residentTransport.alive
+  const active = cfg.residentExecutor === true && residentParkReason === null && Date.now() >= residentCooldownUntil
   return {
     enabled: cfg.residentExecutor === true,
-    mode: cfg.residentExecutor === true && residentParkReason === null && Date.now() >= residentCooldownUntil ? 'resident' : 'one-shot',
+    mode: !active ? 'one-shot' : running ? 'resident' : 'starting',
     running,
     pid: running ? residentTransport?.pid ?? null : null,
     ageMs: running && residentStartedAt > 0 ? Date.now() - residentStartedAt : null,
@@ -1441,11 +1442,12 @@ function registerAuthFlush(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
 }
 /** `ego_login_import` — copy login cookies from the system browser (issue #46). */
 /**
- * #69 policy: `ego_login_import` is unsafe only on the combination that damaged
- * profiles — Windows + Chrome 155+ (junction alias + headless boot + hard
- * kill). Linux/macOS use a different profile-handoff path and older Chrome
- * versions read cookies normally, so they stay enabled. The env flag remains a
- * manual override for any environment.
+ * #69 policy: `ego_login_import` is unsafe on Windows because the import boots
+ * the REAL profile through a junction alias and hard-kills the instance. Chrome
+ * App-Bound Encryption (127+) is what makes the data-loss path possible (and
+ * the cookie read fail), so the guard covers every ABE-capable build, not only
+ * the 155 build where the damage was first observed. Linux/macOS use a different
+ * profile-handoff path and stay enabled. The env flag remains a manual override.
  *
  * Exported for tests.
  */
@@ -1467,10 +1469,10 @@ export function loginImportPolicy({
         'could not determine the installed Chrome version on Windows; refusing to risk the source profile (set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to override)',
     }
   }
-  if (chromeMajor >= 155) {
+  if (chromeMajor >= 127) {
     return {
       allowed: false,
-      reason: `Chrome ${chromeMajor} on Windows is affected by #69 (reads 0 cookies and has wiped extension registries / reset the search provider). Set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to override.`,
+      reason: `Chrome ${chromeMajor} on Windows uses App-Bound Encryption (127+), which makes the current import path both unable to read cookies and potentially destructive to the source profile (#69). Set EGO_LINUX_LOGIN_IMPORT_FORCE=1 to override.`,
     }
   }
   return { allowed: true }
@@ -1512,7 +1514,7 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     defineTool({
       name: 'ego_login_import',
       description:
-        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. Blocked only where it is known to damage the source profile (#69): Windows + Chrome 155+ (the junction-alias boot + hard kill path reads 0 cookies and has wiped extension registries / reset the search provider). Linux/macOS and older Chrome versions keep working; EGO_LINUX_LOGIN_IMPORT_FORCE=1 overrides the check anywhere. When enabled it works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
+        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. Blocked where it is known to damage the source profile (#69): Windows + Chrome/Edge 127+ (App-Bound Encryption makes the junction-alias boot + hard kill path read 0 cookies and has wiped extension registries / reset the search provider). Linux/macOS and Chrome < 127 on Windows keep working; EGO_LINUX_LOGIN_IMPORT_FORCE=1 overrides the check anywhere. When enabled it works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
       parameters: {
         source: {
           type: 'string',
@@ -1562,8 +1564,8 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       execute: async (args: Record<string, unknown>) =>
         withEgoLock(() => observeEgoTool(cfg, 'ego_login_import', args, async () => {
           try {
-            // Scoped #69 guard: only Windows + Chrome 155+ is refused (see
-            // loginImportPolicy above).
+            // Scoped #69 guard: Windows + Chrome/Edge 127+ (App-Bound
+            // Encryption) is refused — see loginImportPolicy above.
             const guardBinary = cfg.chromePath || findChromeBinary()
             const policy = loginImportPolicy({
               platform: process.platform,
