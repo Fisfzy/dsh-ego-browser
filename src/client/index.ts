@@ -2966,6 +2966,16 @@ clearTimeout((panel as any)._dshHideT)
   user-select: none; -webkit-user-select: none; touch-action: none;
   will-change: transform; cursor: grab;
 }
+/* #81: the semantic <img> keeps layout + pointer/zoom; the two overlay layers
+   carry the visible pixels and only swap once the next frame has decoded. */
+.dsh-ego-side-livebox { position: relative; width: 100%; min-height: 0; }
+.dsh-ego-side-liveimg-semantic { opacity: 0; }
+.dsh-ego-side-livebuf {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  display: block; object-fit: contain; opacity: 0;
+  pointer-events: none; will-change: opacity;
+}
+.dsh-ego-side-livebuf.dsh-ego-side-livebuf-on { opacity: 1; }
 .dsh-ego-side-livetitle { font-size: 12px; font-weight: 600; }
 .dsh-ego-side-liveurl { font-size: 10.5px; opacity: .55; word-break: break-all; }
 .dsh-ego-side-liveurl.dsh-ego-side-hint { color: #75c2ff; font-style: italic; font-weight: 500; opacity: 1; }
@@ -3053,6 +3063,15 @@ clearTimeout((panel as any)._dshHideT)
 			this.liveFlushRaf = null
 			this.liveImg = null
 			this.liveImgTargetId = null
+			// #81: double-buffered presentation. Two overlay <img> layers; the
+			// visible one keeps showing the old frame until the next frame has
+			// finished decoding, so replacing a frame never blanks the panel.
+			this.liveBuffers = null
+			this.liveBufferIndex = 0
+			this.liveBufferLoading = false
+			this.liveBufferPending = null
+			this.liveFrameUrl = null
+			this.liveFrameTargetId = null
 			this.wiringStale = false
 			this._lastUnwiredAt = 0
 			this._wiredRecomputeQueued = false
@@ -3288,7 +3307,73 @@ clearTimeout((panel as any)._dshHideT)
 				if (cached) {
 					try { img.src = cached } catch (e) {}
 				}
+				this._seedLiveBuffers(cached || null)
 			}
+		}
+		// #81 — double-buffered frame presentation. `liveImg` stays the semantic
+		// element (layout, natural size, pointer/zoom); the two overlay buffers
+		// carry the visible pixels and swap only after decode completes.
+		LivePreviewController.prototype.setLiveBuffers = function (buffers) {
+			this.liveBuffers = buffers && buffers.length === 2 ? buffers : null
+			this.liveBufferIndex = 0
+			this.liveBufferLoading = false
+			this.liveBufferPending = null
+			if (!this.liveBuffers) return
+			this._seedLiveBuffers(this.frameCache.get(this.liveImgTargetId) || null)
+		}
+		LivePreviewController.prototype._seedLiveBuffers = function (seed) {
+			var buffers = this.liveBuffers
+			if (!buffers) return
+			for (var i = 0; i < 2; i++) {
+				var el = buffers[i]
+				if (!el) continue
+				try { el.style.opacity = i === 0 ? '1' : '0' } catch (e) {}
+				if (seed) { try { el.src = seed } catch (e) {} }
+				else { try { el.removeAttribute('src') } catch (e) {} }
+			}
+			this.liveFrameUrl = seed || null
+			this.liveBufferIndex = 0
+		}
+		LivePreviewController.prototype._presentLiveFrame = function (dataUrl) {
+			if (!dataUrl) return
+			this.liveFrameUrl = dataUrl
+			this.liveFrameTargetId = this.liveImgTargetId
+			if (!this.liveBuffers) {
+				if (this.liveImg) { try { this.liveImg.src = dataUrl } catch (e) {} }
+				return
+			}
+			if (this.liveBufferLoading) { this.liveBufferPending = dataUrl; return }
+			var nextIndex = 1 - this.liveBufferIndex
+			var next = this.liveBuffers[nextIndex]
+			var current = this.liveBuffers[this.liveBufferIndex]
+			if (!next) return
+			var self = this
+			var settled = false
+			var settle = function () {
+				if (settled) return
+				settled = true
+				if (!self.liveBuffers || self.liveBuffers[nextIndex] !== next) { self.liveBufferLoading = false; return }
+				self.liveBufferLoading = false
+				try {
+					next.style.opacity = '1'
+					if (current) current.style.opacity = '0'
+				} catch (e) {}
+				self.liveBufferIndex = nextIndex
+				if (self.liveBufferPending) {
+					var pending = self.liveBufferPending
+					self.liveBufferPending = null
+					self._presentLiveFrame(pending)
+				}
+			}
+			this.liveBufferLoading = true
+			try {
+				next.onload = settle
+				next.onerror = settle
+				next.src = dataUrl
+			} catch (e) {
+				settle()
+			}
+			try { if (next.decode) next.decode().then(settle, settle) } catch (e) {}
 		}
 		// `refresh` is NOT a polling loop anymore. It is a one-shot fallback
 		// used at start / setVisible(true) / SSE reconnect to re-sync the tab
@@ -3449,8 +3534,9 @@ clearTimeout((panel as any)._dshHideT)
 					this.liveFlushRaf = window.requestAnimationFrame(function () {
 						self2.liveFlushRaf = null
 						if (self2.disposed || !self2.liveImg || self2.pendingLiveFrame == null) return
-						try { self2.liveImg.src = self2.pendingLiveFrame } catch (e) {}
+						var frameUrl = self2.pendingLiveFrame
 						self2.pendingLiveFrame = null
+						self2._presentLiveFrame(frameUrl)
 					})
 				}
 				return
@@ -3892,13 +3978,47 @@ clearTimeout((panel as any)._dshHideT)
 					controller.setLiveVideo(el, state.currentTargetId)
 					controller.noteWired()
 				}
+				if (el) controller.setLiveBuffers(null)
 				if (sizeSyncOn) sizeSync.attach(el)
 			}
+
+			// #81: two overlay <img> layers behind the semantic image. Stable ref
+			// callbacks (React would otherwise detach/re-attach on every render).
+			var liveBuffersRef = React.useRef([null, null])
+			var syncLiveBuffersRef = React.useRef(function () {
+				var list = liveBuffersRef.current
+				controller.setLiveBuffers(list[0] && list[1] ? [list[0], list[1]] : null)
+			})
+			var bindLiveBufA = React.useRef(function (el) { liveBuffersRef.current[0] = el; syncLiveBuffersRef.current() })
+			var bindLiveBufB = React.useRef(function (el) { liveBuffersRef.current[1] = el; syncLiveBuffersRef.current() })
 
 			React.useEffect(function () {
 				controller.start()
 				return function () { controller.dispose() }
 			}, [controller])
+
+			// Tell the worker how wide the screencast should be: capturing at the
+			// configured 1280 for a ~550 px panel wasted most of Chrome's encoder.
+			// Must run before setVisible() so the first watch/start already carries
+			// a measured width; a 0-width root used to lock the hint at 480 and
+			// blur the frame (#81). A ResizeObserver keeps it fresh for later
+			// watch restarts.
+			React.useEffect(function () {
+				var root = rootRef.current
+				if (!root || !controller) return
+				var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+				var update = function () {
+					var width = root.clientWidth
+					if (!(width > 0)) return
+					controller.maxWidthHint = Math.max(480, Math.min(1280, Math.round(width * dpr * 1.15)))
+				}
+				update()
+				var observer = null
+				if (typeof ResizeObserver !== 'undefined') {
+					try { observer = new ResizeObserver(update); observer.observe(root) } catch (e) { observer = null }
+				}
+				return function () { if (observer) { try { observer.disconnect() } catch (e) {} } }
+			}, [visible, controller])
 
 			React.useEffect(function () {
 				controller.setVisible(visible && !document.hidden)
@@ -3919,15 +4039,6 @@ clearTimeout((panel as any)._dshHideT)
 				if (!visible) sizeSync.attach(null)
 				else sizeSync.attach(imgRef.current || videoRef.current)
 			}, [visible, sizeSync, state.currentTargetId, state.streamGeneration])
-
-			// Tell the worker how wide the screencast should be: capturing at the
-			// configured 1280 for a ~550 px panel wasted most of Chrome's encoder.
-			React.useEffect(function () {
-				var root = rootRef.current
-				if (!root || !controller) return
-				var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
-				controller.maxWidthHint = Math.max(480, Math.min(1280, Math.round(root.clientWidth * dpr * 1.15)))
-			}, [visible, controller])
 
 			React.useEffect(function () {
 				return function () { sizeSync.dispose() }
@@ -4055,20 +4166,24 @@ clearTimeout((panel as any)._dshHideT)
 						onPointerDown: function (e) { controller.handlePointerDown(e) }, onPointerMove: function (e) { controller.handlePointerMove(e) }, onPointerUp: function (e) { controller.handlePointerUp(e) }, onPointerCancel: function (e) { controller.handlePointerUp(e) }, onDoubleClick: function (e) { controller.handleDoubleClick(e) },
 					})
 					: currentSpace.thumbnail
-					? h('img', {
-						ref: bindLiveImg,
-						key: 'liveimg',
-						className: 'dsh-ego-side-liveimg',
-						src: currentSpace.thumbnail,
-						alt: 'live',
-						draggable: false,
-						decoding: 'async',
-						onPointerDown: function (e) { controller.handlePointerDown(e) },
-						onPointerMove: function (e) { controller.handlePointerMove(e) },
-						onPointerUp: function (e) { controller.handlePointerUp(e) },
-						onPointerCancel: function (e) { controller.handlePointerUp(e) },
-						onDoubleClick: function (e) { controller.handleDoubleClick(e) },
-					})
+					? h('div', { className: 'dsh-ego-side-livebox' },
+						h('img', {
+							ref: bindLiveImg,
+							key: 'liveimg',
+							className: 'dsh-ego-side-liveimg dsh-ego-side-liveimg-semantic',
+							src: currentSpace.thumbnail,
+							alt: 'live',
+							draggable: false,
+							decoding: 'async',
+							onPointerDown: function (e) { controller.handlePointerDown(e) },
+							onPointerMove: function (e) { controller.handlePointerMove(e) },
+							onPointerUp: function (e) { controller.handlePointerUp(e) },
+							onPointerCancel: function (e) { controller.handlePointerUp(e) },
+							onDoubleClick: function (e) { controller.handleDoubleClick(e) },
+						}),
+						h('img', { ref: bindLiveBufA.current, key: 'livebuf-a', className: 'dsh-ego-side-liveimg dsh-ego-side-livebuf', alt: '', draggable: false, decoding: 'async' }),
+						h('img', { ref: bindLiveBufB.current, key: 'livebuf-b', className: 'dsh-ego-side-liveimg dsh-ego-side-livebuf', alt: '', draggable: false, decoding: 'async' }),
+					)
 					: h('div', { className: 'dsh-ego-side-liveurl' }, state.streamMessage || wt('noScreenshot'))
 
 				body = h('div', { className: 'dsh-ego-side-body' },

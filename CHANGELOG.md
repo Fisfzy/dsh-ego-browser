@@ -8,6 +8,7 @@
 - **常驻执行器可视化与失败监督（#73 phase 2）**：新增 host 路由 `/api/ego/executor`，观察窗状态行显示当前执行模式（`常驻` + 运行时长 / `一次性` / `常驻已停用`），悬停可看到 pid、最后一次重建原因或停用原因。监督逻辑：连续 3 次冷启动失败后常驻进程保持停用（`parked`），一次性 spawn 继续工作，直到用户切换设置或插件重启，避免 park → one-shot → respawn 循环。默认保持 opt-in（`residentExecutor` 默认关）：尚无"一整天浸泡无回归"的数据，先不做默认开启决策。设置持久化（gateway 写入后重启回退）仍需真机复现，留待验证。
 
 ### 修复
+- **侧栏实时画面黑闪（#81 / #82）**：`<img src>` 逐帧替换会在新 JPEG 解码完成前丢掉已绘制的位图，面板整块露出黑色背景（macOS 无头 CDP 链路尤其明显，Windows 也可复现）。面板改为**双缓冲**：语义 `<img>` 只负责布局与指针/缩放（`opacity:0`），上方两层层叠 `<img>` 承载可见像素，新帧在隐藏层 `load`/`decode` 完成后才交换可见层，旧帧始终保留；挂载/切标签时用缓存的上一帧做种子，避免首帧空窗。另修 `maxWidthHint` 在 `root.clientWidth` 为 0 时被锁成 480 导致画面发虚的问题（宽度未知时保持默认值，并用 `ResizeObserver` 在面板可测量后更新，首次 watch 前即计算）。验证：staging 中两层交替、可见层始终有帧、指针映射不受影响、采集宽度 653px。macOS 实机复测待 #81 报告者确认。
 - **headless UA 版本与实际 Chromium 不一致（#79）**：headless 启动时注入的 UA 一直是硬编码 `Chrome/152.0.0.0`，而 `navigator.userAgentData` 来自真实二进制（社区实测 Termux 上外部 Chromium 为 155）。这种自相矛盾的指纹会被风控标记。现在运行时首次 headless 启动会用 `<binary> --version` 探测真实主版本（缓存，2s 超时，失败才回落 152）；Windows 上为避免 `chrome.exe --version` 弹窗不做探测，继续使用兜底值。新增 `parseChromeVersionMajor()` 单测。
 
 ### 文档
