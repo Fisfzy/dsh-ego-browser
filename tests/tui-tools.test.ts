@@ -49,6 +49,21 @@ function bench(options: { idle?: boolean; services?: boolean } = {}) {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.mocked(readFile).mockReset() })
 
 describe('registered browser tools with TUI observers', () => {
+  it('registers ego_tabs and builds list/switch/open/close scripts', async () => {
+    const b = bench()
+    expect(b.tools.has('ego_tabs')).toBe(true)
+    await b.call('ego_tabs', { action: 'list' })
+    await b.call('ego_tabs', { action: 'switch', targetId: 'T1' })
+    await b.call('ego_tabs', { action: 'open', url: 'https://example.com' })
+    await b.call('ego_tabs', { action: 'close', targetId: 'T2' })
+    const specs = b.spawn.mock.calls.map(call => JSON.stringify(call[0])).join('\n')
+    expect(specs).toContain('browser.listTabs')
+    expect(specs).toContain('browser.switchTab')
+    expect(specs).toContain('ego.createTab')
+    expect(specs).toContain('browser.closeTab')
+    b.dispose()
+  })
+
   it('presents shared titles, observes standalone help, and preserves outputs without spawning', async () => {
     const b = bench()
     expect(b.tools.get('ego_fill')!.presentCall({ selector: '#email', text: 'SECRET' })).toMatchObject({ title: 'ego_fill · #email', rawInput: null })

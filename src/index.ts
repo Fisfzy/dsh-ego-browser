@@ -1966,6 +1966,50 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   )
   reg(
     t({
+      name: 'ego_tabs',
+      description:
+        'List, switch, open, or close agent-browser tabs. Use it to keep tab hygiene: list the open pages, switch to one, open a new tab for a URL, or close scratch tabs. Tab ids are stable target ids (also returned by ego_space_open / ego_navigate).',
+      parameters: {
+        action: {
+          type: 'string',
+          description: "'list' (default) | 'switch' | 'open' | 'close'.",
+        },
+        targetId: {
+          type: 'string',
+          description: 'Tab target id for action=switch / action=close.',
+        },
+        url: {
+          type: 'string',
+          description: "URL for action=open (default: 'about:blank').",
+        },
+        space: spaceParam,
+      },
+      buildScript: (args) => {
+        const action = str(args.action, 'list')
+        const targetId = str(args.targetId, '')
+        const url = str(args.url, '')
+        const space = useSpace(str(args.space, cfg.defaultSpace))
+        const done = (extra: string): string =>
+          `const __tabs = await browser.listTabs()\n` +
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: true${extra}, tabs: __tabs }))\n`
+        if (action === 'switch') {
+          if (!targetId) return `${space}console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'targetId is required for action=switch' }))\n`
+          return `${space}await browser.switchTab(${j(targetId)})\n${done(`, switched: ${j(targetId)}`)}`
+        }
+        if (action === 'open') {
+          return `${space}const __created = await ego.createTab(${j(url || 'about:blank')})\n${done(`, created: __created && __created.targetId || null`)}`
+        }
+        if (action === 'close') {
+          if (!targetId) return `${space}console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'targetId is required for action=close' }))\n`
+          return `${space}await browser.closeTab(${j(targetId)})\n${done(`, closed: ${j(targetId)}`)}`
+        }
+        if (action !== 'list') return `${space}console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(`unknown action: ${action}`)} }))\n`
+        return `${space}${done('')}`
+      },
+    }),
+  )
+  reg(
+    t({
       name: 'ego_wait',
       description:
         'Pause for a fixed number of milliseconds (e.g. for animations or partial loads). For load waits prefer ego_navigate\'s wait option.',

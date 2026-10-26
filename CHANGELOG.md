@@ -2,6 +2,11 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [Unreleased]
+
+### 新增
+- **`ego_tabs` 工具（0.9.4）**：一个工具管理标签页——`list`（返回 targetId/title/url/active/index）、`switch`（按 targetId 切换）、`open`（按 url 新建，默认 about:blank）、`close`（按 targetId 关闭），每次操作后返回最新标签列表。底层复用 runtime 的 `browser.listTabs/switchTab/closeTab` 与 `ego.createTab`，targetId 与 `ego_space_open`/`ego_navigate` 返回一致。真机脚本已验证 list → open → switch → close 全链路。
+
 ## [0.9.3] - 2026-10-26 — 侧栏双缓冲 / TUI 纯文字 / 图标统一 / 移除悬浮球
 
 ### 新增
