@@ -6,6 +6,9 @@
 
 ### 新增
 - **`ego_tabs` 工具（0.9.4）**：一个工具管理标签页——`list`（返回 targetId/title/url/active/index）、`switch`（按 targetId 切换）、`open`（按 url 新建，默认 about:blank）、`close`（按 targetId 关闭），每次操作后返回最新标签列表。底层复用 runtime 的 `browser.listTabs/switchTab/closeTab` 与 `ego.createTab`，targetId 与 `ego_space_open`/`ego_navigate` 返回一致。真机脚本已验证 list → open → switch → close 全链路。
+- **`ego_login_import` 双安全路径（#69 E + A）**：
+  - **E 安全复制**：删除 junction/symlink 启动真实 profile + 强杀的旧路径；现在只复制 `Local State` + Cookies 到临时 profile 读取，真实 profile **从不被浏览器打开/写入**。Chrome/Edge 127+ 因 ABE 复制读到 0 条 cookie，工具明确报错而不是回退到破坏性路径。真机验证：源 Cookies SHA-256 前后一致。
+  - **A Chrome 扩展桥接**：新增 `extension/`（MV3，`cookies` 权限）与本地回环接收器 `login-extension.ts`；`ego_login_import({source:"extension",domains:[...]})` 等待扩展 POST，cookie 经 `chrome.cookies` API 明文导出后写入 ego 浏览器。浏览器保持打开、不复制 profile、不做 ABE 解密；token 存于 `<stateDir>/login-extension-token`。用 Chrome for Testing 156 完成真实端到端验证（扩展读取测试 cookie → 回环 POST → ego 浏览器写入 1 条）。
 
 ## [0.9.3] - 2026-10-26 — 侧栏双缓冲 / TUI 纯文字 / 图标统一 / 移除悬浮球
 

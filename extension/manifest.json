@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "ego-browser login bridge",
+  "version": "0.1.0",
+  "description": "Export selected cookies to the local ego-browser plugin (safe, opt-in).",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "ego-browser login bridge",
+    "default_popup": "popup.html"
+  }
+}

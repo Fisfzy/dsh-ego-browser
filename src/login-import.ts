@@ -2,38 +2,35 @@
  * ego-browser login-import — copy login cookies from the system's daily-use
  * Chromium (Chrome/Edge/Brave) into the running ego agent browser (issue #46).
  *
- * Why CDP passthrough instead of offline decryption: Chrome/Edge 127+ protect
- * cookies with App-Bound Encryption (the `v20` prefix) — the decryption chain
- * is bound to the genuine browser binary AND the original profile location
- * (verified empirically: a copied profile yields zero decryptable cookies
- * even under the genuine binary). So the classic "copy the profile to a temp
- * dir + boot headless" route is dead, as is the older "SQLite + DPAPI" one.
+ * #69 made the original design unsafe: it booted the REAL profile through a
+ * junction alias and hard-killed the instance, which could wipe extensions /
+ * reset settings. That path is gone. There are now two safe routes:
  *
- * What works: when the source browser is CLOSED, launch its genuine binary
- * headless on its REAL profile — reached through a JUNCTION/symlink alias.
- * Two upstream defenses make both halves of this necessary (verified
- * empirically on Edge 140 / Windows):
- *   - Chromium ≥ 136 refuses --remote-debugging-port on the DEFAULT
- *     user-data-dir (anti-scraping). The string comparison does not resolve
- *     junctions, so the alias path passes.
- *   - App-Bound Encryption (v20 cookies) binds decryption to the genuine
- *     binary AND the original profile location: a copied profile yields zero
- *     decryptable cookies, while the junction (which resolves to the real
- *     path) decrypts everything.
- * Then read plaintext cookies over CDP `Storage.getCookies`, filter by
- * domain, and write them into the ego browser's persistent profile with
- * `Storage.setCookies`. closeSource:true gracefully closes a running source
- * browser first (its windows restore on next launch).
+ *  1. Extension bridge (recommended, modern Chrome/Edge): the companion
+ *     `extension/` folder reads cookies via the browser's `cookies` API and
+ *     POSTs them to a loopback receiver. No profile copy, no browser close,
+ *     no ABE decryption — see login-extension.ts.
+ *
+ *  2. Safe copy (legacy browsers / closed browser): copy ONLY `Local State`
+ *     and the Cookies DB into a throwaway profile and read it with a headless
+ *     browser. The real profile is never opened, so no writes can occur.
+ *     Chrome/Edge 127+ use App-Bound Encryption bound to the original profile
+ *     path, so this copy reads 0 cookies; the caller reports that explicitly
+ *     instead of falling back to the old destructive boot.
+ *
+ * Then filter by domain and write into the ego browser's persistent profile
+ * with `Storage.setCookies`. `closeSource:true` still gracefully closes a
+ * running source browser — only because Windows locks the cookie DB for the
+ * copy (the browser is not opened on the profile).
  *
  * Security contract:
  *   - cookie VALUES never appear in logs, tool output, or reports — only
  *     domain names and counts;
- *   - nothing is written to the source profile except what a normal headless
- *     boot writes (same as the user opening and closing their browser);
+ *   - the source profile is never opened by a browser and never written;
  *   - import is a one-shot snapshot, never a continuous sync.
  */
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, symlink } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { execFile as execFileCb } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
@@ -184,7 +181,7 @@ interface WsLike {
   close(): void
 }
 
-async function connectCdp(wsUrl: string, timeoutMs: number): Promise<{ client: CdpClient; close: () => void }> {
+export async function connectCdp(wsUrl: string, timeoutMs: number): Promise<{ client: CdpClient; close: () => void }> {
   const WsImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket
   if (!WsImpl) throw new Error('global WebSocket is unavailable (Node >= 22 required)')
   const ws = new WsImpl(wsUrl)
@@ -196,7 +193,7 @@ async function connectCdp(wsUrl: string, timeoutMs: number): Promise<{ client: C
   return { client: new CdpClient(ws as never), close: () => { try { ws.close() } catch { /* ignore */ } } }
 }
 
-async function browserWsUrl(port: number): Promise<string> {
+export async function browserWsUrl(port: number): Promise<string> {
   const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(3000) })
   if (!r.ok) throw new Error(`/json/version HTTP ${r.status} on port ${port}`)
   const j = (await r.json()) as { webSocketDebuggerUrl?: string }
@@ -288,52 +285,6 @@ export function countEncryptionMarkers(buf: Buffer | string): number {
   return n
 }
 
-interface BackupInfo {
-  dir: string
-  markers: number
-}
-
-/** Best-effort snapshot of the cookie store before we boot the profile. */
-async function backupCookieStore(profileDir: string, backupRoot: string): Promise<BackupInfo | null> {
-  const src = join(profileDir, 'Network', 'Cookies')
-  if (!existsSync(src)) return null
-  try {
-    const dir = join(backupRoot, `backup-${Date.now()}`)
-    await mkdir(dir, { recursive: true })
-    const { copyFile, readdir } = await import('node:fs/promises')
-    await copyFile(src, join(dir, 'Cookies'))
-    try { await copyFile(src + '-journal', join(dir, 'Cookies-journal')) } catch { /* optional */ }
-    const markers = countEncryptionMarkers(await readFile(src))
-    // Prune: keep only the 3 newest backups.
-    try {
-      const entries = (await readdir(backupRoot)).filter((e) => e.startsWith('backup-')).sort()
-      for (const old of entries.slice(0, Math.max(0, entries.length - 3))) {
-        await rm(join(backupRoot, old), { recursive: true, force: true }).catch(() => null)
-      }
-    } catch { /* prune is best-effort */ }
-    return { dir, markers }
-  } catch {
-    return null
-  }
-}
-
-/** [#61] Always restore the pre-boot backup, then VERIFY the store's marker count (one retry on mismatch/lock). */
-async function restoreCookieStore(profileDir: string, backup: BackupInfo | null): Promise<boolean> {
-  if (!backup) return false
-  const src = join(profileDir, 'Network', 'Cookies')
-  const { copyFile } = await import('node:fs/promises')
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      await copyFile(join(backup.dir, 'Cookies'), src)
-      try { await copyFile(join(backup.dir, 'Cookies-journal'), src + '-journal') } catch { /* optional */ }
-      const now = countEncryptionMarkers(await readFile(src))
-      if (now >= backup.markers) return true
-    } catch { /* store still locked by a draining process — retry once */ }
-    await sleep(1500)
-  }
-  return false
-}
-
 // ── main flow ───────────────────────────────────────────────────────────────
 
 export interface LoginImportOptions {
@@ -375,7 +326,6 @@ export interface LoginImportReport {
   written?: number
   closedSource?: boolean
   /** True when the source cookie store lost rows during the session and was restored from the pre-boot backup. */
-  restoredFromBackup?: boolean
   /** Domain → cookie count. Values never leave this module. */
   domains?: { domain: string; cookies: number }[]
   error?: string
@@ -392,6 +342,34 @@ interface SpawnLike {
 }
 
 const BATCH = 200
+
+/** Copy ONLY the files a headless Chrome needs to open the cookie jar. The
+ *  source profile is never opened by a browser, so #69's destructive write path
+ *  cannot run. ABE-bound cookies (Chrome/Edge 127+) will read as 0; the caller
+ *  reports that explicitly instead of booting the real profile. */
+export async function copyProfileForImport(browser: SystemBrowser, profile: BrowserProfile): Promise<string> {
+  const { copyFile } = await import('node:fs/promises')
+  const dest = join(tmpdir(), `ego-login-import-${process.pid}-${Date.now()}`)
+  await mkdir(join(dest, profile.dirName, 'Network'), { recursive: true })
+  const localState = join(browser.userDataDir, 'Local State')
+  if (existsSync(localState)) await mkdir(dest, { recursive: true }).then(() => copyFile(localState, join(dest, 'Local State')))
+  const cookieFiles: [string, string][] = [
+    [join(profile.dir, 'Network', 'Cookies'), join(dest, profile.dirName, 'Network', 'Cookies')],
+    [join(profile.dir, 'Cookies'), join(dest, profile.dirName, 'Cookies')],
+  ]
+  let copied = false
+  for (const [src, dst] of cookieFiles) {
+    if (!existsSync(src)) continue
+    try {
+      await copyFile(src, dst)
+      copied = true
+    } catch (err) {
+      throw new Error(`cannot copy the ${browser.label} cookie store (${(err as Error)?.message || err}); quit ${browser.label} completely and retry`)
+    }
+  }
+  if (!copied) throw new Error(`no Cookies database found in ${browser.label} profile ${profile.dirName}`)
+  return dest
+}
 
 export async function importLoginCookies(opts: LoginImportOptions, deps: { subprocess: SpawnLike }): Promise<LoginImportReport> {
   const timeoutMs = opts.timeoutMs ?? 20_000
@@ -432,8 +410,6 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
   let tempCdp: { client: CdpClient; close: () => void } | null = null
   let egoCdp: { client: CdpClient; close: () => void } | null = null
   let linkDir: string | null = null
-  let backup: BackupInfo | null = null
-  let pendingReport: LoginImportReport | null = null
   try {
     const runningPids = await sourceBrowserPids(browser.exePath, opts.browserOverride ? browser.userDataDir : null)
     if (runningPids.length > 0) {
@@ -453,32 +429,23 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
       closedSource = true
     }
 
-    // Insurance: snapshot the cookie store BEFORE booting the real profile.
-    // A boot that judges the store corrupt can reset it (observed in the
-    // wild); the finally block hard-kills the instance and restores the backup
-    // unconditionally (see restoreCookieStore).
-    backup = await backupCookieStore(profile.dir, join(opts.stateDir || resolveEgoStateDir(), 'login-import-backups'))
-
-    // ── boot the genuine binary headless on the REAL profile ───────────────
-    // Reached through a junction/symlink alias: Chromium ≥136 refuses CDP on
-    // the default user-data-dir (string compare, alias passes), while ABE
-    // resolves the junction to the genuine profile location (decryption
-    // works). The only writes to the profile are what a normal headless boot
-    // performs; Browser.close in finally keeps the shutdown graceful so no
-    // crash-restore mark is earned.
-    linkDir = join(tmpdir(), `ego-login-import-${process.pid}-${Date.now()}`)
-    await symlink(browser.userDataDir, linkDir, process.platform === 'win32' ? 'junction' : 'dir')
-    // A previous import's instance may still be draining (Browser.close flushes
-    // the cookie store before exit) while holding the profile singleton lock —
-    // a new spawn would forward to it and never open a DevTools port. Wait for
-    // any lingering import instance of this browser family to exit first.
+    // ── copy the minimum profile files to a throwaway directory ────────────
+    // SAFETY (#69): never launch the user's REAL profile. The old junction
+    // alias booted the genuine profile and could reset extensions / search
+    // settings; the copy is the only thing Chrome ever opens here. ABE on
+    // Chrome/Edge 127+ is bound to the original path, so this copy may yield 0
+    // cookies — handled below as a clear, non-destructive failure.
+    linkDir = await copyProfileForImport(browser, profile)
+    // A previous import may still be draining (Browser.close flushes) while
+    // holding its own singleton; the copy path is unique, but wait briefly so
+    // cleanup does not race an old instance.
     if (process.platform === 'win32') {
       const ps = [
         `Get-CimInstance Win32_Process -Filter "Name='${basename(browser.exePath)}'"`,
         `| Where-Object { $_.CommandLine -match 'ego-login-import-' -and $_.CommandLine -notmatch '--type=' -and $_.CommandLine -notmatch 'crashpad' }`,
         `| Select-Object -ExpandProperty ProcessId`,
       ].join(' ')
-      const drainDeadline = Date.now() + 12_000
+      const drainDeadline = Date.now() + 8_000
       let leftover: string[] = []
       while (Date.now() < drainDeadline) {
         try {
@@ -488,29 +455,20 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
         } catch { break }
         await sleep(600)
       }
-      // Headless instances ignore WM_CLOSE (no window) — after the grace
-      // window, force-kill OUR OWN throwaway leftovers so the singleton frees.
       if (leftover.length > 0) {
         for (const line of leftover) {
           const pid = Number(line)
           if (Number.isInteger(pid) && pid > 0) await execFile('taskkill', ['/PID', String(pid), '/F'], { timeout: 5_000 }).catch(() => null)
         }
-        await sleep(1500)
+        await sleep(1000)
       }
     }
-    // Clear any stale DevToolsActivePort from previous (normal or crashed)
-    // launches so the poll below only ever reads THIS instance's port.
     let port: number | null = null
-    // Back-to-back imports race the PREVIOUS instance's drain (cookie-store
-    // flush can outlive the 12s drain window): a spawn while it still holds
-    // the profile singleton forwards and never opens a port. Retry once with
-    // a fresh junction after a longer drain.
     for (let attempt = 0; attempt < 2 && port === null; attempt++) {
       if (attempt > 0) {
-        await sleep(6000)
-        try { await rm(linkDir, { force: true }) } catch { /* ignore */ }
-        linkDir = join(tmpdir(), `ego-login-import-${process.pid}-${Date.now()}-r1`)
-        await symlink(browser.userDataDir, linkDir, process.platform === 'win32' ? 'junction' : 'dir')
+        await sleep(2000)
+        try { await rm(linkDir, { recursive: true, force: true }) } catch { /* ignore */ }
+        linkDir = await copyProfileForImport(browser, profile)
       }
       const portFile = join(linkDir!, 'DevToolsActivePort')
       await rm(portFile, { force: true }).catch(() => null)
@@ -528,7 +486,7 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
           '--hide-crash-restore-bubble',
           'about:blank',
         ],
-        cwd: browser.userDataDir,
+        cwd: tmpdir(),
         env: { ...process.env },
         stdio: { stdin: { data: '' }, stdout: { maxBytes: 2048 }, stderr: { maxBytes: 4096 } },
         graceMs: 8_000,
@@ -570,6 +528,23 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
       lastCount = all.length
       await sleep(800)
     }
+    if (all.length === 0) {
+      return {
+        ok: false,
+        source: browser.label,
+        profile: profile.dirName,
+        dryRun: opts.dryRun === true,
+        closedSource,
+        totalRead: 0,
+        matched: 0,
+        written: 0,
+        domains: [],
+        error:
+          `0 cookies readable from the temporary copy of ${browser.label}. Chrome/Edge 127+ use App-Bound Encryption bound to ` +
+          'the original profile path, so a copied profile cannot be decrypted (the source profile was NOT modified). ' +
+          'Use the Chrome extension bridge (A) or log in once inside the agent browser; the old real-profile boot path has been removed.',
+      }
+    }
     const matched = all.filter((c) => cookieMatchesDomains(c.domain, opts.domains || []))
 
     // Domain stats — the ONLY data that ever leaves this module about cookies.
@@ -578,8 +553,7 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
     const domainStats = [...byDomain.entries()].map(([domain, cookies]) => ({ domain, cookies })).sort((a, b) => b.cookies - a.cookies)
 
     if (opts.dryRun) {
-      pendingReport = { ok: true, source: browser.label, profile: profile.dirName, dryRun: true, closedSource, totalRead: all.length, matched: matched.length, written: 0, domains: domainStats }
-      return pendingReport
+      return { ok: true, source: browser.label, profile: profile.dirName, dryRun: true, closedSource, totalRead: all.length, matched: matched.length, written: 0, domains: domainStats }
     }
 
     // ── write into the running ego agent browser ───────────────────────────
@@ -656,32 +630,17 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
           'the agent browser accepted no cookies — its CDP endpoint may belong to a stale or replaced instance; restart the agent browser (ego_status after closing it) and retry',
       }
     }
-    pendingReport = { ok: true, source: browser.label, profile: profile.dirName, dryRun: false, closedSource, totalRead: all.length, matched: matched.length, written, domains: domainStats }
-    return pendingReport
+    return { ok: true, source: browser.label, profile: profile.dirName, dryRun: false, closedSource, totalRead: all.length, matched: matched.length, written, domains: domainStats }
   } catch (err) {
     return { ok: false, error: String((err as Error)?.message || err) }
   } finally {
-    // Every exit path: drop the CDP sockets, HARD-kill the headless source
-    // instance, remove the junction alias, then unconditionally restore the
-    // pre-boot cookie store and verify it. rm() on a junction/symlink removes
-    // the LINK only — the real profile is never touched by cleanup.
-    //
-    // [#61] Browser.close is deliberately GONE: its shutdown flush writes the
-    // cookie store back asynchronously (10s+ on a warm profile), and on Edge
-    // 153 that flush landed AFTER the old restoreIfWiped — overwriting the restored
-    // backup with a purged (0-row) store. A killed process never flushes: the
-    // on-disk store stays exactly as it was pre-boot, and the backup below is
-    // the only writer. The cost is a one-time "closed incorrectly" bubble on
-    // the user's next real launch — the right trade against silent data loss.
     try { tempCdp?.close() } catch { /* ignore */ }
     try { egoCdp?.close() } catch { /* ignore */ }
-    // Browser.close flushes the cookie store before the process exits — this
-    // can take 10s+ on a warm profile, and the singleton is keyed on the
-    // RESOLVED profile path, so the NEXT import on the same source blocks
-    // until this instance is really gone. Wait properly; escalate only if it
-    // still will not die (a throwaway headless instance, safe to close).
+    // The temp copy is a normal profile for a throwaway headless instance; a
+    // bounded wait is enough. Never touch the real profile: there is no backup
+    // restore step anymore because no browser ever opened it.
     if (srcHandle) {
-      try { await Promise.race([srcHandle.done, sleep(25_000)]) } catch { /* ignore */ }
+      try { await Promise.race([srcHandle.done, sleep(8_000)]) } catch { /* ignore */ }
       if (process.platform === 'win32' && linkDir) {
         try {
           const ps = [
@@ -692,29 +651,11 @@ export async function importLoginCookies(opts: LoginImportOptions, deps: { subpr
           const { stdout } = await execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { timeout: 8_000 })
           for (const line of String(stdout).split(/\r?\n/)) {
             const pid = Number(line.trim())
-            // /F: a HEADLESS instance has no window for WM_CLOSE to reach —
-            // a graceful taskkill is a no-op on it. The cookie store was
-            // already flushed by Browser.close above (or the instance never
-            // answered it, in which case the pre-boot backup has us covered).
             if (Number.isInteger(pid) && pid > 0) await execFile('taskkill', ['/PID', String(pid), '/F'], { timeout: 5_000 }).catch(() => null)
           }
-          if (String(stdout).trim()) await Promise.race([srcHandle.done, sleep(5000)])
         } catch { /* ignore */ }
       }
     }
-    if (linkDir) { try { await rm(linkDir, { force: true }) } catch { /* ignore */ } }
-    // [#61] Unconditional restore + verify. The pre-boot backup is the only
-    // writer of the cookie store now; a headless boot on about:blank earns no
-    // cookies, so the source store must end the run byte-equivalent in rows.
-    // (If a source browser process REAPPEARED, the user is using it — skip
-    // the restore rather than fight a live writer; the backup stays on disk.)
-    const stillRunning = await sourceBrowserPids(browser.exePath, opts.browserOverride ? browser.userDataDir : null)
-    if (backup && stillRunning.length === 0) {
-      if (await restoreCookieStore(profile.dir, backup)) {
-        if (pendingReport) pendingReport.restoredFromBackup = true
-      } else if (pendingReport) {
-        pendingReport.error = 'import ran, but the source cookie store could not be verified restored — the pre-boot backup is kept at ' + backup.dir
-      }
-    }
+    if (linkDir) { try { await rm(linkDir, { recursive: true, force: true }) } catch { /* ignore */ } }
   }
 }

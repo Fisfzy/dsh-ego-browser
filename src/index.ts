@@ -41,6 +41,7 @@ import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { importLoginCookies } from './login-import.ts'
+import { importLoginCookiesFromExtension } from './login-extension.ts'
 import { BrowserStateStore } from './browser-state.ts'
 import { installTui } from './tui/integration.ts'
 import { installBrowserPanel } from './tui/panel.ts'
@@ -1514,11 +1515,11 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     defineTool({
       name: 'ego_login_import',
       description:
-        'Import login cookies from the system browser (Chrome/Edge/Brave) into the agent browser, so sites open already logged in. Blocked where it is known to damage the source profile (#69): Windows + Chrome/Edge 127+ (App-Bound Encryption makes the junction-alias boot + hard kill path read 0 cookies and has wiped extension registries / reset the search provider). Linux/macOS and Chrome < 127 on Windows keep working; EGO_LINUX_LOGIN_IMPORT_FORCE=1 overrides the check anywhere. When enabled it works via a throwaway headless instance of the REAL system browser (CDP passthrough — no offline decryption; survives Chrome App-Bound Encryption). Run with dryRun=true first to see what is importable, then import with an explicit domains list (e.g. ["bilibili.com"]). The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile across restarts. Cookie values are never shown — only domain names and counts.',
+        'Import login cookies from the system browser into the agent browser, so sites open already logged in, with two SAFE routes (#69): (1) source="extension" — load the companion extension/ folder once in Chrome/Edge, keep the browser open, run this with explicit domains and click Export in the extension popup; cookies are read through the browser\'s own cookies API and POSTed to a loopback receiver (token file: <stateDir>/login-extension-token). This works on modern Chrome/Edge (including Windows 127+ ABE). (2) source="chrome"|"edge"|"brave"|"auto" — the source browser must be closed; the tool copies only Local State + the Cookies DB to a throwaway profile and reads it headless. On Chrome/Edge 127+ (App-Bound Encryption) that copy reads 0 cookies and the tool reports it explicitly; the real profile is never booted or modified. dryRun=true reports what would be imported. The agent browser must be running (call ego_status first). Imported logins persist in the on-disk profile. Cookie values are never shown — only domain names and counts.',
       parameters: {
         source: {
           type: 'string',
-          description: 'chrome | edge | brave | auto (default: auto = first detected browser).',
+          description: 'extension | chrome | edge | brave | auto (default: auto = first detected browser). Use "extension" for modern Chrome/Edge without closing it.',
         },
         domains: {
           type: 'json',
@@ -1553,17 +1554,30 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             written: { type: 'integer' },
             domains: { type: 'json' },
             closedSource: { type: 'boolean' },
-            restoredFromBackup: { type: 'boolean' },
             disabled: { type: 'boolean' },
             error: { type: 'string' },
           },
         },
         render: renderText,
       },
-      timeoutMs: 60_000,
+      timeoutMs: 180_000,
       execute: async (args: Record<string, unknown>) =>
         withEgoLock(() => observeEgoTool(cfg, 'ego_login_import', args, async () => {
           try {
+            const domains = Array.isArray(args.domains) ? (args.domains as unknown[]).map(String) : undefined
+            const source = typeof args.source === 'string' && args.source !== '' ? args.source : 'auto'
+            if (!['chrome', 'edge', 'brave', 'auto', 'extension'].includes(source)) {
+              return { ok: false, error: `invalid source "${source}" — expected chrome|edge|brave|auto|extension` }
+            }
+            // #69 (A): the extension bridge is side-effect-free and works on
+            // modern Chrome/Edge, so it bypasses the Windows-ABE guard.
+            if (source === 'extension') {
+              return await importLoginCookiesFromExtension({
+                domains,
+                dryRun: args.dryRun === true,
+                timeoutMs: 120_000,
+              })
+            }
             // Scoped #69 guard: Windows + Chrome/Edge 127+ (App-Bound
             // Encryption) is refused — see loginImportPolicy above.
             const guardBinary = cfg.chromePath || findChromeBinary()
@@ -1578,11 +1592,6 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
                 disabled: true,
                 error: `ego_login_import is disabled here: ${policy.reason}`,
               }
-            }
-            const domains = Array.isArray(args.domains) ? (args.domains as unknown[]).map(String) : undefined
-            const source = typeof args.source === 'string' && args.source !== '' ? args.source : 'auto'
-            if (!['chrome', 'edge', 'brave', 'auto'].includes(source)) {
-              return { ok: false, error: `invalid source "${source}" — expected chrome|edge|brave|auto` }
             }
             return await importLoginCookies(
               {

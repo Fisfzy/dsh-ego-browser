@@ -41,9 +41,14 @@
 
 **侧边栏支持**：v0.8.8 起优先注册进 **DSH 原生右侧边栏**（`@deepseek-ai/dsh-client-ui-sidebar-right`，DSH ≥ 0.2.1 桌面端自带）——「Agent 浏览器」出现在侧边栏「+」的新标签页列表里（带自绘图标），点击打开并随侧边栏抽屉固定展示；agent 首次调用 `ego_*` 工具时自动打开该 Tab（按调用会话作用域，多会话不会弹错位置）。宿主没有原生右侧边栏时，回退到 [dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar)（推荐 ≥ v0.12.2）的原生 Tab；两者都没有时不显示侧栏面板。两种 Sidebar 形态共用同一套 SSE 实时推流 / 点击 / 输入 / 下载捕获能力。观察窗还提供一个「弹出窗口」按钮：无头（headless）运行的 agent 浏览器可一键替换为同 Profile 的有头窗口（标签页保留），方便手动接管。
 
-**登录态导入（v0.8.5 新增；v0.8.7 起定向禁用；v0.8.8 起仅危险环境拒绝）**：设置页「从系统浏览器导入登录态」或工具 `ego_login_import`，把你日常 Chrome/Edge/Brave 里的登录 cookie **按域名**复制进 agent 浏览器（真实二进制无头启动 + CDP 透传读取，兼容 Chrome 127+ 的 App-Bound Encryption，不做离线解密；源浏览器运行中可选择优雅关闭后导入，窗口下次启动自动恢复）。cookie 值不出现在任何日志与输出中；导入前自动备份源 cookie 库，异常清空自动还原。配合默认的磁盘持久化 Profile，导入的登录态跨重启永久保留。
+**登录态导入（v0.8.5 新增；v0.9.4 起 #69 安全重构）**：工具 `ego_login_import` 把你日常 Chrome/Edge/Brave 里的登录 cookie **按域名**复制进 agent 浏览器。现在有两条安全路径：
 
-> ⚠️ **Windows + Chrome/Edge ≥ 127 会被拒绝**：Chrome 127+ 的 App-Bound Encryption 让 junction 别名 + 无头启动 + 强杀路径既读到 0 条 cookie，又可能清空源 profile 的扩展注册表并重置默认搜索引擎（详见 [#69](https://github.com/Fisfzy/dsh-ego-browser/issues/69)）。Linux / macOS / Windows 上 Chrome <127 正常可用；确认环境不受影响后，可设 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 在任何环境放行。彻底修复仍在跟踪中。
+1. **扩展桥接（推荐，Chrome 保持打开，支持 Chrome 127+ ABE）**：在 `chrome://extensions` 开启开发者模式 → **Load unpacked** 选择插件目录下的 `extension/`；首次把 `<ego state dir>/login-extension-token`（Windows 默认 `%LOCALAPPDATA%\ego-lite-linux\login-extension-token`）里的 token 填进扩展弹窗。之后调用 `ego_login_import`（`source: "extension"`，带 `domains`），再点扩展里的 **Export cookies**，cookie 经 `127.0.0.1` 回环 POST 给插件并写入 agent 浏览器。全程不复制 profile、不关闭浏览器、不做离线解密。
+2. **安全复制（旧版浏览器 / 已关闭的浏览器）**：只复制 `Local State` + Cookies 数据库到临时目录再用无头浏览器读取；**真实 profile 从不被浏览器打开、也不会被写入**。Chrome/Edge 127+ 的 ABE 绑定原始路径，复制会读到 0 条 cookie，工具会明确报错并提示改用扩展路径。
+
+cookie 值不出现在任何日志与输出中；导入是单次快照。配合磁盘持久化 Profile，导入的登录态跨重启保留。
+
+> ⚠️ **Windows + Chrome/Edge ≥127 的 profile 复制路径会被拒绝**（ABE 导致 0 cookies，旧 junction 真实 profile 启动路径已在 0.9.4 删除）。请使用上面的扩展桥接；`EGO_LINUX_LOGIN_IMPORT_FORCE=1` 仅作为老版本浏览器的调试开关。
 
 **常驻执行器（v0.8.8，可选，默认关闭）**：设置页「常驻执行进程」开启后，`ego_*` 调用复用同一个 `ego-browser --serve` 进程——首次调用支付启动开销，之后每次 **~1–2 ms**（一次性 spawn 基准 ~340 ms）。浏览器被空闲回收或崩溃后，下一次调用自动回退到一次性 spawn 并重新拉起浏览器（带启动重试），随后恢复常驻；**已经写出的请求不会重试**，避免重复点击/填表。空闲停止时间可配（默认 30 分钟）。
 
@@ -261,7 +266,7 @@ When the existing metadata response includes `capture`, the panel displays its b
 | 交互 | `ego_click` `ego_fill` `ego_hover` `ego_drag` `ego_select` `ego_check` `ego_key` `ego_scroll` |
 | 执行/调试 | `ego_js`（页面求值） `ego_cdp`（原始 CDP） `ego_cli`（任意 heredoc） `ego_script`（多步脚本） |
 | 输出 | `ego_screenshot` `ego_download` `ego_upload` |
-| 会话/安全 | `ego_auth_flush`（登录落盘） `ego_login_import`（系统浏览器登录态导入，v0.8.7 起定向禁用：仅 Windows+Chrome/Edge≥127） `ego_captcha` `ego_dialog` |
+| 会话/安全 | `ego_auth_flush`（登录落盘） `ego_login_import`（登录态导入：`source=extension` 扩展桥接，或 `chrome/edge/brave` 安全复制） `ego_captcha` `ego_dialog` |
 | 元工具 | `ego_help` `ego_doctor` `ego_http` |
 
 > `ego_tabs` 为 0.9.4（master）新增，0.9.3 安装包中为 33 个工具。
@@ -315,7 +320,7 @@ pnpm run build   # tsdown 三 bundle：lib/index.js + lib/client.js + bin/ego-ca
 
 - **Windows**：插件层已做 v0.4.0 适配；底层 ego-lite 宿主仍是非 Windows 官方支持的社区移植，复杂多步流程稳定性可能弱于 macOS。v0.8.7 修复了孤儿 Chrome 占锁（#70），v0.8.8 起崩溃/回收后遗留的孤儿标签会被自动清扫（#67），但强杀/崩溃后的 profile 恢复仍建议非必要不中断浏览器进程。
 - **macOS**：开箱可用（#65/#68 已修，社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72) 已移植）。`darwinChromeCandidates()` 探测 `.app` bundle 内的二进制（Chrome / Chromium / Edge / Brave，含 `~/Applications`），`resolveEgoEnv()` 与 Windows 同构地把结果注入 `EGO_LINUX_CHROME`；headed 路径也不再要求 Xvfb。`isHeadlessDetected` 继续排除 darwin——macOS 的 GUI 是 Aqua/Quartz、永不导出 `$DISPLAY`，把它判成"无头"正是 #16 的回归。实测环境（0.9.2，社区真机）：macOS 27.0.1 arm64 + Chrome 156.0.8078.47（另有 macOS arm64 + Chrome 154 的早期验证），`chromePath` 留空、无 `--headless`，冷启动后 navigate / 截图 / `ego_doctor` 全通。
-- **登录态导入**：v0.8.7 起 `ego_login_import` 定向禁用——**Windows + Chrome/Edge ≥127**（App-Bound Encryption 范围）拒绝（原因见 #69），Linux / macOS / Windows 上 Chrome <127 正常可用；确认环境无风险后用 `EGO_LINUX_LOGIN_IMPORT_FORCE=1` 可在任何环境放行。
+- **登录态导入**：`source=chrome/edge/brave` 的安全复制路径要求源浏览器已关闭，且 Chrome/Edge 127+ 因 ABE 会读到 0 条 cookie 并明确报错（真实 profile 从不被打开/写入）；**现代 Chrome 请使用 `source=extension` 扩展桥接**（浏览器保持打开，无需关闭）。
 - **FFmpeg 平台捕获**：Windows 已使用 `gfxcapture(HWND)`，需要包含该 filter 的新构建；PATH 中的旧 FFmpeg 会被跳过并提示下载兼容版本。Linux 使用 `x11grab`、macOS 使用 `avfoundation` display crop；macOS ScreenCaptureKit、Wayland Portal helper 属后续增强。
 - **安装环境**：本仓库的 DSH peer 包不全在公共 npm registry。普通 `pnpm install` 可能在解析 `@deepseek-ai/*` peer 时失败；DSH profile 安装应提供这些 peer。CDP 不依赖 FFmpeg，也不会在插件安装阶段下载二进制。
 - **快照质量**：Linux 用 CDP `DOMSnapshot` 重建语义树，非 macOS 内核级，复杂 iframe/画布场景可能降级。
