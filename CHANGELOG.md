@@ -2,7 +2,7 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [Unreleased]
+## [0.9.4] - 2026-10-27 — Chrome 风格 UI / 一键登录态 / ego_tabs
 
 ### 新增
 - **Agent 浏览器面板 UI 重做（Chrome 配色）**：移除「需要账号登录时…」引导条；改用 Chrome 调色板（`#f1f3f4` 工具栏、`#202124/#5f6368` 文字、`#1a73e8` 强调，深色模式跟随 `prefers-color-scheme`）；标题栏为浅灰工具区 + 蓝色实心「连接/复用 Chrome 登录态」主按钮；标签栏改为 Chrome 式活动白标签；页面标题/URL 放在标签栏下方；状态改为轻量 dot + 文本 + 执行器 chip；操作按钮改为扁平 ghost 样式（26px 高、4px 圆角、hover/focus 状态）；配对面板为 Chrome 风白色浮层（锚定在页面信息下方）。同时修掉整行 `opacity:.6` 导致按钮发灰的问题。

@@ -14,7 +14,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license MIT"></a>
 </p>
 
-> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.3**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
+> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.4**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
 
 ### 版本兼容矩阵
 
@@ -25,7 +25,7 @@
 | **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、纯文字侧栏面板；缺席时静默跳过，无额外 I/O |
 | **Node.js** | `22` | — | harness 环境自带 |
 
-**DSH 全版本适配说明**：v0.9.3 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
+**DSH 全版本适配说明**：v0.9.4 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
 
 **dsh-better-sidebar 适配说明**：ego-browser 通过 `ctx.betterSidebar` 服务（try-catch 防御性获取）注册侧边栏 Tab 并监听外部链接。关键 API 引入版本：
 
@@ -43,7 +43,7 @@
 
 **登录态导入（v0.8.5 新增；v0.9.4 起 #69 安全重构）**：工具 `ego_login_import` 把你日常 Chrome/Edge/Brave 里的登录 cookie **按域名**复制进 agent 浏览器。现在有两条安全路径：
 
-1. **扩展桥接（推荐，Chrome 保持打开，支持 Chrome 127+ ABE）**：在 Agent 浏览器面板点 **「连接 Chrome 登录态」** → 面板显示 6 位配对码；在 Chrome 的 `chrome://extensions` 开启开发者模式 → **Load unpacked** 选择插件目录下的 `extension/`，打开扩展弹窗输入配对码并点 **Pair**。之后每次只需在面板点 **「复用 Chrome 登录态」**——扩展在后台轮询本地桥接（30 秒内）并自动导出当前网站 cookie，不需要再打开 Chrome UI、不需要手动点 Export，也不需要复制 token。Agent 侧仍可调用 `ego_login_import`（`source: "extension"`，带 `domains`），行为相同。全程不复制 profile、不关闭浏览器、不做离线解密。
+1. **扩展桥接（推荐，Chrome 保持打开，支持 Chrome 127+ ABE）**：在 Agent 浏览器面板点 **「连接 Chrome 登录态」** → 面板显示 6 位配对码；在 Chrome 的 `chrome://extensions` 开启开发者模式 → **Load unpacked** 选择插件目录下的 `extension/`，打开扩展弹窗输入配对码并点 **Pair**。之后每次只需在面板点 **「复用 Chrome 登录态」**——扩展在后台轮询本地桥接（30 秒内）并自动导出当前网站 cookie，不需要再打开 Chrome UI、不需要手动点 Export，也不需要复制 token。Agent 侧仍可调用 `ego_login_import`（`source: "extension"`，带 `domains`），行为相同。全程不复制 profile、不关闭浏览器、不做离线解密。扩展随 npm 包（`extension/`）与 GitHub Release 的 `extension.zip` 分发，安装一次即可。
 2. **安全复制（旧版浏览器 / 已关闭的浏览器）**：只复制 `Local State` + Cookies 数据库到临时目录再用无头浏览器读取；**真实 profile 从不被浏览器打开、也不会被写入**。Chrome/Edge 127+ 的 ABE 绑定原始路径，复制会读到 0 条 cookie，工具会明确报错并提示改用扩展路径。
 
 cookie 值不出现在任何日志与输出中；导入是单次快照。配合磁盘持久化 Profile，导入的登录态跨重启保留。
@@ -64,7 +64,7 @@ cookie 值不出现在任何日志与输出中；导入是单次快照。配合�
 
 ```sh
 # 安装（任选一种；桌面端也可以走 插件 → 添加插件）
-dsh plugin --profile desktop add dsh-ego-browser@0.9.3
+dsh plugin --profile desktop add dsh-ego-browser@0.9.4
 ```
 
 1. 在 DSH 会话里说一句让 agent 用浏览器的话，例如：
@@ -129,6 +129,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.3
 
 ## ✨ 近期亮点
 
+- **v0.9.4**：**Chrome 风格面板**（`#f1f3f4` 工具区、Chrome 式标签、蓝色主按钮、移除登录提示条）；**一键复用 Chrome 登录态**——标题栏「连接 Chrome 登录态」配对一次后，之后点「复用 Chrome 登录态」即可由扩展后台自动导出当前网站 cookie（无需每次开 Chrome UI/点 Export）；**`ego_tabs`**（list / switch / open / close）；**#69 双安全路径**：安全复制（源 profile 永不打开/写入）+ Chrome 扩展桥接（Windows/macOS/Linux 的 Chrome/Edge/Brave 均可），已用真实 Bilibili 21 条 cookie 验证。
 - **v0.9.3**：**侧栏画面不再黑闪**（#81/#82，双缓冲：新帧解码完成才交换，旧帧始终保留）+ **Retina 不再发虚**（采集宽度跟随面板、`ResizeObserver` 防抖重启 watch）；**TUI 侧栏改为纯文字**（不再请求/渲染截图，标签元数据与 `disableFrameRelay` 解耦，选中按 `targetId` 防错位）；**移除悬浮球回退**（官方侧边栏优先，仅保留可选 `dsh-better-sidebar`）；**统一 Agent 浏览器图标**（浏览器窗口 + 光标，侧栏与面板头部一致）；**常驻执行器诊断**（`/api/ego/executor`、面板状态、连续 3 次失败自动停用、`ego_status.resident`）；**登录导入安全范围扩至 Windows + Chrome/Edge ≥127**（#69 fail-closed）；另有 #78 Termux 文档、#79 headless UA 版本探测、#80 `ego_script` page 门面文档、macOS 27 / Chrome 156 复测记录。
 - **v0.9.2**：**macOS 开箱可用**（#65/#68，社区 PR [#72](https://github.com/Fisfzy/dsh-ego-browser/pull/72) 由 @syjnzh918 提供并移植到当前主线）——自动探测 `/Applications` 与 `~/Applications` 下 Chrome / Chromium / Edge / Brave 的 `.app` 内二进制，并像 Windows 一样注入 `EGO_LINUX_CHROME`；headed 路径不再要求 Xvfb（macOS GUI 是 Aqua/Quartz、永不导出 `$DISPLAY`，`isHeadlessDetected` 继续排除 darwin 以保留 #16 的真实窗口能力）。社区真机复测（0.9.2）：**macOS 27.0.1 arm64 + Chrome 156.0.8078.47**（此前另有一次 macOS arm64 + Chrome 154 验证），`chromePath` 留空、无 `--headless`，冷启动 → navigate → 截图 → `ego_doctor` 全通。
 - **v0.9.1**：**观察窗尺寸同步真实窗口**——面板「打开真实页 / 弹出窗口」行新增 **🔒/🔓 尺寸同步** 开关：解锁后拖动侧边栏宽度、或直接拖画面右侧/底部/右下角手柄，会按拖动**增量** 1:1 缩放 agent 浏览器真实窗口；**尺寸预设**（16:9 / 4:3 / 21:9 / 1:1 / 9:16）一键设定窗口比例；页面标题与 URL 移入实时状态栏。**帧链路性能**：按 `cdpFps` 做源端抽帧、采集宽度跟随面板尺寸、窗口隐藏/最小化自动停流、TUI 设置新增「关闭实时画面传输」，实测总 CPU 约减半。**输入与稳定性修复**：窗口缩放后点击坐标不再偏移；拖动缩放不再卡顿；面板先于浏览器打开时 SSE 会自动重连接上。
@@ -162,7 +163,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.3
 **方式 B：命令行（npm，推荐）**：
 
 ```sh
-dsh plugin --profile <profile> add dsh-ego-browser@0.9.3
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.4
 dsh plugin --profile <profile> list                 # 应看到 dsh-ego-browser
 # 升级
 dsh plugin --profile <profile> add dsh-ego-browser@latest
@@ -172,7 +173,7 @@ dsh plugin --profile <profile> add dsh-ego-browser@latest
 
 ```sh
 dsh plugin --profile <profile> add https://github.com/Fisfzy/dsh-ego-browser.git
-dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.3.tgz
+dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.4.tgz
 ```
 
 > **从旧版本升级（DSH Desktop 2.0.5+）**：本插件包名是 **`dsh-ego-browser`**（非 `@dsh-external/ego-browser`）。DSH Desktop 2.0.5 起增加了「profile 依赖名 == 包实际 name」的一致性校验，若 profile 仍用旧名 `@dsh-external/ego-browser` 引用，启动会挂进恢复模式（`profile package identity is invalid for @dsh-external/ego-browser`）。升级到 2.0.5 后请把 profile 的 `package.json` 依赖键 **和** `dsh.profile.bundles` 条目**两处**都改为 `dsh-ego-browser`：
@@ -201,7 +202,7 @@ dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.3.tgz
 
 ```sh
 pkg install chromium            # Termux x11 仓库；约 159 MB deb / 644 MB 安装后
-dsh plugin --profile <profile> add dsh-ego-browser@0.9.3
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.4
 ```
 
 - `chromium-browser` 已在 `COMMON_CHROME_BINS` 中，`ego_doctor` 会自动探测 `/data/data/com.termux/files/usr/bin/chromium-browser`，**无需**设置 `chromePath`
@@ -269,7 +270,7 @@ When the existing metadata response includes `capture`, the panel displays its b
 | 会话/安全 | `ego_auth_flush`（登录落盘） `ego_login_import`（登录态导入：`source=extension` 扩展桥接，或 `chrome/edge/brave` 安全复制） `ego_captcha` `ego_dialog` |
 | 元工具 | `ego_help` `ego_doctor` `ego_http` |
 
-> `ego_tabs` 为 0.9.4（master）新增，0.9.3 安装包中为 33 个工具。
+> `ego_tabs` 为 0.9.4（master）新增，0.9.4 起为 34 个工具。
 
 > 导航/等待语义（v0.8.7）：`ego_wait_for_url` 先比对当前 URL 再等未来导航，结果带 `matchedCurrent`；`ego_wait_for_response` 超时返回结构化 `reached:false`，不再抛错；两个等待都只观察**本次调用期间**的事件——触发动作与等待要放在同一个 `ego_script` 里。`ego_script`/`ego_cli` 的脚本需以 `console.log('@@DSH_RESULT@@' + JSON.stringify({...}))` 结尾（忘记哨兵时会兜底解析最后一行 JSON，并标记 `fallback: true`）。
 
