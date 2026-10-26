@@ -12,6 +12,15 @@ describe("watch panel input and capture status", () => {
     expect((source.match(/keyboardProxy\.focusAt\(e,/g) || []).length).toBe(1);
   });
 
+  it("uses the canonical browser-window glyph for the panel header and sidebar entry", () => {
+    expect(source).toMatch(/const ICON_AGENT_BROWSER = `<svg width="16" height="16" viewBox="0 0 16 16"/);
+    expect(source).toMatch(/__html: ICON_AGENT_BROWSER/);
+    expect(source).not.toMatch(/ICON_GLOBE/);
+    // String form (panel header) + React EgoWatchIcon (sidebar) share geometry.
+    expect((source.match(/M1\.4 5\.9h13\.2/g) || []).length).toBe(2);
+    expect((source.match(/M8\.2 7\.0L12\.6 10\.6/g) || []).length).toBe(2);
+  });
+
   it("does not gate control input on stream state or default missing status to CDP", () => {
     expect(source).not.toMatch(/status\.backend \|\| 'cdp'/);
     expect(source).not.toMatch(/targetValid[^\n]+streamState !== 'streaming'/);

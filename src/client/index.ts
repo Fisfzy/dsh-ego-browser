@@ -1336,12 +1336,14 @@ declare function require(id: string): any
 
 
 		// ── SF-Symbols-style linear icons (inline SVG, zero deps) ──
-		// Each icon carries explicit width/height (scaled from a 24 viewBox)
+		// Each icon carries explicit width/height (scaled from a 16 viewBox)
 		// so it renders at a sane size even if no CSS rule targets it.
-		const ICON_GLOBE = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3c2.5 2.4 3.8 5.4 3.8 9S14.5 18.6 12 21"/><path d="M12 3C9.5 5.4 8.2 8.4 8.2 12s1.3 6.6 3.8 9"/><path d="M3 12h18"/></svg>`;
+		// Canonical Agent Browser glyph (matches the sidebar entry in the official
+		// UI): a rounded browser window with a title bar, two dots and the agent's
+		// cursor. Keep EgoWatchIcon (React) in sync with this exact geometry.
+		const ICON_AGENT_BROWSER = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="1.2" y="2.4" width="13.6" height="11.2" rx="2.4" stroke="currentColor" stroke-width="1.2"/><path d="M1.4 5.9h13.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="3.7" cy="4.15" r="0.6" fill="currentColor"/><circle cx="5.5" cy="4.15" r="0.6" fill="currentColor"/><path d="M8.2 7.0L12.6 10.6L10.6 10.9L11.7 13.2L10.6 13.8L9.5 11.5L8.0 13.1Z" fill="currentColor"/></svg>`;
 		const ICON_REFRESH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4.5V9h-4.5"/></svg>`;
 		const ICON_CLOCK = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/></svg>`;
-		// 6-dot drag grip for the panel's title bar.
 
 		function apply(ctx) {
 			// ── Settings card: register locale + slot (always runs) ──────
@@ -2762,7 +2764,7 @@ declare function require(id: string): any
 			// Header
 			var header = h('div', { className: 'dsh-ego-side-head' },
 				h('span', { className: 'dsh-ego-side-title' },
-					h('span', { dangerouslySetInnerHTML: { __html: ICON_GLOBE } }),
+					h('span', { dangerouslySetInnerHTML: { __html: ICON_AGENT_BROWSER } }),
 					h('span', { style: { marginLeft: '5px' } }, state.busy ? wt('titleLive') : wt('title'))
 				),
 				h('button', {
@@ -3156,11 +3158,12 @@ declare function require(id: string): any
 			return React.createElement(EgoBrowserTab, { visible: visible, ctx: props.ctx })
 		}
 
-		// Sidebar guide glyph: a browser window with the agent's cursor inside.
-		// Self-contained (no import from the host icon set) so the entry can never
-		// fail on a host whose primitives package is not resolvable for this row;
-		// monochrome via currentColor so it follows the guide's own icon colour
-		// like every neighbour. IconProps shape: { size, className }.
+		// Sidebar guide glyph: the canonical Agent Browser icon (browser window +
+		// agent cursor, same geometry as ICON_AGENT_BROWSER above). Self-contained
+		// (no import from the host icon set) so the entry can never fail on a host
+		// whose primitives package is not resolvable for this row; monochrome via
+		// currentColor so it follows the guide's own icon colour like every
+		// neighbour. IconProps shape: { size, className }.
 		function EgoWatchIcon(props) {
 			var size = props && typeof props.size === 'number' ? props.size : 16
 			var h = React.createElement
