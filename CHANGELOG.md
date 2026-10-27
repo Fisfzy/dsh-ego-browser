@@ -2,7 +2,7 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [Unreleased]
+## [0.9.5] - 2026-10-27 — 滚轮修复 / 双缓冲硬化 / PR #83
 
 ### 修复
 - **侧栏滚轮/触控板滚动失效（#81 回归）**：0.9.4 的 wheel 监听绑在条件渲染的语义 `<img>` 上，首帧到达前 `<img>` 不存在，one-shot effect 之后不再重绑。现在监听器挂在**始终存在的 `.dsh-ego-side-stage`** 上（`passive:false`），点击/双击/`Ctrl+滚轮` 行为不变。
