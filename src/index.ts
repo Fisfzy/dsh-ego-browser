@@ -603,6 +603,8 @@ interface EgoRuntimeConfig {
   egoBin: string
   configuredDefaultSpace: string | number
   spaceTracker: ActiveSpaceTracker
+  /** Per-space tab cursor: which tab the previous call acted on. */
+  targetTracker: TargetTracker
   readonly defaultSpace: string | number
   maxOutputBytes: number
   graceMs: number
@@ -622,6 +624,12 @@ interface EgoRuntimeConfig {
   readonly egoCliArgs: string
   readonly idleTimeoutMin: number
   readonly chromeArgs: string
+  /** Fixed CSS viewport width for agent pages. 0 = off (browser window size). */
+  readonly viewportWidth: number
+  /** Fixed CSS viewport height for agent pages. 0 = off (browser window size). */
+  readonly viewportHeight: number
+  /** Device pixel ratio for the fixed viewport. 0 = browser default. */
+  readonly deviceScaleFactor: number
   readonly isolateSpaces: boolean
   readonly disableFrameRelay: boolean
   readonly tuiAutoOpenPanel: boolean
@@ -928,17 +936,186 @@ async function runEgoScript(subprocess: SubprocessService, script: string, exec:
 const useSpace = (name: string | number): string =>
   `const task = await taskSpaces.useOrCreate(${j(name)})\n`
 /**
+ * Optional `tab` parameter shared by every tool that can be pinned to one tab.
+ * Declared at module scope so both registration functions can reuse it.
+ */
+export const tabParam = {
+  type: 'string',
+  description:
+    'Optional tab targetId (from ego_tabs list). Omit to use the tab Chrome reports as active, falling back to the first real page.',
+}
+
+/**
+ * Side-channel line the prelude prints with the target it actually chose.
+ * The host records it per space so the NEXT call — a brand-new process — can
+ * re-pin the same tab. Chrome's own `active` flag is not enough: it resets to
+ * the first tab when the previous CDP client disconnects, so a new process
+ * cannot tell which tab the last call used.
+ */
+const TARGET_MARKER = '@@EGO_TARGET@@'
+
+/** Per-space cursor: the tab the agent last acted on. */
+export interface TargetTracker {
+  get(space: string): string | undefined
+  set(space: string, targetId: string): void
+}
+
+export function createTargetTracker(): TargetTracker {
+  const bySpace = new Map<string, string>()
+  return {
+    get: (space) => bySpace.get(space),
+    set: (space, targetId) => {
+      if (space !== '' && targetId !== '') bySpace.set(space, targetId)
+    },
+  }
+}
+
+/**
+ * The pin the tool wrapper feeds to `ensureRealTab()` for the current
+ * buildScript call. Module-level because buildScript signatures are
+ * (args) => string and every page tool calls the same shared helper.
+ */
+let pendingTargetPin: string | undefined
+
+/** Viewport applied by `ensureRealTab()` for the current buildScript call. */
+let pendingViewport: ViewportSpec | undefined
+
+export interface ViewportSpec {
+  viewportWidth?: number
+  viewportHeight?: number
+  deviceScaleFactor?: number
+}
+
+/** Record the target a finished call actually used. */
+export function recordPinnedTarget(
+  tracker: TargetTracker,
+  space: string,
+  stdout: string,
+): void {
+  const at = stdout.lastIndexOf(TARGET_MARKER)
+  if (at === -1) return
+  const id = stdout.slice(at + TARGET_MARKER.length).split(/\s/)[0]
+  if (id !== undefined && id !== '') tracker.set(space, id)
+}
+
+/** Drop the pin side-channel from stdout returned to the model. */
+export function stripTargetMarkers(text: string): string {
+  if (!text.includes(TARGET_MARKER)) return text
+  return text
+    .split('\n')
+    .filter((line) => !line.includes(TARGET_MARKER))
+    .join('\n')
+}
+
+/**
  * JS snippet that makes the harness act on a real page tab.
  *
- * The Linux host (PR #234 ego-linux) does not reliably persist "current tab"
- * across CLI invocations: a fresh process sometimes resolves page actions
- * against a blank/stale tab. Selecting the first non-blank tab in the space
- * before acting makes cross-process tool calls deterministic.
+ * The Linux host does not persist "current tab" across CLI invocations: every
+ * ego_* call is a fresh process, and Chrome reports the first tab as active
+ * again once the previous CDP client goes away. Selecting a tab before acting
+ * is therefore mandatory for deterministic cross-process behaviour.
+ *
+ * Selection order (first match wins):
+ *  1. an explicit `tab` targetId supplied by the caller,
+ *  2. this space's cursor — the tab the previous call used (self-healing: a
+ *     closed tab no longer matches, so selection falls through),
+ *  3. the tab Chrome reports as active (correct within one process, and for
+ *     a human who just clicked a tab),
+ *  4. the first non-blank page (last-resort fallback).
+ *
+ * Before 0.9.5 there were no steps 1–2 and step 3 did not exist: the prelude
+ * always jumped to the FIRST real tab, silently retargeting every call
+ * whenever more than one tab was open.
+ *
+ * The viewport override is emitted AFTER the switch on purpose: `cdp()` needs
+ * an attached session, and before the first tab exists (a cold browser) there
+ * is nothing to attach to — running it first failed every tool with
+ * "no active tab to attach session".
  */
-const ensureRealTab = (): string =>
-  `const __tabs = await browser.listTabs()\n` +
-  `const __real = __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\n` +
-  `if (__real) await browser.switchTab(__real.targetId)\n`
+export const ensureRealTab = (preferred?: string, viewport?: ViewportSpec): string => {
+  const explicit = preferred !== undefined && preferred !== '' ? preferred : undefined
+  const pin = explicit ?? pendingTargetPin
+  const spec = viewport ?? pendingViewport
+  return (
+    `const __tabs = await browser.listTabs()\n` +
+    `const __want = ${pin !== undefined ? j(pin) : 'null'}\n` +
+    `const __active = __want ? __tabs.find(t => t.targetId === __want) : __tabs.find(t => t.active === true)\n` +
+    `const __real = __active ?? __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\n` +
+    `if (__real) await browser.switchTab(__real.targetId)\n` +
+    `if (__real) console.log('${TARGET_MARKER}' + __real.targetId)\n` +
+    // Guarded: an existing space can be tab-less (every tab closed), and cdp
+    // has no session then. Skip emulation rather than failing the whole call.
+    (spec ? `if (__real) {\n${viewportPrelude(spec)}}\n` : '')
+  )
+}
+
+/**
+ * JS snippet that pins the page viewport with CDP emulation.
+ *
+ * A one-shot `ego-browser nodejs` process dies with the call, and a
+ * session-scoped `Emulation.setDeviceMetricsOverride` dies with it — the next
+ * call starts from the raw window size again. Emitting the override at the
+ * head of every script keeps a configured viewport stable across calls, and
+ * also fixes hosts whose display scaling shrinks the CSS viewport into a
+ * site's mobile breakpoint.
+ */
+export const viewportPrelude = (cfg: {
+  viewportWidth?: number
+  viewportHeight?: number
+  deviceScaleFactor?: number
+}): string => {
+  const width = Math.round(cfg.viewportWidth ?? 0)
+  const height = Math.round(cfg.viewportHeight ?? 0)
+  if (!(width > 0) || !(height > 0)) return ''
+  const scale = cfg.deviceScaleFactor !== undefined && cfg.deviceScaleFactor > 0
+    ? cfg.deviceScaleFactor
+    : 1
+  return (
+    `await cdp('Emulation.setDeviceMetricsOverride', { width: ${width}, height: ${height}, ` +
+    `deviceScaleFactor: ${scale}, mobile: false })\n`
+  )
+}
+
+/**
+ * Prelude for the raw heredoc tools (ego_cli / ego_script).
+ *
+ * These tools do NOT go through buildScript, so before this helper they ran
+ * with no tab selection at all and a fresh process could attach to a stale
+ * target. The prelude restores the same guarantees the structured tools get,
+ * but is wrapped in try/catch: a diagnostic script that never touches `page`
+ * must keep working even when no browser is up.
+ */
+export const rawScriptPrelude = (
+  cfg: { viewportWidth?: number; viewportHeight?: number; deviceScaleFactor?: number },
+  tab: string,
+): string => `try {\n${ensureRealTab(tab, cfg)}} catch {}\n`
+
+/**
+ * selectOption with value → label → index fallback.
+ *
+ * `selectOption` matches option VALUES; a caller passing the visible label
+ * ("Two" for `<option value="2">Two</option>`) used to fail with
+ * `could not find option "Two"` even though the tool documented label support.
+ * Try the value first (cheap, the common case), then the label, then — for a
+ * numeric argument — the index.
+ */
+export const selectOptionScript = (selector: string, value: unknown): string =>
+  `const __sel = ${j(selector)}\n` +
+  `const __v = ${j(value ?? '')}\n` +
+  `const __pick = async (v) => {\n` +
+  `  try { return await page.locator(__sel).selectOption(v) } catch (__e) {\n` +
+  `    if (typeof v === 'string') { try { return await page.locator(__sel).selectOption({ label: v }) } catch {} }\n` +
+  `    if (typeof v === 'number') { try { return await page.locator(__sel).selectOption({ index: v }) } catch {} }\n` +
+  `    throw __e\n` +
+  `  }\n` +
+  `}\n` +
+  `const __list = Array.isArray(__v) ? __v : [__v]\n` +
+  `let __picked = []\n` +
+  `try { __picked = await page.locator(__sel).selectOption(__v) } catch { __picked = [] }\n` +
+  `if (!Array.isArray(__picked) || __picked.length === 0) {\n` +
+  `  for (const __one of __list) { const __r = await __pick(__one); __picked = Array.isArray(__r) ? __r : [__r] }\n` +
+  `}\n` +
+  `console.log('${SENTINEL}' + JSON.stringify({ ok: true, select: __sel, values: __picked }))\n`
 function renderText(_args: unknown, value: unknown): unknown[] {
   const v = value as Record<string, unknown> | null
   if (
@@ -1003,8 +1180,25 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
         // Stale-space recovery (browser restart wiped the space table) is
         // handled inside runWithStaleSpaceRetry; the cold-start retry is one
         // level deeper.
-        const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => opts.buildScript(args))
+        // The tab pin and the viewport are applied around buildScript only,
+        // because both belong to the page tool that is about to run: the pin
+        // is this space's remembered target, and the viewport must be applied
+        // AFTER ensureRealTab() has switched to a tab (cdp has no session
+        // before that). The script reports back the target it actually used.
+        const spaceKey = String(str(args.space, cfg.defaultSpace))
+        const buildScript = () => {
+          pendingTargetPin = cfg.targetTracker.get(spaceKey)
+          pendingViewport = cfg
+          try {
+            return opts.buildScript(args)
+          } finally {
+            pendingTargetPin = undefined
+            pendingViewport = undefined
+          }
+        }
+        const result = await runWithStaleSpaceRetry(ctx, cfg, exec, buildScript)
         if (!result.ok) throw new Error(result.error)
+        recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
         if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
         // Value is JSON.parse output of our own payload — fits the tool JSON contract.
         return result.value
@@ -1064,6 +1258,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
         : DEFAULT_EGO_BIN,
     configuredDefaultSpace: (config.defaultSpace as string | number | undefined) ?? DEFAULT_SPACE,
     spaceTracker,
+    targetTracker: createTargetTracker(),
     get defaultSpace() { return this.spaceTracker.current() },
     maxOutputBytes: (config.maxOutputBytes as number | undefined) ?? DEFAULT_MAX_OUTPUT_BYTES,
     graceMs: (config.graceMs as number | undefined) ?? DEFAULT_GRACE_MS,
@@ -1088,6 +1283,11 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // edits take effect on the next spawn / next browser cold start.
     get egoCliArgs() { return resolveConfig(bridge.source() as RawConfig).egoCliArgs },
     get chromeArgs() { return resolveConfig(bridge.source() as RawConfig).chromeArgs },
+    // Live getters: the viewport prelude is rebuilt for every call, so a GUI
+    // edit takes effect on the next ego_* call without a restart.
+    get viewportWidth() { return resolveConfig(bridge.source() as RawConfig).viewportWidth },
+    get viewportHeight() { return resolveConfig(bridge.source() as RawConfig).viewportHeight },
+    get deviceScaleFactor() { return resolveConfig(bridge.source() as RawConfig).deviceScaleFactor },
     get isolateSpaces() { return resolveConfig(bridge.source() as RawConfig).isolateSpaces },
     get idleTimeoutMin() { return resolveConfig(bridge.source() as RawConfig).idleTimeoutMin },
     // Live getter: cast-server reads this on EVERY /api/ego/* request, so the
@@ -1747,6 +1947,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           type: 'number',
           description: 'Load wait timeout in ms (default 20000).',
         },
+        tab: tabParam,
         space: spaceParam,
       },
       buildScript: (args) => {
@@ -1764,7 +1965,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         // navigate the active tab so we don't pile up tabs.
         // NOTE: ensureRealTab() already declares `__tabs`, so reuse it.
         return (
-          `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
+          `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab(str(args.tab, ''))}` +
           `const __existing = __tabs.find(t => t.url.split('#')[0] === ${j(
             u.split('#')[0],
           )})\n` +
@@ -2014,6 +2215,13 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         }
         if (action !== 'list') return `${space}console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(`unknown action: ${action}`)} }))\n`
         return `${space}${done('')}`
+      },
+      // Tab switches must move the per-space cursor too, otherwise the next
+      // page tool would re-pin the tab this call just left.
+      afterExecute: (args, value) => {
+        const v = value as { switched?: unknown; created?: unknown } | null
+        const target = str(v?.switched, '') || str(v?.created, '')
+        if (target !== '') cfg.targetTracker.set(String(str(args.space, cfg.defaultSpace)), target)
       },
     }),
   )
@@ -2303,12 +2511,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       },
       buildScript: (args) =>
         `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
-        `await page.locator(${j(str(args.selector, ''))}).selectOption(${j(
-          args.value ?? '',
-        )})\n` +
-        `console.log('${SENTINEL}' + JSON.stringify({ ok: true, select: ${j(
-          str(args.selector, ''),
-        )} }))\n`,
+        selectOptionScript(str(args.selector, ''), args.value ?? ''),
     }),
   )
   reg(
@@ -2575,6 +2778,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             description:
               "Full JS script body for the heredoc; ego-browser helpers are preloaded. End with console.log('@@DSH_RESULT@@' + JSON.stringify({...})) — the literal @@DSH_RESULT@@ sentinel is required. (A trailing plain JSON line is accepted as a fallback, with result.fallback=true.)",
           },
+          tab: tabParam,
         },
         output: {
           schema: {
@@ -2592,12 +2796,16 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
           markEgoToolCall(callingSessionId(exec))
-          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => str(args.script, ''))
+          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
+            rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''),
+          )
           if (!result.ok) throw new Error(result.error)
-          const parsed = parseSentinel(result.stdout)
+          recordPinnedTarget(cfg.targetTracker, String(cfg.defaultSpace), result.stdout)
+          const stdout = stripTargetMarkers(result.stdout)
+          const parsed = parseSentinel(stdout)
           return {
             ok: true,
-            stdout: result.stdout,
+            stdout,
             stderr: result.stderr,
             // result.value carries the plugin's fallback (last JSON line) when
             // the script forgot the sentinel — keep it visible here too (#71).
@@ -2794,6 +3002,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
               "Full JS script body; end with console.log('@@DSH_RESULT@@' + JSON.stringify({...})) — the literal @@DSH_RESULT@@ sentinel is required. (A trailing plain JSON line is accepted as a fallback, with result.fallback=true.)",
           },
           timeoutMs: { type: 'integer', description: 'Per-run timeout in ms (default plugin grace).' },
+          tab: tabParam,
         },
         output: {
           schema: {
@@ -2821,14 +3030,24 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
               ? args.timeoutMs
               : undefined
           const start = Date.now()
-          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => str(args.script, ''), timeoutMs)
+          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
+            rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''), timeoutMs)
           const durationMs = Date.now() - start
           if (!result.ok)
-            return { ok: false, stdout: result.stdout, stderr: result.stderr, durationMs, timedOut: false, error: result.error }
-          const parsed = parseSentinel(result.stdout)
+            return {
+              ok: false,
+              stdout: stripTargetMarkers(result.stdout),
+              stderr: result.stderr,
+              durationMs,
+              timedOut: false,
+              error: result.error,
+            }
+          recordPinnedTarget(cfg.targetTracker, String(cfg.defaultSpace), result.stdout)
+          const stdout = stripTargetMarkers(result.stdout)
+          const parsed = parseSentinel(stdout)
           return {
             ok: true,
-            stdout: result.stdout,
+            stdout,
             stderr: result.stderr,
             // result.value carries the plugin's fallback (last JSON line) when
             // the script forgot the sentinel — keep it visible here too (#71).

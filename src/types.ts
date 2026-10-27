@@ -151,6 +151,12 @@ export interface ResolvedConfig {
   githubMirror: string
   egoCliArgs: string
   chromeArgs: string
+  /** Fixed CSS viewport width applied to every agent page via CDP emulation. 0 = off. */
+  viewportWidth: number
+  /** Fixed CSS viewport height applied to every agent page via CDP emulation. 0 = off. */
+  viewportHeight: number
+  /** Device pixel ratio for the fixed viewport. 0 = the browser's own. */
+  deviceScaleFactor: number
 }
 
 /** Raw composition-layer config (may contain legacy / extra keys). */

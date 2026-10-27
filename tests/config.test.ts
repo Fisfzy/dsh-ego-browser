@@ -9,6 +9,7 @@ describe("dual capture config", () => {
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
       residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
+      viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
     });
   });
 
@@ -19,6 +20,7 @@ describe("dual capture config", () => {
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, idleTimeoutMin: 0, disableFrameRelay: false,
       residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
+      viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
     });
     expect(resolveConfig({ cdpFps: 15, castFpsCap: 30 }).cdpFps).toBe(15);
   });

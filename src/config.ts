@@ -43,6 +43,12 @@ const prefs = {
   // control flags are stripped (see EGO_CLI_BLOCKED / CHROME_BLOCKED below).
   egoCliArgs: z.string().description('Extra args appended to `ego-browser nodejs` argv. Takes effect on the next ego_* call.'),
   chromeArgs: z.string().description('Extra args appended to the Chrome launch argv. Takes effect on the next browser cold start (the browser is a singleton).'),
+  // Fixed viewport (issue: HiDPI hosts shrink the CSS viewport, so sites serve
+  // their collapsed mobile layout). Applied with CDP emulation on every call,
+  // because a one-shot ego process cannot keep an override alive by itself.
+  viewportWidth: z.number().min(0).max(3840).step(10).description('Fixed CSS viewport width for agent pages, e.g. 1440. 0 = use the browser window size.'),
+  viewportHeight: z.number().min(0).max(2160).step(10).description('Fixed CSS viewport height for agent pages, e.g. 900. 0 = use the browser window size.'),
+  deviceScaleFactor: z.number().min(0).max(4).step(0.25).description('Device pixel ratio for the fixed viewport. 0 = the browser default.'),
 }
 
 // `.volatile()` RETURNS A COPY (like `extra()`), so the marked schemas must be
@@ -256,6 +262,11 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     // so a saved value is not silently mutated by a later blocklist change.
     egoCliArgs: typeof config.egoCliArgs === 'string' ? config.egoCliArgs : '',
     chromeArgs: typeof config.chromeArgs === 'string' ? config.chromeArgs : '',
+    // 0 = leave the browser's own viewport untouched (previous behavior). Both
+    // dimensions must be non-zero before the emulation prelude is emitted.
+    viewportWidth: finiteIn(config.viewportWidth, 0, 3840) ? config.viewportWidth : 0,
+    viewportHeight: finiteIn(config.viewportHeight, 0, 2160) ? config.viewportHeight : 0,
+    deviceScaleFactor: finiteIn(config.deviceScaleFactor, 0, 4) ? config.deviceScaleFactor : 0,
     isolateSpaces: typeof config.isolateSpaces === 'boolean' ? config.isolateSpaces : config.isolateSpaces === 'true' || config.isolateSpaces === '1' || config.isolateSpaces === 1,
     idleTimeoutMin: finiteIn(config.idleTimeoutMin, 0, 1440) ? config.idleTimeoutMin : 0,
     // Default false (= frame relay ON, unchanged behavior); the switch is opt-in.
