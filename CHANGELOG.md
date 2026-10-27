@@ -2,6 +2,23 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.6] - 2026-10-27 — 标签页定向 / 固定视口 / 下拉按标签回退
+
+### 修复
+- **多标签时悄悄操作错误的标签页**：`ensureRealTab()` 每次都跳到**第一个**非 blank 标签（而 `browser.switchTab` 会真的 `Target.activateTarget`），所以只要开了第二个标签，之后所有结构化 `ego_*` 调用都会被抢到标签 #1；`ego_script` / `ego_cli` 则完全不走 `buildScript`，一次性的新进程会按运行时默认目标附着，同样可能落在错误的页面上。现在：
+  - 结构化工具的标签选择顺序改为 **显式 `tab` → Chrome 报告的 active 标签 → 第一个真实页**；
+  - `ego_script` / `ego_cli` 补上与结构化工具一致的前置（包在 `try { } catch { }` 里，纯诊断脚本即使没有浏览器也照旧可跑），并新增可选 `tab` 参数；
+  - `ego_navigate` 同样接受 `tab`，可把导航钉在指定标签上。
+- **`ego_select` 不支持可见标签文本**：工具文档写的是 value / label / index，实际把参数原样交给 `selectOption`（只按 option 的 value 匹配），传可见文本（例如 `<option value="2">Two</option>` 的 `"Two"`）会报 `could not find option "Two"`。现在按 **value → label → index** 依次回退，并在返回里带上实际选中的 `values`。
+
+### 新增
+- **冷启动修复**：视口 override 必须在 `ensureRealTab()` 选中标签**之后**执行（`cdp()` 需要已 attach 的 session）；最初把它放在脚本最前面，导致冷启动（浏览器还没有任何标签）时每个工具都报 `no active tab to attach session`。现在 override 挪到 switch 之后，并用 `if (__real)` 包裹（space 存在但标签全关时跳过 emulation，而不是让整个调用失败）。
+- **固定视口设置（`viewportWidth` / `viewportHeight` / `deviceScaleFactor`）**：HiDPI 主机（例如 Hyprland `scale=1.6`）上 CSS 视口只有约 780px，站点会直接给折叠的移动版布局；隐藏的输入框还会让 `ego_fill` "成功"却什么都没写。新设置通过 CDP `Emulation.setDeviceMetricsOverride` 在**每次调用脚本开头重放**（一次性进程无法让 override 跨调用存活，常驻执行器下同理），宽高都 >0 才生效，默认 0 = 保持旧行为。三个字段都是 live getter，GUI 改动在下一次调用生效。
+
+### 测试
+- 新增 `tests/tab-and-viewport.test.ts`（16 项）：标签优先级与显式 target、视口 prelude 的开关/取整/默认 DPR、heredoc 前置的异常包裹、`ego_select` 回退顺序、视口配置解析与越界回退。
+- `tests/config.test.ts` 的 canonical 形状断言补上三个新字段。
+
 ## [0.9.4] - 2026-10-27 — Chrome 风格 UI / 一键登录态 / ego_tabs
 
 ### 新增
