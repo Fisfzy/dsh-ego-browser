@@ -38,3 +38,10 @@
   若改探针特征，两处都要同步。
 - **同步提醒**：`lib/config.js` 的 `tokenizeArgs`/`filterArgs`/`CHROME_BLOCKED` 与 `runtime/ego-linux/src/chrome.mjs` 的 `tokenizeArgs`/`filterChromeArgs`/`CHROME_BLOCKED` 是镜像副本（runtime 不 import lib/）——改一处必须同步另一处。
 - 若要跟进 ego-lite 上游，重点 diff 上表的 cursor.mjs；其余文件可直接与上游对齐。
+
+## 2026-10-28 — waitForResponse: honour glob string matchers
+
+`networkMatches()` compared string matchers with `===`, so the documented glob
+form (`**/api/stories`) never matched — every glob wait timed out even though
+the events were present in the buffer. Exact URLs still work as before; strings
+containing `*` now go through the same `globToRegExp` helper as `waitForURL`.

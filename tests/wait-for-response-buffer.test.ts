@@ -61,3 +61,14 @@ describe('ego_wait_for_response opt-in', () => {
     expect(pluginSource).toContain('bool(args.includeBuffered, true)')
   })
 })
+
+describe('glob matchers', () => {
+  it('routes strings containing * through globToRegExp', () => {
+    expect(runtime).toContain('matcher.includes("*")')
+    expect(runtime).toContain('globToRegExp(matcher).test(facade.url())')
+  })
+
+  it('keeps exact-URL matching for plain strings', () => {
+    expect(runtime).toContain('return facade.url() === matcher;')
+  })
+})

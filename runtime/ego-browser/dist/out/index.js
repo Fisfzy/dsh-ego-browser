@@ -2724,6 +2724,12 @@ function processNetworkEvent(kind, matcher, event, requests, timeout) {
 }
 function networkMatches(facade, matcher, kind) {
     if (typeof matcher === "string") {
+        // Playwright semantics: a string without wildcards is an exact URL; a
+        // glob ("**/api/stories") must be matched as a glob, like waitForURL.
+        // Exact-only matching made every documented glob wait time out.
+        if (matcher.includes("*")) {
+            return globToRegExp(matcher).test(facade.url());
+        }
         return facade.url() === matcher;
     }
     if (matcher instanceof RegExp) {
