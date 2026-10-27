@@ -141,13 +141,90 @@ export function createActiveSpaceTracker(defaultSpace: string | number = DEFAULT
   }
 }
 
+/**
+ * The session whose tool call is currently being prepared. Set for the whole
+ * `execute` of a tool (buildScript runs synchronously inside it), so the space
+ * tracker can answer "what is THIS session's default space?" without threading
+ * a parameter through 30 buildScript closures.
+ */
+let pendingSessionId: string | undefined
+
+/** The session id a tool call belongs to (undefined for host-initiated runs). */
+export function currentSessionId(): string | undefined {
+  return pendingSessionId
+}
+
+/**
+ * Per-session default space name.
+ *
+ * Two DSH sessions (or two subagents) that both omit `space` used to share one
+ * task space — and therefore one tab set and one cursor — so they stole each
+ * other's pages. With session-scoped spaces each session gets its own space
+ * (`dsh-agent-<sid8>`), hence its own browser context and window.
+ */
+export function spaceNameForSession(
+  sessionId: string | undefined,
+  baseDefault: string | number,
+  scoped: boolean,
+): string | number {
+  if (!scoped || sessionId === undefined || sessionId === '') return baseDefault
+  const short = String(sessionId)
+    .replace(/^session-/, '')
+    .replace(/[^A-Za-z0-9_-]/g, '')
+    .slice(0, 8)
+  if (short === '') return baseDefault
+  return `${String(baseDefault)}-${short}`
+}
+
+/**
+ * Cursor key for the tab tracker. The session is part of the key so two
+ * sessions sharing one space (session scoping off) still keep their own tab.
+ */
+export function scopedTargetKey(sessionId: string | undefined, space: string | number): string {
+  return `${sessionId ?? ''}\u0000${String(space)}`
+}
+
+export interface SessionScopedSpaceTracker extends ActiveSpaceTracker {
+  forSession(sessionId: string | undefined): ActiveSpaceTracker
+}
+
+/**
+ * A space tracker per DSH session, lazily created.
+ *
+ * `isScoped` is a live getter: the setting can be flipped without rebuilding
+ * the tracker map, and existing sessions keep the space they already selected.
+ */
+export function createSessionScopedSpaceTracker(
+  baseDefault: string | number = DEFAULT_SPACE,
+  isScoped: () => boolean = () => true,
+): SessionScopedSpaceTracker {
+  const bySession = new Map<string, ActiveSpaceTracker>()
+  const trackerFor = (sessionId: string | undefined): ActiveSpaceTracker => {
+    const key = sessionId ?? ''
+    let tracker = bySession.get(key)
+    if (tracker === undefined) {
+      tracker = createActiveSpaceTracker(
+        spaceNameForSession(sessionId, baseDefault, isScoped()),
+      )
+      bySession.set(key, tracker)
+    }
+    return tracker
+  }
+  return {
+    forSession: trackerFor,
+    current: () => trackerFor(pendingSessionId).current(),
+    opened: (args, result) => trackerFor(pendingSessionId).opened(args, result),
+    selected: (space) => trackerFor(pendingSessionId).selected(space),
+    closed: (space, done) => trackerFor(pendingSessionId).closed(space, done),
+    resetToName: () => trackerFor(pendingSessionId).resetToName(),
+  }
+}
+
 // ── serialization ───────────────────────────────────────────────────────────
 /**
  * The ego-lite host is a single persistent browser shared by every tool call;
  * concurrent tool executions would race on the same task space / tabs. All
- * ego_* executions are therefore serialized through one in-process lock. This
- * guards against concurrent tool calls within this plugin instance; separate
- * harness sessions sharing the same browser remain unsupported (host-level).
+ * ego_* executions are therefore serialized through one in-process lock.
  */
 let egoLockChain: Promise<unknown> = Promise.resolve()
 function withEgoLock<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -602,9 +679,11 @@ interface EgoRuntimeConfig {
   observeTool?: <T>(name: string, args: Record<string, unknown>, run: () => Promise<T> | T) => Promise<T>
   egoBin: string
   configuredDefaultSpace: string | number
-  spaceTracker: ActiveSpaceTracker
+  spaceTracker: SessionScopedSpaceTracker
   /** Per-space tab cursor: which tab the previous call acted on. */
   targetTracker: TargetTracker
+  /** True = each DSH session gets its own task space. */
+  readonly sessionScopedSpaces: boolean
   readonly defaultSpace: string | number
   maxOutputBytes: number
   graceMs: number
@@ -1171,37 +1250,45 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
     timeoutMs: TOOL_TIMEOUT_MS,
     execute: async (args: Record<string, unknown>, exec: ToolExec) =>
       withEgoLock(() => observeEgoTool(cfg, opts.name, args, async () => {
-        // Signal the client to auto-open the sidebar Tab on the first ego_*
-        // tool call. markEgoToolCall() bumps a host-side counter surfaced via
-        // /api/ego/spaces; the LivePreviewController transitions on 0 → >0 and
-        // calls betterSidebar.openTab(). Idempotent: the client's transition
-        // guard means only the first call per session opens the Tab.
-        markEgoToolCall(callingSessionId(exec))
-        // Stale-space recovery (browser restart wiped the space table) is
-        // handled inside runWithStaleSpaceRetry; the cold-start retry is one
-        // level deeper.
-        // The tab pin and the viewport are applied around buildScript only,
-        // because both belong to the page tool that is about to run: the pin
-        // is this space's remembered target, and the viewport must be applied
-        // AFTER ensureRealTab() has switched to a tab (cdp has no session
-        // before that). The script reports back the target it actually used.
-        const spaceKey = String(str(args.space, cfg.defaultSpace))
-        const buildScript = () => {
-          pendingTargetPin = cfg.targetTracker.get(spaceKey)
-          pendingViewport = cfg
-          try {
-            return opts.buildScript(args)
-          } finally {
-            pendingTargetPin = undefined
-            pendingViewport = undefined
+        // Scope the whole call to its session: space resolution, the tab
+        // cursor and afterExecute hooks all read pendingSessionId.
+        const sessionId = callingSessionId(exec)
+        pendingSessionId = sessionId
+        try {
+          // Signal the client to auto-open the sidebar Tab on the first ego_*
+          // tool call. markEgoToolCall() bumps a host-side counter surfaced via
+          // /api/ego/spaces; the LivePreviewController transitions on 0 → >0 and
+          // calls betterSidebar.openTab(). Idempotent: the client's transition
+          // guard means only the first call per session opens the Tab.
+          markEgoToolCall(sessionId)
+          // Stale-space recovery (browser restart wiped the space table) is
+          // handled inside runWithStaleSpaceRetry; the cold-start retry is one
+          // level deeper.
+          // The tab pin and the viewport are applied around buildScript only,
+          // because both belong to the page tool that is about to run: the pin
+          // is this space's remembered target, and the viewport must be applied
+          // AFTER ensureRealTab() has switched to a tab (cdp has no session
+          // before that). The script reports back the target it actually used.
+          const spaceKey = scopedTargetKey(sessionId, str(args.space, cfg.defaultSpace))
+          const buildScript = () => {
+            pendingTargetPin = cfg.targetTracker.get(spaceKey)
+            pendingViewport = cfg
+            try {
+              return opts.buildScript(args)
+            } finally {
+              pendingTargetPin = undefined
+              pendingViewport = undefined
+            }
           }
+          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, buildScript)
+          if (!result.ok) throw new Error(result.error)
+          recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
+          if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
+          // Value is JSON.parse output of our own payload — fits the tool JSON contract.
+          return result.value
+        } finally {
+          pendingSessionId = undefined
         }
-        const result = await runWithStaleSpaceRetry(ctx, cfg, exec, buildScript)
-        if (!result.ok) throw new Error(result.error)
-        recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
-        if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
-        // Value is JSON.parse output of our own payload — fits the tool JSON contract.
-        return result.value
       })),
     presentCall: (args: unknown) => ({
       card: 'generic',
@@ -1250,7 +1337,13 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     /* ignore */
   })
 
-  const spaceTracker = createActiveSpaceTracker((config.defaultSpace as string | number | undefined) ?? DEFAULT_SPACE)
+  // One tracker per DSH session (lazily). The scope flag is read live, so the
+  // setting can be flipped without rebuilding anything; a session that already
+  // selected a space keeps it.
+  const spaceTracker = createSessionScopedSpaceTracker(
+    (config.defaultSpace as string | number | undefined) ?? DEFAULT_SPACE,
+    () => resolveConfig(bridge.source() as RawConfig).sessionScopedSpaces,
+  )
   const cfg: EgoRuntimeConfig = {
     egoBin:
       typeof config.egoBin === 'string' && config.egoBin !== ''
@@ -1289,6 +1382,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     get viewportHeight() { return resolveConfig(bridge.source() as RawConfig).viewportHeight },
     get deviceScaleFactor() { return resolveConfig(bridge.source() as RawConfig).deviceScaleFactor },
     get isolateSpaces() { return resolveConfig(bridge.source() as RawConfig).isolateSpaces },
+    get sessionScopedSpaces() { return resolveConfig(bridge.source() as RawConfig).sessionScopedSpaces },
     get idleTimeoutMin() { return resolveConfig(bridge.source() as RawConfig).idleTimeoutMin },
     // Live getter: cast-server reads this on EVERY /api/ego/* request, so the
     // settings card toggle takes effect without a host restart.
@@ -1835,7 +1929,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   const spaceParam = {
     type: 'string',
     description:
-      'Task-space name or numeric id; defaults to the most recently opened or explicitly selected space.',
+      'Task-space name or numeric id. Omit to use this session’s own space (dsh-agent-<session>) when session-scoped spaces are on (default), otherwise the most recently opened or explicitly selected space.',
   }
   reg(
     t({
@@ -2221,7 +2315,12 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       afterExecute: (args, value) => {
         const v = value as { switched?: unknown; created?: unknown } | null
         const target = str(v?.switched, '') || str(v?.created, '')
-        if (target !== '') cfg.targetTracker.set(String(str(args.space, cfg.defaultSpace)), target)
+        if (target !== '') {
+          cfg.targetTracker.set(
+            scopedTargetKey(currentSessionId(), str(args.space, cfg.defaultSpace)),
+            target,
+          )
+        }
       },
     }),
   )
@@ -2795,21 +2894,31 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         },
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
-          markEgoToolCall(callingSessionId(exec))
-          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
-            rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''),
-          )
-          if (!result.ok) throw new Error(result.error)
-          recordPinnedTarget(cfg.targetTracker, String(cfg.defaultSpace), result.stdout)
-          const stdout = stripTargetMarkers(result.stdout)
-          const parsed = parseSentinel(stdout)
-          return {
-            ok: true,
-            stdout,
-            stderr: result.stderr,
-            // result.value carries the plugin's fallback (last JSON line) when
-            // the script forgot the sentinel — keep it visible here too (#71).
-            result: parsed ?? result.value ?? null,
+          const sessionId = callingSessionId(exec)
+          pendingSessionId = sessionId
+          try {
+            markEgoToolCall(sessionId)
+            const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
+              rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''),
+            )
+            if (!result.ok) throw new Error(result.error)
+            recordPinnedTarget(
+              cfg.targetTracker,
+              scopedTargetKey(sessionId, cfg.defaultSpace),
+              result.stdout,
+            )
+            const stdout = stripTargetMarkers(result.stdout)
+            const parsed = parseSentinel(stdout)
+            return {
+              ok: true,
+              stdout,
+              stderr: result.stderr,
+              // result.value carries the plugin's fallback (last JSON line) when
+              // the script forgot the sentinel — keep it visible here too (#71).
+              result: parsed ?? result.value ?? null,
+            }
+          } finally {
+            pendingSessionId = undefined
           }
         },
         presentCall: (args: unknown) => ({
@@ -3022,38 +3131,48 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         },
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
-          markEgoToolCall(callingSessionId(exec))
-          // Honor the documented per-run timeout override (integer ms). Falls
-          // back to the plugin's default grace when absent/invalid.
-          const timeoutMs =
-            typeof args.timeoutMs === 'number' && Number.isFinite(args.timeoutMs) && args.timeoutMs > 0
-              ? args.timeoutMs
-              : undefined
-          const start = Date.now()
-          const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
-            rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''), timeoutMs)
-          const durationMs = Date.now() - start
-          if (!result.ok)
+          const sessionId = callingSessionId(exec)
+          pendingSessionId = sessionId
+          try {
+            markEgoToolCall(sessionId)
+            // Honor the documented per-run timeout override (integer ms). Falls
+            // back to the plugin's default grace when absent/invalid.
+            const timeoutMs =
+              typeof args.timeoutMs === 'number' && Number.isFinite(args.timeoutMs) && args.timeoutMs > 0
+                ? args.timeoutMs
+                : undefined
+            const start = Date.now()
+            const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
+              rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''), timeoutMs)
+            const durationMs = Date.now() - start
+            if (!result.ok)
+              return {
+                ok: false,
+                stdout: stripTargetMarkers(result.stdout),
+                stderr: result.stderr,
+                durationMs,
+                timedOut: false,
+                error: result.error,
+              }
+            recordPinnedTarget(
+              cfg.targetTracker,
+              scopedTargetKey(sessionId, cfg.defaultSpace),
+              result.stdout,
+            )
+            const stdout = stripTargetMarkers(result.stdout)
+            const parsed = parseSentinel(stdout)
             return {
-              ok: false,
-              stdout: stripTargetMarkers(result.stdout),
+              ok: true,
+              stdout,
               stderr: result.stderr,
+              // result.value carries the plugin's fallback (last JSON line) when
+              // the script forgot the sentinel — keep it visible here too (#71).
+              result: parsed ?? result.value ?? null,
               durationMs,
               timedOut: false,
-              error: result.error,
             }
-          recordPinnedTarget(cfg.targetTracker, String(cfg.defaultSpace), result.stdout)
-          const stdout = stripTargetMarkers(result.stdout)
-          const parsed = parseSentinel(stdout)
-          return {
-            ok: true,
-            stdout,
-            stderr: result.stderr,
-            // result.value carries the plugin's fallback (last JSON line) when
-            // the script forgot the sentinel — keep it visible here too (#71).
-            result: parsed ?? result.value ?? null,
-            durationMs,
-            timedOut: false,
+          } finally {
+            pendingSessionId = undefined
           }
         },
         presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_script', args), kind: 'other', rawInput: null }),

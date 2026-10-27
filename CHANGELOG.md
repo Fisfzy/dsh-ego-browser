@@ -2,6 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.7] - 2026-10-27 — 会话级任务空间
+
+### 新增
+- **每个 DSH 会话一个独立任务空间（`sessionScopedSpaces`，默认开）**：此前所有会话共用一个 `dsh-agent` 空间——两个会话（或主代理 + 子代理）同时浏览时会互相抢标签，标签游标也会互相覆盖（即便修好标签定向，仍会跨会话漂移）。现在省略 `space` 时按会话派生空间名（`dsh-agent-<sid8>`），每个会话有自己的 browser context / 窗口 / 标签集与游标；显式传 `space` 仍可共用。设置关闭后回到单一共享空间。
+- **标签游标按会话分键**（`scopedTargetKey`）：即使两个会话共用同一空间（作用域关闭），它们也各记各的当前标签，不会互相改道。
+- **空间解析按会话惰性创建**：`createSessionScopedSpaceTracker` 为每个会话维护独立的 `ActiveSpaceTracker`，显式 `ego_space_open` / `ego_space_close` 只影响本会话；`sessionScopedSpaces` 是 live getter，改设置后新会话立即按新策略，已选空间的会话保持不变。
+
+### 兼容性
+- 升级后首次调用会打开一个新窗口（新空间），旧 `dsh-agent` 空间里的标签不会自动迁移；要继续用旧空间，显式传 `space: "dsh-agent"`，或把 `sessionScopedSpaces` 关掉。
+
+### 测试
+- 新增 `tests/session-scoped-spaces.test.ts`（13 项）：空间名派生与清洗、跨会话隔离、显式选择互不影响、关闭作用域后回退共享、游标键按会话区分、配置默认值与显式关闭。
+
+## [0.9.7] - 2026-10-27 — 等待响应：回放已完成请求 / 缓存自解释
 ## [0.9.5] - 2026-10-27 — 滚轮修复 / 双缓冲硬化 / PR #83
 
 ### 修复

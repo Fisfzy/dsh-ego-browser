@@ -22,6 +22,7 @@ const encoder = z.union([
 const prefs = {
   tuiAutoOpenPanel: z.boolean().description('Open the TUI Agent Browser panel on the first ego_* call. Default off; activity still appears in the badge and status.'),
   isolateSpaces: z.boolean().description('Space isolation: false = persistent profile (keep logins across restarts); true = isolated sandbox.'),
+  sessionScopedSpaces: z.boolean().description('Give each DSH session its own task space (dsh-agent-<session>) so concurrent sessions and subagents do not share tabs or steal each other\'s active tab. Off = one shared space.'),
   idleTimeoutMin: z.number().min(0).max(1440).step(1).description('Auto-stop the backing browser after N minutes without an ego_* call (0 = off). Relaunches on demand at the next call.'),
   disableFrameRelay: z.boolean().description('Disable the live frame relay (watch panel): no ego-cast worker, no screencast capture and no /api/ego stream routes. ego_* tools keep working.'),
   residentExecutor: z.boolean().description('Reuse one resident `ego-browser --serve` process across ego_* calls: the first call pays startup, later calls skip it (~16ms). Off = spawn per call. A dead resident falls back to a fresh spawn automatically.'),
@@ -268,6 +269,11 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     viewportHeight: finiteIn(config.viewportHeight, 0, 2160) ? config.viewportHeight : 0,
     deviceScaleFactor: finiteIn(config.deviceScaleFactor, 0, 4) ? config.deviceScaleFactor : 0,
     isolateSpaces: typeof config.isolateSpaces === 'boolean' ? config.isolateSpaces : config.isolateSpaces === 'true' || config.isolateSpaces === '1' || config.isolateSpaces === 1,
+    // Default true: two sessions silently sharing one space was the root of
+    // cross-session tab theft. Explicit opt-out keeps the old shared space.
+    sessionScopedSpaces: typeof config.sessionScopedSpaces === 'boolean'
+      ? config.sessionScopedSpaces
+      : !(config.sessionScopedSpaces === 'false' || config.sessionScopedSpaces === '0' || config.sessionScopedSpaces === 0),
     idleTimeoutMin: finiteIn(config.idleTimeoutMin, 0, 1440) ? config.idleTimeoutMin : 0,
     // Default false (= frame relay ON, unchanged behavior); the switch is opt-in.
     disableFrameRelay: typeof config.disableFrameRelay === 'boolean' ? config.disableFrameRelay : config.disableFrameRelay === 'true' || config.disableFrameRelay === '1' || config.disableFrameRelay === 1,

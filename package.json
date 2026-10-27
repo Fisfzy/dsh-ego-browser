@@ -1,6 +1,6 @@
 {
   "name": "dsh-ego-browser",
-  "version": "0.9.5",
+  "version": "0.9.7",
   "description": "ego-browser (ego-lite) integration plugin for DSH: structured browser-automation tools (34 ego_*) that drive the vendored ego runtime through ctx.subprocess, plus a realtime watch panel (live SSE screencast + direct mouse interaction + download capture + human-verification notice). Web shell: native right sidebar tab (dsh-better-sidebar fallback; no floating panel). TUI hosts (optional services): settings page, activity status bar, text-only side panel. Login import: Chrome extension bridge (modern Chrome/Edge) or non-destructive profile copy. Headless hosts: tools-only. [0.1.2-rc.1: verified compatible with DSH v0.1.2-rc.1 and v0.1.3-alpha.1]",
   "type": "module",
   "main": "./lib/index.js",
