@@ -2,6 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.6] - 2026-10-27 — 等待响应：回放已完成请求 / 缓存自解释
+
+### 修复
+- **`ego_wait_for_response` 看不到"已经完成"的响应**：运行时只在等待期间启用 Network 域，且只监听**未来**事件——典型场景（`page.goto()` 之后再等那次文档响应）永远匹配不到，只能干等到超时。现在：
+  - 会话 attach 时即启用 `Network.enable`（导航期间的请求因此也会被记录），并且等待结束后**不再关闭**该域，全局事件缓冲得以保留整段导航；
+  - `waitForResponse` 在等待前先**回放缓冲**：窗口从当前文档的 `Network.requestWillBeSent` 开始——该事件早于 `Page.frameNavigated`，所以不能简单地"从 frameNavigated 之后切片"（第一版就是这么错的，真机上文档响应始终匹配不到，已修正）；
+  - 新增 `includeBuffered` 选项（**默认 true**）回放当前文档已完成的请求；传 `false` 可回到 Playwright 的严格"只看未来"语义；
+  - 超时时若命中的请求由缓存提供（`Network.requestServedFromCache`，不产生网络往返），错误信息会列出具体 URL 并提示加 cache-busting 查询，而不是一句莫名的 timeout。
+- **`ego_wait_for_response` 工具**：新增 `includeBuffered` 参数（默认 true），超时 hint 补充缓存说明与"请求与等待需在同一 `ego_script`"的边界。
+
+### 测试
+- 新增 `tests/wait-for-response-buffer.test.ts`（6 项）：Network 域的启用时机、等待结束后不关闭、回放窗口包含文档请求、缓存提示文案、插件侧默认传参。
+- 真机验证（repo 运行时 + 真实 Chrome）：`page.goto()` 之后等待文档响应 → `{firstLoadMatched:true, firstStatus:200}`；`includeBuffered:false` 仍按 Playwright 语义超时。
+
 ## [0.9.5] - 2026-10-27 — 滚轮修复 / 双缓冲硬化 / PR #83
 
 ### 修复

@@ -273,7 +273,7 @@ When the existing metadata response includes `capture`, the panel displays its b
 
 > `ego_tabs` 为 0.9.4（master）新增，0.9.4 起为 34 个工具。
 
-> 导航/等待语义（v0.8.7）：`ego_wait_for_url` 先比对当前 URL 再等未来导航，结果带 `matchedCurrent`；`ego_wait_for_response` 超时返回结构化 `reached:false`，不再抛错；两个等待都只观察**本次调用期间**的事件——触发动作与等待要放在同一个 `ego_script` 里。`ego_script`/`ego_cli` 的脚本需以 `console.log('@@DSH_RESULT@@' + JSON.stringify({...}))` 结尾（忘记哨兵时会兜底解析最后一行 JSON，并标记 `fallback: true`）。
+> 导航/等待语义（v0.9.7）：`ego_wait_for_url` 先比对当前 URL 再等未来导航，结果带 `matchedCurrent`；`ego_wait_for_response` 超时返回结构化 `reached:false`，不再抛错，并**默认回放当前文档已完成的请求**（`includeBuffered`，可传 `false` 回到严格只等未来事件）——所以 `page.goto()` 之后再去等那一次文档响应也能命中；跨 `ego_*` 调用仍然只能等到未来响应，触发动作与等待要放在同一个 `ego_script` 里。缓存命中的请求不产生网络事件，超时错误会点名具体 URL 并建议加 cache-busting 查询。`ego_script`/`ego_cli` 的脚本需以 `console.log('@@DSH_RESULT@@' + JSON.stringify({...}))` 结尾（忘记哨兵时会兜底解析最后一行 JSON，并标记 `fallback: true`）。
 
 > **`ego_script` 的 `page` 不是 Playwright API**（#80）：可用方法为 `goto reload info url title locator getByRole getByText getByLabel getByPlaceholder getByAltText getByTitle getByTestId waitForTimeout waitForLoadState waitForSelector waitForFunction waitForURL waitForRequest waitForResponse waitForEvent evaluate screenshot snapshot snapshotRaw elementCenter drainEvents screencast keyboard mouse`；**没有** `fill / click / type / press`——交互请用 `ego_fill` / `ego_click`，或 `page.locator(...)` 配合 `ego_*`。`page.goto()` 返回的也不是 Playwright Response，需要状态码请用 `ego_wait_for_response` 或 `page.info()`。
 
