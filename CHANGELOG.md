@@ -2,6 +2,33 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.8] - 2026-10-27 — 交付卡片 / 人机交接等待
+
+### 新增
+- **截图与下载变成交付卡片（`deliver`，默认开）**：`ego_screenshot` / `ego_download` 成功后把文件追加为 `deliverables/presented` 会话事件（与 `present` 工具同一条路径），Web GUI 显示可点击的交付卡片、在侧栏打开，而不是让用户在聊天里复制 `/tmp/...` 路径。完全 best-effort：缺少投影服务、没有发起会话、或 append 抛错都不会让截图/下载变成失败调用；`deliver:false` 可关闭。
+- **`ego_wait_for_human`：人机验证 / 登录交接**：先在聊天里告诉用户要做什么，然后**阻塞轮询**页面，直到人机验证消失（可选 `selector` 作为“登录完成”信号），返回 `{needed, resolved, waitedMs, polls, detected, kind, url}`；超时返回 `resolved:false` 而不是报错。总时长 5–110 秒、轮询 250–10000ms 可调。刻意不走审批——`never` 策略下审批请求会被自动拒绝。
+
+### 测试
+- 新增 `tests/deliverables.test.ts`（8 项）：交付事件的形状、缺少会话/投影时的降级、append 抛错不影响工具调用、两个工具的接线。
+- 新增 `tests/wait-for-human.test.ts`（5 项）：轮询节奏、无 selector 时只看挑战、有 selector 时同时等它、结构化返回、标签选择前置。
+
+### 文档
+- `ego_help` 增加 `ego_wait_for_human` 与 captcha 主题说明。
+
+## [0.9.8] - 2026-10-27 — 会话级任务空间
+
+### 新增
+- **每个 DSH 会话一个独立任务空间（`sessionScopedSpaces`，默认开）**：此前所有会话共用一个 `dsh-agent` 空间——两个会话（或主代理 + 子代理）同时浏览时会互相抢标签，标签游标也会互相覆盖（即便修好标签定向，仍会跨会话漂移）。现在省略 `space` 时按会话派生空间名（`dsh-agent-<sid8>`），每个会话有自己的 browser context / 窗口 / 标签集与游标；显式传 `space` 仍可共用。设置关闭后回到单一共享空间。
+- **标签游标按会话分键**（`scopedTargetKey`）：即使两个会话共用同一空间（作用域关闭），它们也各记各的当前标签，不会互相改道。
+- **空间解析按会话惰性创建**：`createSessionScopedSpaceTracker` 为每个会话维护独立的 `ActiveSpaceTracker`，显式 `ego_space_open` / `ego_space_close` 只影响本会话；`sessionScopedSpaces` 是 live getter，改设置后新会话立即按新策略，已选空间的会话保持不变。
+
+### 兼容性
+- 升级后首次调用会打开一个新窗口（新空间），旧 `dsh-agent` 空间里的标签不会自动迁移；要继续用旧空间，显式传 `space: "dsh-agent"`，或把 `sessionScopedSpaces` 关掉。
+
+### 测试
+- 新增 `tests/session-scoped-spaces.test.ts`（13 项）：空间名派生与清洗、跨会话隔离、显式选择互不影响、关闭作用域后回退共享、游标键按会话区分、配置默认值与显式关闭。
+
+## [0.9.7] - 2026-10-27 — 等待响应：回放已完成请求 / 缓存自解释
 ## [0.9.5] - 2026-10-27 — 滚轮修复 / 双缓冲硬化 / PR #83
 
 ### 修复

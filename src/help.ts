@@ -9,7 +9,7 @@ export const EGO_HELP_INDEX: Record<string, string> = {
     'ego-browser 结构化浏览器工具。导航/交互/观察/表单/网络/等待/键鼠皆有专项工具，另提供 ego_help(本索引)、ego_doctor(体检)、ego_cli/ego_script(自由脚本逃生舱)。' +
     '分类见: tools / navigate / observe / input / keyboard-mouse / form / wait / network / login / script / doctor。用 `topic` 查询，或直接给工具名。',
   tools:
-    '工具清单: ego_status, ego_space_open, ego_space_close, ego_snapshot, ego_navigate, ego_tabs, ego_click(+double), ego_fill, ego_js, ego_cdp, ego_screenshot(+selector), ego_page_info, ego_wait, ego_wait_for_selector, ego_wait_for_url, ego_wait_for_response, ego_key(+text/type), ego_hover, ego_read_element, ego_select, ego_drag, ego_scroll, ego_upload, ego_check, ego_dialog, ego_download, ego_http, ego_captcha, ego_auth_flush, ego_login_import, ego_help, ego_doctor, ego_cli, ego_script。',
+    '工具清单: ego_status, ego_space_open, ego_space_close, ego_snapshot, ego_navigate, ego_tabs, ego_click(+double), ego_fill, ego_js, ego_cdp, ego_screenshot(+selector), ego_page_info, ego_wait, ego_wait_for_selector, ego_wait_for_url, ego_wait_for_response, ego_wait_for_human, ego_key(+text/type), ego_hover, ego_read_element, ego_select, ego_drag, ego_scroll, ego_upload, ego_check, ego_dialog, ego_download, ego_http, ego_captcha, ego_auth_flush, ego_login_import, ego_help, ego_doctor, ego_cli, ego_script。',
   navigate: 'ego_navigate: 打开URL或切tab(同任务复用当前tab)。ego_wait_for_url: 等跳转(登录/分页)。ego_tabs: 列出/切换/新建/关闭标签页(list/switch/open/close)。',
   tabs:
     'ego_tabs: 标签页管理。action=list 列出所有标签(targetId/title/url/active); switch 用 targetId 切换; open 用 url 新建标签(默认 about:blank); close 用 targetId 关闭。targetId 来自 list/open/ego_space_open/ego_navigate 的返回。',
@@ -23,7 +23,7 @@ export const EGO_HELP_INDEX: Record<string, string> = {
   network:
     'ego_http: 发HTTP请求(默认浏览器上下文 fetch.browser, mode=server走Node fetch.server); ego_wait_for_response: 等并读接口响应。',
   download: 'ego_download: 等下载事件并落到指定路径(triggerSelector/triggerScript + 可选 savePath)。',
-  captcha: 'ego_captcha: 检测页面人机验证(CAPTCHA)并返回{detected,kind}; 检测到请让用户去 ego 浏览器完成; ego_page_info 也附带 humanCheck。',
+  captcha: 'ego_captcha: 检测页面人机验证(CAPTCHA)并返回{detected,kind}; 检测到请让用户去 ego 浏览器完成; ego_page_info 也附带 humanCheck。ego_wait_for_human: 先告诉用户要做什么，然后阻塞轮询直到验证码消失/登录完成(可选 selector 作为“登录成功”信号)，超时返回 resolved:false 而不是报错；不要走审批（never 策略会自动拒绝）。',
   login: 'ego_auth_flush: 把登录cookie落盘到ego profile; 观察窗登录引导条+『已登录,保存』按钮触发同一动作。ego_login_import: 按域名导入系统浏览器登录cookie——现代 Chrome/Edge 用 source=extension：先在 Agent 浏览器面板点「连接 Chrome 登录态」，按 6 位配对码在扩展里配对一次，之后面板按钮/该工具即可自动导入（扩展后台轮询，30 秒内）；旧版或已关闭浏览器用 source=chrome|edge|brave 安全复制（Chrome/Edge 127+ 的 ABE 会读到 0 并明确报错，源 profile 不会被打开/写入）。先 dryRun 看可导入项；ego 浏览器须已在运行。',
   script: 'ego_cli / ego_script: 原样运行任意 ego-browser nodejs heredoc脚本(page/browser/taskSpaces/site/fetch/cdp预载)。ego_script额外返回 duration/timedOut。注意 page 是本 runtime 的页面门面、不是 Playwright API：可用 goto/reload/info/url/title/locator/getByRole/getByText/getByLabel/getByPlaceholder/getByAltText/getByTitle/getByTestId/waitForTimeout/waitForLoadState/waitForSelector/waitForFunction/waitForURL/waitForRequest/waitForResponse/waitForEvent/evaluate/screenshot/snapshot/snapshotRaw/elementCenter/drainEvents/screencast/keyboard/mouse；没有 fill/click/type/press——交互用 ego_fill/ego_click 或 page.locator(...)。page.goto() 不返回 Playwright Response，取状态码用 ego_wait_for_response 或 page.info()。',
   doctor: 'ego_doctor: 体检环境(浏览器候选、vendored runtime、状态目录、CDP端口、任务空间)。',
