@@ -21,6 +21,18 @@ describe("watch panel input and capture status", () => {
     expect((source.match(/M8\.2 7\.0L12\.6 10\.6/g) || []).length).toBe(2);
   });
 
+  it("binds wheel to the always-mounted stage (#81)", () => {
+    expect(source).toMatch(/stageRef/);
+    expect(source).toMatch(/stage\.addEventListener\('wheel'/);
+    expect(source).not.toMatch(/img\.addEventListener\('wheel'/);
+  });
+
+  it("keeps the previous buffer on decode errors and guards target switches (#82)", () => {
+    expect(source).toMatch(/next\.onerror = function \(\) \{ settle\(false\) \}/);
+    expect(source).toMatch(/liveBufferGeneration/);
+    expect(source).toMatch(/liveBufferPending = null/);
+  });
+
   it("does not gate control input on stream state or default missing status to CDP", () => {
     expect(source).not.toMatch(/status\.backend \|\| 'cdp'/);
     expect(source).not.toMatch(/targetValid[^\n]+streamState !== 'streaming'/);

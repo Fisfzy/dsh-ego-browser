@@ -2,6 +2,12 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [Unreleased]
+
+### 修复
+- **侧栏滚轮/触控板滚动失效（#81 回归）**：0.9.4 的 wheel 监听绑在条件渲染的语义 `<img>` 上，首帧到达前 `<img>` 不存在，one-shot effect 之后不再重绑。现在监听器挂在**始终存在的 `.dsh-ego-side-stage`** 上（`passive:false`），点击/双击/`Ctrl+滚轮` 行为不变。
+- **双缓冲 review 硬化（#82）**：冷启动/切目标时用 `liveFrameUrl` / frameCache / 当前缩略图做种子，不再清空两层导致空白；`onerror` 不再交换失败层（保留上一帧）；目标切换清理 `liveBufferPending` 并加 generation guard，防止旧页面的帧落到新页面；黑色背景移到 `.dsh-ego-side-livebox`。`maxWidthHint` 变化后重启 watch 的逻辑已在 0.9.4 提供。
+
 ## [0.9.4] - 2026-10-27 — Chrome 风格 UI / 一键登录态 / ego_tabs
 
 ### 新增

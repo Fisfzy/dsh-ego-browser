@@ -13,6 +13,9 @@ import {
   LOGIN_EXTENSION_PORT,
 } from '../src/login-extension.ts'
 
+const bridgePort = (): number => Number(process.env.EGO_LOGIN_EXTENSION_PORT) || LOGIN_EXTENSION_PORT
+process.env.EGO_LOGIN_EXTENSION_PORT = '53920'
+
 const cookie = {
   name: 'sid',
   value: 'secret-value',
@@ -76,7 +79,7 @@ describe('login extension bridge (#69 A)', () => {
 
   it('runs a dry-run import through the loopback receiver', async () => {
     const state = await mkdtemp(join(tmpdir(), 'ego-ext-import-'))
-    const port = LOGIN_EXTENSION_PORT
+    const port = bridgePort()
     try {
       const pending = importLoginCookiesFromExtension({ domains: ['example.com'], dryRun: true, timeoutMs: 8000 })
       await waitForPing(port)
@@ -96,7 +99,7 @@ describe('login extension bridge (#69 A)', () => {
   })
 
   it('pairs with a one-time code and lets the extension poll a waiting job', async () => {
-    const port = LOGIN_EXTENSION_PORT
+    const port = bridgePort()
     try {
       const pairing = await createLoginExtensionPairingCode()
       expect(pairing.ok).toBe(true)

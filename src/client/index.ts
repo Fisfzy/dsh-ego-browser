@@ -1778,13 +1778,13 @@ declare function require(id: string): any
 .dsh-ego-side-liveimg {
   width: 100%; border-radius: 9px; display: block;
   max-height: 50vh; object-fit: contain;
-  border: 1px solid rgba(128,128,128,.2); background: #000;
+  border: 1px solid rgba(128,128,128,.2);
   user-select: none; -webkit-user-select: none; touch-action: none;
   will-change: transform; cursor: grab;
 }
 /* #81: the semantic <img> keeps layout + pointer/zoom; the two overlay layers
    carry the visible pixels and only swap once the next frame has decoded. */
-.dsh-ego-side-livebox { position: relative; width: 100%; min-height: 0; }
+.dsh-ego-side-livebox { position: relative; width: 100%; min-height: 0; background: #000; border-radius: 9px; overflow: hidden; }
 .dsh-ego-side-liveimg-semantic { opacity: 0; }
 .dsh-ego-side-livebuf {
   position: absolute; inset: 0; width: 100%; height: 100%;
@@ -2140,14 +2140,24 @@ declare function require(id: string): any
 			})
 		}
 		LivePreviewController.prototype.setLiveImg = function (img, targetId) {
+			var targetChanged = this.liveImg !== img || this.liveImgTargetId !== targetId
 			this.liveImg = img
 			this.liveImgTargetId = targetId
-			if (img && targetId != null) {
+			if (targetChanged) {
+				// A queued/decoding frame from the previous target must never land
+				// on the new one.
+				this.liveBufferGeneration = (this.liveBufferGeneration || 0) + 1
+				this.liveBufferPending = null
+				this.liveBufferLoading = false
+				this.liveBufferIndex = 0
+			}
+			if (img && targetId != null && targetChanged) {
 				var cached = this.frameCache.get(targetId)
 				if (cached) {
 					try { img.src = cached } catch (e) {}
 				}
-				this._seedLiveBuffers(cached || null)
+				var seed = cached || (this.liveFrameTargetId === targetId ? this.liveFrameUrl : null) || img.src || null
+				this._seedLiveBuffers(seed)
 			}
 		}
 		// #81 — double-buffered frame presentation. `liveImg` stays the semantic
@@ -2158,8 +2168,13 @@ declare function require(id: string): any
 			this.liveBufferIndex = 0
 			this.liveBufferLoading = false
 			this.liveBufferPending = null
+			this.liveBufferGeneration = (this.liveBufferGeneration || 0) + 1
 			if (!this.liveBuffers) return
-			this._seedLiveBuffers(this.frameCache.get(this.liveImgTargetId) || null)
+			var seed = (this.liveFrameTargetId === this.liveImgTargetId ? this.liveFrameUrl : null)
+				|| this.frameCache.get(this.liveImgTargetId)
+				|| (this.liveImg && this.liveImg.src)
+				|| null
+			this._seedLiveBuffers(seed)
 		}
 		LivePreviewController.prototype._seedLiveBuffers = function (seed) {
 			var buffers = this.liveBuffers
@@ -2188,17 +2203,23 @@ declare function require(id: string): any
 			var current = this.liveBuffers[this.liveBufferIndex]
 			if (!next) return
 			var self = this
+			var generation = this.liveBufferGeneration || 0
 			var settled = false
-			var settle = function () {
+			var settle = function (ok) {
 				if (settled) return
 				settled = true
-				if (!self.liveBuffers || self.liveBuffers[nextIndex] !== next) { self.liveBufferLoading = false; return }
+				if (generation !== (self.liveBufferGeneration || 0) || !self.liveBuffers || self.liveBuffers[nextIndex] !== next) {
+					self.liveBufferLoading = false
+					return
+				}
 				self.liveBufferLoading = false
-				try {
-					next.style.opacity = '1'
-					if (current) current.style.opacity = '0'
-				} catch (e) {}
-				self.liveBufferIndex = nextIndex
+				if (ok) {
+					try {
+						next.style.opacity = '1'
+						if (current) current.style.opacity = '0'
+					} catch (e) {}
+					self.liveBufferIndex = nextIndex
+				}
 				if (self.liveBufferPending) {
 					var pending = self.liveBufferPending
 					self.liveBufferPending = null
@@ -2207,13 +2228,15 @@ declare function require(id: string): any
 			}
 			this.liveBufferLoading = true
 			try {
-				next.onload = settle
-				next.onerror = settle
+				next.onload = function () { settle(true) }
+				// A malformed/expired frame must not replace a good layer: keep the
+				// current frame visible and move on to the pending one (#82).
+				next.onerror = function () { settle(false) }
 				next.src = dataUrl
 			} catch (e) {
-				settle()
+				settle(false)
 			}
-			try { if (next.decode) next.decode().then(settle, settle) } catch (e) {}
+			try { if (next.decode) next.decode().then(function () { settle(true) }, function () { settle(false) }) } catch (e) {}
 		}
 		// `refresh` is NOT a polling loop anymore. It is a one-shot fallback
 		// used at start / setVisible(true) / SSE reconnect to re-sync the tab
@@ -2657,6 +2680,7 @@ declare function require(id: string): any
 
 			var imgRef = React.useRef(null)
 			var videoRef = React.useRef(null)
+			var stageRef = React.useRef(null)
 			var rootRef = React.useRef(null)
 			// Size-sync toggle: unlocked, the live image box drives the REAL agent
 			// browser window size (via the worker's CDP window bounds route).
@@ -2993,14 +3017,16 @@ declare function require(id: string): any
 				if (videoRef.current && state.currentTargetId != null) controller.setLiveVideo(videoRef.current, state.currentTargetId)
 			}, [state.currentTargetId, state.backend, state.streamGeneration, state.streamState, controller])
 
-			// Native wheel listener (React onWheel is passive, can't preventDefault)
+			// Native wheel listener on the STAGE, not on the live <img>: the img is
+			// conditionally rendered (only after the first thumbnail), so binding in
+			// a one-shot effect missed it and wheel/scroll stayed dead (#81).
 			React.useEffect(function () {
-				var img = imgRef.current || videoRef.current
-				if (!img) return
+				var stage = stageRef.current
+				if (!stage) return
 				var handler = function (e) { controller.handleWheel(e) }
-				img.addEventListener('wheel', handler, { passive: false })
-				return function () { img.removeEventListener('wheel', handler) }
-			}, [controller, state.currentTargetId, state.backend, state.streamGeneration])
+				stage.addEventListener('wheel', handler, { passive: false })
+				return function () { stage.removeEventListener('wheel', handler) }
+			}, [controller, state.currentTargetId, state.currentSpace, state.backend, state.streamGeneration])
 
 			var h = React.createElement
 			var icon = function (svg) {
@@ -3196,7 +3222,7 @@ declare function require(id: string): any
 								presetOpen ? h('div', { className: 'dsh-ego-side-presets', ref: presetRef }, PRESETS.map(function (preset) { return h('button', { key: preset.label, type: 'button', className: 'dsh-ego-side-preset-item', onClick: function () { applyPreset(preset.ratio) } }, preset.label) })) : null,
 							),
 						),
-						h('div', { className: 'dsh-ego-side-stage' + (sizeSyncOn ? ' dsh-ego-size-unlocked' : '') },
+						h('div', { className: 'dsh-ego-side-stage' + (sizeSyncOn ? ' dsh-ego-size-unlocked' : ''), ref: stageRef },
 							liveImg,
 							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-right', title: wt('resizeHint'), onPointerDown: beginResize('x') }),
 							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-bottom', title: wt('resizeHint'), onPointerDown: beginResize('y') }),
