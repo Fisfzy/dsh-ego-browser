@@ -8,6 +8,9 @@
 - **侧栏滚轮/触控板滚动失效（#81 回归）**：0.9.4 的 wheel 监听绑在条件渲染的语义 `<img>` 上，首帧到达前 `<img>` 不存在，one-shot effect 之后不再重绑。现在监听器挂在**始终存在的 `.dsh-ego-side-stage`** 上（`passive:false`），点击/双击/`Ctrl+滚轮` 行为不变。
 - **双缓冲 review 硬化（#82）**：冷启动/切目标时用 `liveFrameUrl` / frameCache / 当前缩略图做种子，不再清空两层导致空白；`onerror` 不再交换失败层（保留上一帧）；目标切换清理 `liveBufferPending` 并加 generation guard，防止旧页面的帧落到新页面；黑色背景移到 `.dsh-ego-side-livebox`。`maxWidthHint` 变化后重启 watch 的逻辑已在 0.9.4 提供。
 
+### 新增
+- **PR #83（社区 @mecamangeg）**：修复多标签时结构化工具总是切到第一个 tab / `ego_script` 没有 tab 选择的问题——新增 per-space tab cursor + `@@EGO_TARGET@@` side channel；`ego_navigate`/`ego_script`/`ego_cli` 支持显式 `tab`；新增 `viewportWidth` / `viewportHeight` / `deviceScaleFactor`（HiDPI 下避免移动版布局）；`ego_select` 回退 value → label → index。源码已 rebase 到 0.9.4 并用当前工具链重建，新增 25 个测试。
+
 ## [0.9.4] - 2026-10-27 — Chrome 风格 UI / 一键登录态 / ego_tabs
 
 ### 新增
