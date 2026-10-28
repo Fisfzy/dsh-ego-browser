@@ -12,6 +12,9 @@
   - 超时时若命中的请求由缓存提供（`Network.requestServedFromCache`，不产生网络往返），错误信息会列出具体 URL 并提示加 cache-busting 查询，而不是一句莫名的 timeout。
 - **`ego_wait_for_response` 工具**：新增 `includeBuffered` 参数（默认 true），超时 hint 补充缓存说明与"请求与等待需在同一 `ego_script`"的边界。
 
+### 新增
+- **会话级 task space（PR #85）**：新增 `sessionScopedSpaces` 设置（默认 **开**）。省略 `space` 时按 `dsh-agent-<sessionId前8位>` 解析，每个 DSH session 拥有独立的 browser context / window / tab 集合 / tab cursor，并发 session 或子 agent 不再互相抢标签、覆盖目标；显式传 `space` 仍共享。tab cursor key 也加入 session，因此关闭该设置后两个 session 仍保持各自 target。升级后首次调用会为新 space 打开一个新窗口，旧 `dsh-agent` 的标签不迁移；可设 `sessionScopedSpaces: false` 或显式 `space: "dsh-agent"` 保持旧行为。
+
 ### 测试
 - 新增 `tests/wait-for-response-buffer.test.ts`（6 项）：Network 域的启用时机、等待结束后不关闭、回放窗口包含文档请求、缓存提示文案、插件侧默认传参。
 - 真机验证（repo 运行时 + 真实 Chrome）：`page.goto()` 之后等待文档响应 → `{firstLoadMatched:true, firstStatus:200}`；`includeBuffered:false` 仍按 Playwright 语义超时。

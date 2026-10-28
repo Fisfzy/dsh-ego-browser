@@ -191,7 +191,7 @@ dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.5.tgz
 
 观察窗设置中可选 `captureBackend=auto|cdp|ffmpeg`（默认 `auto`，当前解析为 CDP）、画质档位、CDP FPS/JPEG 质量/最大宽度，以及 FFmpeg FPS/最大宽度/码率/编码器/自定义路径。插件先检测自定义路径、系统 PATH 和托管缓存；检测到兼容 FFmpeg 前，设置页禁止选择 FFmpeg，并提供固定版本的一键下载。GitHub 下载可用 `githubMirror` 替换 `https://github.com`，例如 `https://gh-proxy.com/github.com`。FFmpeg 码率范围为 500-20000 kbps，低/平衡/高档默认 2000/4000/8000 kbps。
 
-其他开关：`isolateSpaces`（任务空间沙盒隔离，默认关）、`idleTimeoutMin`（空闲 N 分钟后自动回收后台浏览器，默认 0=关）、`disableFrameRelay`（**禁用画面回传**，默认关）。
+其他开关：`isolateSpaces`（任务空间沙盒隔离，默认关）、`sessionScopedSpaces`（**每个 DSH 会话一个独立任务空间**，默认开——会话/子代理互不抢标签；关闭后所有会话共用一个空间）、`idleTimeoutMin`（空闲 N 分钟后自动回收后台浏览器，默认 0=关）、`disableFrameRelay`（**禁用画面回传**，默认关）。
 
 **禁用画面回传（`disableFrameRelay`）**：开启后插件不再回传任何画面——不启动 ego-cast worker（因此不会做 CDP/WGC 屏幕采集、不会 ffmpeg 拉流与 fMP4 封装），`/api/ego/stream`、`/api/ego/video` 及 worker 相关路由改为返回 `{"ok":false,"reason":"frame relay disabled"}`，观察窗不再建立任何拉流连接并显示禁用态提示。`ego_*` 工具本身完全不受影响（浏览器照常开，快照/点击/输入/截图照常工作）。开关是配置项，保存后立即生效：正在跑的 worker 会被停掉，重新开启后自动恢复。
 
