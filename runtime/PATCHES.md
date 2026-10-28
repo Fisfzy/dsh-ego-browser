@@ -28,6 +28,7 @@
 | `runtime/ego-linux/src/task-spaces.mjs` | `reconcile()` 增加孤儿 page target 清扫：新增导出 `selectOrphans()`（两阶段 + 120s 宽限；跳过 `about:blank`/`chrome://`，按 space 的 `targetIds` 认领），命中后 `Target.closeTarget` 并记入 `closedSpaces`（名 `(orphan tab)`）；状态文件新增 `orphans: { targetId: firstSeenMs }` | issue #67 的另一半：crash-restore 或手动打开的标签不属于任何 space，原有 `pruneIdle`/`pruneAbandoned`/`--prune-spaces` 都只遍历 `state.spaces`，扫不到这些孤儿 → 标签只增不减。两阶段设计让"刚创建/正在查看"的标签不会在第一次出现时被误关 |
 | `runtime/ego-linux/src/task-spaces.mjs` | `createSeededContext()` 增加 `EGO_ISOLATE_SPACES` 环境变量开关支持；未开启（默认）时返回 `null` 复用磁盘 Profile，开启时保留原作者内存沙盒隔离 | 登录态持久化与沙盒隔离双模可配：用户在设置中选择是否开启空间隔离；默认关闭时所有登录态直接落盘，跨关机重启永久保留，开启时恢复独立内存沙盒 |
 | `runtime/ego-browser/screenshot-clip.mjs` + `runtime/ego-browser/dist/out/index.js` `screenshot()` | viewport / locator 截图的 CDP clip 原点改为 `pageInfo().sx/sy`（`scrollX/scrollY`），不再固定 `{x:0,y:0}`；fullPage 仍从文档原点截整页 | CDP clip 是文档坐标且默认 `captureBeyondViewport:false`：滚动后 clip 落在未绘制区域会得到空白 PNG。与 `spaces-server.mjs` followClip 同一约定 |
+| `runtime/ego-browser/dist/out/index.js`（`enablePageEvents` / `waitForNetworkMatch` / `acquireNetworkEvents`） | ① 会话 attach 时即 `Network.enable`（原来只在等待期间启用）；② 等待结束后**不再** `Network.disable`，全局事件缓冲因此保留整段导航；③ `waitForResponse({includeBuffered:true})` 先回放缓冲：窗口从当前文档的 `Network.requestWillBeSent` 开始（该事件早于 `Page.frameNavigated`，不能简单从 frameNavigated 之后切片）；④ 超时若匹配请求由缓存提供（`Network.requestServedFromCache`，无网络往返）则在错误里列出 URL 并提示 cache-busting | 等待“已经完成”的响应：`page.goto()` 之后的文档响应此前永远等不到（Network 域尚未开启，且 wait 只看未来事件）。缓存命中时干等 10s 也无从判断，现在错误自解释 |
 | （其余 runtime 文件）| 与 vendoring 时一致 | 无后续本地改动 |
 
 ## 说明
@@ -37,3 +38,10 @@
   若改探针特征，两处都要同步。
 - **同步提醒**：`lib/config.js` 的 `tokenizeArgs`/`filterArgs`/`CHROME_BLOCKED` 与 `runtime/ego-linux/src/chrome.mjs` 的 `tokenizeArgs`/`filterChromeArgs`/`CHROME_BLOCKED` 是镜像副本（runtime 不 import lib/）——改一处必须同步另一处。
 - 若要跟进 ego-lite 上游，重点 diff 上表的 cursor.mjs；其余文件可直接与上游对齐。
+
+## 2026-10-28 — waitForResponse: honour glob string matchers
+
+`networkMatches()` compared string matchers with `===`, so the documented glob
+form (`**/api/stories`) never matched — every glob wait timed out even though
+the events were present in the buffer. Exact URLs still work as before; strings
+containing `*` now go through the same `globToRegExp` helper as `waitForURL`.

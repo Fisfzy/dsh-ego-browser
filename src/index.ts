@@ -2331,7 +2331,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_wait_for_response',
       description:
-        'Wait for a network response matching a URL/glob/regex and return it. Optionally return the body (text or JSON) — ideal for scraping API responses or confirming a submission. It only observes responses that arrive DURING this call: trigger the request and wait in the same ego_script. On timeout the result carries the current URL and a hint instead of throwing.',
+        'Wait for a network response matching a URL/glob/regex and return it. Optionally return the body (text or JSON) — ideal for scraping API responses or confirming a submission. By default it also matches responses that already finished during the CURRENT document load (includeBuffered), because "wait for the response of the page I just opened" is the common case; set includeBuffered=false for strict future-only semantics. Across separate ego_* calls only future responses can be seen — trigger the request and the wait in the same ego_script. On timeout the result carries the current URL and a hint instead of throwing.',
       parameters: {
         url: {
           type: 'string',
@@ -2348,6 +2348,11 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           description:
             "Return the response body: 'none' (default) | 'text' | 'json'.",
         },
+        includeBuffered: {
+          type: 'boolean',
+          description:
+            'Also match responses that already completed during the current document load (default true). Set false to wait only for future responses.',
+        },
         space: spaceParam,
       },
       buildScript: (args) => {
@@ -2363,10 +2368,10 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           `try { __res = await page.waitForResponse(${j(u)}, { timeout: ${num(
             args.timeout,
             10000,
-          )} }) } catch (e) { __err = String(e && e.message || e) }\n` +
+          )}, includeBuffered: ${bool(args.includeBuffered, true)} }) } catch (e) { __err = String(e && e.message || e) }\n` +
           `if (!__res) {\n` +
           `  const __u = await page.url().catch(() => null)\n` +
-          `  console.log('${SENTINEL}' + JSON.stringify({ ok: false, reached: false, url: __u, error: __err, hint: 'no matching response arrived during this call. Issue the request and the wait in the same ego_script; the url pattern is a full URL or glob/regex, not a bare substring.' }))\n` +
+          `  console.log('${SENTINEL}' + JSON.stringify({ ok: false, reached: false, url: __u, error: __err, hint: 'no matching response arrived during this call. Include the wait in the same ego_script as the request; a cached response produces no network event (add a cache-busting query); the url pattern is a full URL or glob/regex, not a bare substring.' }))\n` +
           `} else {\n` +
           `${wantBody ? `  const __body = ${mode === 'json' ? 'await __res.json().catch(()=>null)' : 'await __res.text().catch(()=>null)'}\n` : ''}` +
           `  console.log('${SENTINEL}' + JSON.stringify({ ok: true, reached: true, url: __res.url(), status: __res.status()${wantBody ? ', body: __body' : ''} }))\n` +

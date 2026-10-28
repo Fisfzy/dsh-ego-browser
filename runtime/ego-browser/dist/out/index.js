@@ -505,6 +505,17 @@ async function enablePageEvents(sessionId) {
         // Dialog tracking is best-effort. Do not make all helpers fail on targets
         // that reject Page.enable, such as unusual internal pages.
     }
+    // Network on from the first attach: waitForResponse() can then replay the
+    // events of a navigation that already finished (see waitForNetworkMatch).
+    // Without this the domain only turns on for the wait itself, so every
+    // response that loaded the page is invisible to it.
+    try {
+        await rawCdp("Network.enable", {}, sessionId);
+    }
+    catch {
+        // Some bridges do not expose the Network domain; waits then time out
+        // with the normal error instead of failing the whole session.
+    }
 }
 // Local send failures for ego.sendCDPMessage() arrive here (task inactive,
 // user-controlled, not selected/claimed, host gone) instead of as a CDP
@@ -2543,6 +2554,16 @@ async function waitForNetworkMatch(kind, matcher, options) {
     let matched;
     try {
         void networkEvents.ready;
+        // Replay first: a navigation (or fetch) that already finished in this
+        // process is still in the global event buffer. Playwright would miss it
+        // because it only observes future events; for an agent tool "wait for
+        // the response of the page I just loaded" is the common case.
+        if (options?.includeBuffered) {
+            matched = replayBufferedNetwork(kind, matcher, requests, timeout);
+            if (matched) {
+                return matched;
+            }
+        }
         await waitForBrowserEvent((event) => {
             matched = processNetworkEvent(kind, matcher, event, requests, timeout);
             return Boolean(matched);
@@ -2551,13 +2572,118 @@ async function waitForNetworkMatch(kind, matcher, options) {
     }
     catch (error) {
         if (/page\.waitForEvent timed out/i.test(error?.message || "")) {
-            throw new Error(`page.waitFor${kind === "request" ? "Request" : "Response"} timed out after ${timeout}ms`);
+            const suffix = options?.includeBuffered ? describeBufferedMiss(kind, matcher) : "";
+            throw new Error(`page.waitFor${kind === "request" ? "Request" : "Response"} timed out after ${timeout}ms${suffix}`);
         }
         throw error;
     }
     finally {
         await networkEvents.release();
     }
+}
+/**
+ * Replay buffered events from the current document (the last main-frame
+ * navigation onward) through the normal matcher.
+ * @param {"request"|"response"} kind
+ * @param {string|RegExp|Function} matcher
+ * @param {Map<string, object>} requests request-id → request info, filled here
+ * @param {number} timeout
+ * @returns {object|null} the matched facade, or null.
+ */
+function replayBufferedNetwork(kind, matcher, requests, timeout) {
+    const buffer = events.slice();
+    const start = bufferedWindowStart(buffer);
+    for (let i = start; i < buffer.length; i += 1) {
+        const event = buffer[i];
+        // Ignore another tab's traffic: page events carry the session id.
+        if (event?.sessionId && state.sessionId && event.sessionId !== state.sessionId) {
+            continue;
+        }
+        const matched = processNetworkEvent(kind, matcher, event, requests, timeout);
+        if (matched) {
+            return matched;
+        }
+    }
+    return null;
+}
+/**
+ * First buffered event that belongs to the current document.
+ *
+ * The document's own `requestWillBeSent`/`responseReceived` arrive BEFORE the
+ * `Page.frameNavigated` that concludes the navigation, so slicing after the
+ * last frameNavigated would hide exactly the response callers usually want.
+ * Walk back from that navigation to the request that produced it instead.
+ * @param {Array<object>} buffer buffered CDP events
+ * @returns {number} index to start replaying from
+ */
+function bufferedWindowStart(buffer) {
+    let navIndex = -1;
+    let navUrl = null;
+    for (let i = buffer.length - 1; i >= 0; i -= 1) {
+        const event = buffer[i];
+        if (event?.method === "Page.frameNavigated" && !event?.params?.frame?.parentId) {
+            navIndex = i;
+            navUrl = event?.params?.frame?.url || null;
+            break;
+        }
+    }
+    if (navIndex === -1) {
+        // No main-frame navigation in the buffer (SPA, or a page already open).
+        return 0;
+    }
+    if (typeof navUrl === "string" && navUrl !== "") {
+        for (let i = navIndex; i >= 0; i -= 1) {
+            const event = buffer[i];
+            if (event?.method === "Network.requestWillBeSent" && event?.params?.request?.url === navUrl) {
+                return i;
+            }
+        }
+    }
+    return navIndex;
+}
+/**
+ * Explain a miss using the buffer: a response that was served from cache never
+ * produces a network round trip, which is the usual reason a wait times out
+ * even though the data is visibly on the page.
+ * @param {"request"|"response"} kind
+ * @param {string|RegExp|Function} matcher
+ * @returns {string} An empty string when nothing useful is known.
+ */
+function describeBufferedMiss(kind, matcher) {
+    const urlById = new Map();
+    for (const event of events) {
+        if (event?.method !== "Network.requestWillBeSent") {
+            continue;
+        }
+        const id = event?.params?.requestId;
+        const url = event?.params?.request?.url;
+        if (typeof id === "string" && typeof url === "string") {
+            urlById.set(id, url);
+        }
+    }
+    const cached = [];
+    for (const event of events) {
+        if (event?.method !== "Network.requestServedFromCache") {
+            continue;
+        }
+        const url = urlById.get(event?.params?.requestId);
+        if (typeof url !== "string" || url === "" || cached.includes(url)) {
+            continue;
+        }
+        const hit = typeof matcher === "string"
+            ? url === matcher
+            : matcher instanceof RegExp
+                ? (matcher.lastIndex = 0, matcher.test(url))
+                : true;
+        if (hit) {
+            cached.push(url);
+        }
+    }
+    if (cached.length === 0) {
+        return "";
+    }
+    const shown = cached.slice(0, 3).join(", ");
+    return `. ${cached.length} matching request(s) were served from cache (${shown}), so no network event fired; retry with a cache-busting query or { cache: "no-store" }.`;
 }
 function processNetworkEvent(kind, matcher, event, requests, timeout) {
     const method = event?.method;
@@ -2598,6 +2724,12 @@ function processNetworkEvent(kind, matcher, event, requests, timeout) {
 }
 function networkMatches(facade, matcher, kind) {
     if (typeof matcher === "string") {
+        // Playwright semantics: a string without wildcards is an exact URL; a
+        // glob ("**/api/stories") must be matched as a glob, like waitForURL.
+        // Exact-only matching made every documented glob wait time out.
+        if (matcher.includes("*")) {
+            return globToRegExp(matcher).test(facade.url());
+        }
         return facade.url() === matcher;
     }
     if (matcher instanceof RegExp) {
@@ -2734,12 +2866,9 @@ function acquireNetworkEvents() {
             if (networkEnableInFlight) {
                 await networkEnableInFlight;
             }
-            if (networkEventsOwnDomain) {
-                networkEventsOwnDomain = false;
-                await cdp("Network.disable").catch(() => {
-                    // Best-effort cleanup; the next wait can enable the domain again.
-                });
-            }
+            // The domain deliberately stays enabled: the global event buffer is
+            // what lets a later waitForResponse replay a navigation that already
+            // finished. Disabling here would wipe that history mid-script.
         },
     };
 }
