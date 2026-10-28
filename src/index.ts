@@ -110,6 +110,43 @@ function humanCheckScript(space: string | number): string {
   )
 }
 
+/**
+ * Script that blocks until the human clears a challenge.
+ *
+ * Polls the page (rather than sleeping once) so it returns as soon as the user
+ * solves the CAPTCHA or completes the login. When `selector` is given, that
+ * element must also exist — the usual "logged in now" signal. Returns a
+ * structured payload, never an error: `resolved:false` is the honest answer
+ * when the deadline passes.
+ */
+export function waitForHumanScript(
+  space: string | number,
+  opts: { timeoutMs: number; pollMs: number; selector?: string },
+): string {
+  const selector = opts.selector ?? ''
+  const selectorCheck =
+    selector === ''
+      ? '  const __selOk = true\n'
+      : `  let __selOk = false\n  try { __selOk = (await page.count(${j(selector)})) > 0 } catch { __selOk = false }\n`
+  return (
+    `${useSpace(space)}${ensureRealTab()}` +
+    `const __wb = Date.now()\n` +
+    `let __saw = false, __resolved = false, __polls = 0, __last = null\n` +
+    `for (;;) {\n` +
+    `  let __hc = null\n` +
+    `  try { __hc = await page.evaluate(${j(HUMAN_CHECK_PROBE)}) } catch { __hc = null }\n` +
+    `  if (__hc && __hc.detected) __saw = true\n` +
+    `  __last = __hc\n` +
+    selectorCheck +
+    `  if (!(__hc && __hc.detected) && __selOk) { __resolved = true; break }\n` +
+    `  if (Date.now() - __wb >= ${opts.timeoutMs}) break\n` +
+    `  __polls++\n` +
+    `  await page.waitForTimeout(${opts.pollMs})\n` +
+    `}\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, needed: __saw, resolved: __resolved, waitedMs: Date.now() - __wb, polls: __polls, detected: !!(__last && __last.detected), kind: (__last && __last.kind) || null, url: await page.url().catch(() => null) }))\n`
+  )
+}
+
 export function createActiveSpaceTracker(defaultSpace: string | number = DEFAULT_SPACE): ActiveSpaceTracker {
   let activeSpace: string | number = defaultSpace
   let activeName: string | null = typeof defaultSpace === 'string' ? defaultSpace : null
@@ -1086,6 +1123,50 @@ export function stripTargetMarkers(text: string): string {
     .join('\n')
 }
 
+/** A file a tool produced and wants surfaced as a session deliverable. */
+export interface DeliverableFile {
+  path: string
+  description?: string
+}
+
+/**
+ * Record produced files as session deliverables.
+ *
+ * This emits the same `deliverables/presented` event the `present` tool emits,
+ * so a screenshot or a downloaded file shows up as a card the user can open in
+ * the Sidebar instead of a bare `/tmp/...` path they must copy from the chat.
+ *
+ * Entirely best-effort: a host without the projection service, a tool call
+ * with no initiating agent, or a session that rejects the append must never
+ * turn a successful screenshot into a failed tool call.
+ *
+ * @returns true when the event was appended.
+ */
+export function deliverToSession(
+  ctx: EgoContext,
+  exec: ToolExec | undefined,
+  files: DeliverableFile[],
+): boolean {
+  if (files.length === 0) return false
+  const session = (exec?.agent as { session?: { append?: unknown } } | undefined)?.session
+  if (session === undefined || typeof session.append !== 'function') return false
+  try {
+    const projections = ctx.get?.('sessionProjections') as
+      | { stateOf?: (target: unknown, key: string) => { lastTurn?: unknown } | undefined }
+      | undefined
+    const turn = projections?.stateOf?.(session, 'turnBoundary')?.lastTurn
+    if (typeof turn !== 'number') return false
+    ;(session.append as (target: string, payload: unknown) => void)('deliverables/presented', {
+      turn,
+      callId: exec?.callId,
+      files,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * JS snippet that makes the harness act on a real page tab.
  *
@@ -1232,6 +1313,8 @@ interface EgoToolOptions {
   parameters: Record<string, unknown>
   buildScript: (args: Record<string, unknown>) => string
   afterExecute?: (args: Record<string, unknown>, value: unknown) => void
+  /** Files this call produced, surfaced as session deliverables. */
+  deliverFiles?: (args: Record<string, unknown>, value: unknown) => DeliverableFile[]
 }
 
 function observeEgoTool<T>(cfg: EgoRuntimeConfig, name: string, args: Record<string, unknown>, run: () => Promise<T> | T): Promise<T> {
@@ -1284,6 +1367,9 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
           if (!result.ok) throw new Error(result.error)
           recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
           if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
+          if (typeof opts.deliverFiles === 'function') {
+            deliverToSession(ctx, exec, opts.deliverFiles(args, result.value))
+          }
           // Value is JSON.parse output of our own payload — fits the tool JSON contract.
           return result.value
         } finally {
@@ -2235,6 +2321,11 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           type: 'string',
           description: 'Optional absolute output path for the PNG.',
         },
+        deliver: {
+          type: 'boolean',
+          description:
+            'Surface the PNG as a deliverable card in the conversation (default true). Set false to keep it a bare path.',
+        },
         space: spaceParam,
       },
       buildScript: (args) => {
@@ -2249,6 +2340,12 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           `const path = ${shot}\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`
         )
+      },
+      deliverFiles: (args, value) => {
+        const file = (value as { path?: unknown } | null)?.path
+        if (args.deliver === false || typeof file !== 'string' || file === '') return []
+        const selector = str(args.selector, '')
+        return [{ path: file, description: selector === '' ? 'Screenshot' : `Screenshot of ${selector}` }]
       },
     }),
   )
@@ -2748,6 +2845,11 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           type: 'number',
           description: 'How long to wait for the download in ms (default 30000).',
         },
+        deliver: {
+          type: 'boolean',
+          description:
+            'Surface the downloaded file as a deliverable card in the conversation (default true). Set false to keep it a bare path.',
+        },
         space: spaceParam,
       },
       buildScript: (args) => {
@@ -2775,6 +2877,13 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           save +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path: __final, suggestedFilename: __name, url: __url }))\n`
         )
+      },
+      deliverFiles: (args, value) => {
+        const v = value as { path?: unknown; suggestedFilename?: unknown } | null
+        const file = v?.path
+        if (args.deliver === false || typeof file !== 'string' || file === '') return []
+        const name = typeof v?.suggestedFilename === 'string' ? v.suggestedFilename : ''
+        return [{ path: file, description: name === '' ? 'Download' : `Download: ${name}` }]
       },
     }),
   )
@@ -2982,6 +3091,102 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
           }
         })),
       presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_captcha', args), kind: 'other', rawInput: null }),
+    } as unknown as DefineToolOpts),
+  )
+  reg(
+    defineTool({
+      name: 'ego_wait_for_human',
+      description:
+        'Hand the page to the human for a CAPTCHA / login / 2FA / confirmation, then wait until it is cleared. Say what you need in the conversation FIRST ("solve the challenge in the agent browser window, I will wait"), then call this. It polls the page until the challenge disappears — and, when `selector` is given, until that selector exists — returning { needed, resolved, waitedMs }. A timeout is not an error: resolved=false means "still not done", so report back and call again. This is a deliberate blocking wait; do not route it through approval flows, which auto-reject under policy "never".',
+      parameters: {
+        reason: {
+          type: 'string',
+          description: "Why the wait is needed: captcha | login | 2fa | confirm (free text is fine).",
+        },
+        timeoutSec: {
+          type: 'number',
+          description: 'How long to wait in seconds (default 60, clamped to 5–110).',
+        },
+        pollMs: {
+          type: 'number',
+          description: 'Polling interval in ms (default 1500, clamped to 250–10000).',
+        },
+        selector: {
+          type: 'string',
+          description:
+            'Optional selector that must also exist before returning (e.g. a post-login element). Omitting it waits only for the challenge to clear.',
+        },
+        space: { type: 'string', description: 'Task-space name or numeric id; defaults to this session’s space.' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            needed: { type: 'boolean', required: true },
+            resolved: { type: 'boolean', required: true },
+            waitedMs: { type: 'number', required: true },
+          },
+        },
+        render: renderText,
+      },
+      timeoutMs: TOOL_TIMEOUT_MS,
+      execute: async (args: Record<string, unknown>, exec: ToolExec) =>
+        withEgoLock(() => observeEgoTool(cfg, 'ego_wait_for_human', args, async () => {
+          {
+            markEgoToolCall(callingSessionId(exec))
+            const timeoutMs = Math.min(110_000, Math.max(5_000, num(args.timeoutSec, 60) * 1000))
+            const pollMs = Math.min(10_000, Math.max(250, num(args.pollMs, 1500)))
+            const selector = str(args.selector, '')
+            const spaceKey = String(str(args.space, cfg.defaultSpace))
+            const build = () => {
+              pendingTargetPin = cfg.targetTracker.get(spaceKey)
+              pendingViewport = cfg
+              try {
+                return waitForHumanScript(str(args.space, cfg.defaultSpace), {
+                  timeoutMs,
+                  pollMs,
+                  selector,
+                })
+              } finally {
+                pendingTargetPin = undefined
+                pendingViewport = undefined
+              }
+            }
+            const result = await runWithStaleSpaceRetry(ctx, cfg, exec, build)
+            if (!result.ok) {
+              return {
+                ok: false,
+                needed: true,
+                resolved: false,
+                waitedMs: 0,
+                reason: str(args.reason, 'confirm'),
+                error: result.error,
+              }
+            }
+            recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
+            const p = (parseSentinel(result.stdout) || {}) as Record<string, unknown>
+            const resolved = !!p.resolved
+            return {
+              ok: true,
+              needed: !!p.needed,
+              resolved,
+              waitedMs: typeof p.waitedMs === 'number' ? p.waitedMs : 0,
+              polls: typeof p.polls === 'number' ? p.polls : 0,
+              detected: !!p.detected,
+              kind: (p.kind as string | null) ?? null,
+              url: (p.url as string | null) ?? null,
+              reason: str(args.reason, 'confirm'),
+              ...(resolved
+                ? {}
+                : {
+                    hint: 'still waiting after the timeout. Make sure the user knows which window to use (the agent browser window / watch panel), say what to click, then call ego_wait_for_human again.',
+                  }),
+            }
+          }
+        })),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_wait_for_human', args), kind: 'other', rawInput: null }),
     } as unknown as DefineToolOpts),
   )
   reg(

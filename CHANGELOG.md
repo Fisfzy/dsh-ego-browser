@@ -2,7 +2,7 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [0.9.6] - 2026-10-27 — 等待响应：回放已完成请求 / 缓存自解释
+## [0.9.6] - 2026-10-27 — 等待响应回放 / 会话级 space / 截图卡片与人工等待
 
 ### 修复
 - **`ego_wait_for_response` 看不到"已经完成"的响应**：运行时只在等待期间启用 Network 域，且只监听**未来**事件——典型场景（`page.goto()` 之后再等那次文档响应）永远匹配不到，只能干等到超时。现在：
@@ -14,6 +14,7 @@
 
 ### 新增
 - **会话级 task space（PR #85）**：新增 `sessionScopedSpaces` 设置（默认 **开**）。省略 `space` 时按 `dsh-agent-<sessionId前8位>` 解析，每个 DSH session 拥有独立的 browser context / window / tab 集合 / tab cursor，并发 session 或子 agent 不再互相抢标签、覆盖目标；显式传 `space` 仍共享。tab cursor key 也加入 session，因此关闭该设置后两个 session 仍保持各自 target。升级后首次调用会为新 space 打开一个新窗口，旧 `dsh-agent` 的标签不迁移；可设 `sessionScopedSpaces: false` 或显式 `space: "dsh-agent"` 保持旧行为。
+- **截图/下载卡片 + `ego_wait_for_human`（PR #86）**：`ego_screenshot` / `ego_download` 通过 `deliverables/presented` 事件让 Web GUI 显示可点击卡片（`deliver:false` 可关闭，best-effort）；新增 `ego_wait_for_human` 阻塞等待 CAPTCHA / 登录 / 2FA 完成（可选 `selector` 作为"已登录"信号），超时返回 `resolved:false` + 可执行提示，而不是抛错；它不是审批流程。
 
 ### 测试
 - 新增 `tests/wait-for-response-buffer.test.ts`（6 项）：Network 域的启用时机、等待结束后不关闭、回放窗口包含文档请求、缓存提示文案、插件侧默认传参。
