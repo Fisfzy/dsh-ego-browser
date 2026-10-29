@@ -50,7 +50,7 @@ import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
-import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs } from './config.ts'
+import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs, validateEgoBinPath } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
 import { registerEgoBrowserGateway } from './gateway.ts'
 import { ResidentProcess, ResidentNotRunningError, type ResidentFrame } from './resident.ts'
@@ -902,6 +902,10 @@ function residentFrameToResult(frame: ResidentFrame): WarmupResult {
 
 
 async function runEgoScript(subprocess: SubprocessService, script: string, exec: ExecLike, cfg: EgoRuntimeConfig, graceOverrideMs?: number): Promise<WarmupResult> {
+  // #87: egoBin is executed as `node <egoBin>`; fail before spawning when it
+  // points at a Windows executable (e.g. the official ego-browser.exe).
+  const egoBinCheck = validateEgoBinPath(cfg.egoBin)
+  if (!egoBinCheck.ok) return { ok: false, error: `egoBin is not usable: ${egoBinCheck.reason}`, stdout: '', stderr: '' }
   // Resident path (opt-in, issue #56). Only a request that was never written
   // falls back to the one-shot spawn below: once written, a retry could
   // double-execute a click/fill, so the resident reports the failure instead.
@@ -2393,19 +2397,40 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         const done = (extra: string): string =>
           `const __tabs = await browser.listTabs()\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true${extra}, tabs: __tabs }))\n`
+        // #87: the official ego-lite runtime does not implement every helper
+        // the bundled runtime provides. Fail with an actionable message instead
+        // of a raw ReferenceError/TypeError inside the heredoc.
+        const fail = (message: string): string =>
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(message)} }))\n`
+        const guard = (expr: string, missing: string, body: string): string =>
+          `${space}if (${expr}) {\n${fail(`runtime capability missing: ${missing}; use the bundled runtime or extend your bridge with it`)}${space}} else {\n${body}${space}}\n`
+        const noBrowser = (cap: string): string =>
+          `typeof browser === 'undefined' || typeof browser.${cap} !== 'function'`
         if (action === 'switch') {
-          if (!targetId) return `${space}console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'targetId is required for action=switch' }))\n`
-          return `${space}await browser.switchTab(${j(targetId)})\n${done(`, switched: ${j(targetId)}`)}`
+          if (!targetId) return `${space}${fail('targetId is required for action=switch')}`
+          return guard(
+            `${noBrowser('switchTab')} || ${noBrowser('listTabs')}`,
+            'browser.switchTab / browser.listTabs',
+            `${space}await browser.switchTab(${j(targetId)})\n${done(`, switched: ${j(targetId)}`)}`,
+          )
         }
         if (action === 'open') {
-          return `${space}const __created = await ego.createTab(${j(url || 'about:blank')})\n${done(`, created: __created && __created.targetId || null`)}`
+          return guard(
+            `${noBrowser('listTabs')} || typeof ego === 'undefined' || typeof ego.createTab !== 'function'`,
+            'ego.createTab / browser.listTabs',
+            `${space}const __created = await ego.createTab(${j(url || 'about:blank')})\n${done(`, created: __created && __created.targetId || null`)}`,
+          )
         }
         if (action === 'close') {
-          if (!targetId) return `${space}console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'targetId is required for action=close' }))\n`
-          return `${space}await browser.closeTab(${j(targetId)})\n${done(`, closed: ${j(targetId)}`)}`
+          if (!targetId) return `${space}${fail('targetId is required for action=close')}`
+          return guard(
+            `${noBrowser('closeTab')} || ${noBrowser('listTabs')}`,
+            'browser.closeTab / browser.listTabs',
+            `${space}await browser.closeTab(${j(targetId)})\n${done(`, closed: ${j(targetId)}`)}`,
+          )
         }
-        if (action !== 'list') return `${space}console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(`unknown action: ${action}`)} }))\n`
-        return `${space}${done('')}`
+        if (action !== 'list') return `${space}${fail(`unknown action: ${action}`)}`
+        return guard(noBrowser('listTabs'), 'browser.listTabs', `${space}${done('')}`)
       },
       // Tab switches must move the per-space cursor too, otherwise the next
       // page tool would re-pin the tab this call just left.
@@ -3252,6 +3277,9 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         // vendored runtime
         lines.push(`egoBin: ${cfg.egoBin}`)
         try { lines.push(`egoBin exists: ${existsSync(cfg.egoBin)}`) } catch { lines.push('egoBin exists: n/a') }
+        const egoBinCheck = validateEgoBinPath(cfg.egoBin)
+        lines.push(`egoBin kind: ${egoBinCheck.ok ? 'node-script' : 'invalid'}`)
+        if (!egoBinCheck.ok) lines.push(`egoBin warning: ${egoBinCheck.reason}`)
         // Chrome candidates
         const chrome = findChromeBinary()
         const configured = cfg.chromePath

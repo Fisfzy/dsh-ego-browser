@@ -2,6 +2,19 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.7] - 2026-10-29 — egoBin 运行时选型 / 官方 ego lite 文档 / ego_tabs 能力降级
+
+### 修复
+- **`egoBin` 填官方 `.exe` 时给出可执行错误（#87）**：插件以 `node <egoBin>` 启动运行时，官方 `ego-browser.exe` 不能直接使用。`validateEgoBinPath()` 现在拒绝 `.exe/.cmd/.bat`，在工具执行前返回“需要 Node 脚本或 .mjs 桥”的明确提示；`.mjs/.js/.cjs`/无扩展名脚本不受影响。
+- **`ego_tabs` 对运行时能力做降级（#87）**：`list/switch` 检查 `browser.listTabs/switchTab`，`open` 检查 `ego.createTab`，`close` 检查 `browser.closeTab`；官方 ego lite 或精简桥缺少 API 时返回 `runtime capability missing: …`，不再抛 ReferenceError/TypeError。
+
+### 新增
+- **设置页 `egoBin` 字段**：可直接填 Node 运行时脚本路径；留空使用内置运行时。`ego_doctor` 增加 `egoBin kind` 与无效时的 warning。
+
+### 文档
+- README 新增「运行时选型：内置运行时 vs 官方 ego lite」：两条线的定位、`--serve`/`waitForResponse` 缓冲/元素级截图/`ego_tabs` 能力差异、桥接示例与“只能补 `ego` 方法、不能整体替换”的注意事项。
+- Windows 内置运行时 `Chrome came up ... no WebSocket URL` 排查清单；`cpu-features`/`ssh2` 安装噪音说明。
+
 ## [0.9.6] - 2026-10-28 — 等待响应回放 / 会话级 space / 截图卡片与人工等待
 
 ### 修复

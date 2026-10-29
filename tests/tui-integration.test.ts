@@ -28,7 +28,7 @@ describe('optional TUI integration', () => {
     expect(register).toHaveBeenCalledWith(tuiSettingsSection)
     expect(tuiSettingsSection).toMatchObject({ ns: 'ego-browser', title: 'Agent Browser', page: { id: 'ego-browser' } })
     expect(manifestSettingsFields).toEqual(manifest.contributes['x-dsh-tui'].find(section => section.kind === 'SettingsSection')!.spec.fields)
-    expect(tuiSettingsFields.map(field => field.path[0])).toEqual(['isolateSpaces', 'idleTimeoutMin', 'residentExecutor', 'residentIdleMin', 'disableFrameRelay', 'chromePath', 'captureBackend', 'streamProfile', 'ffmpegPath', 'tuiAutoOpenPanel'])
+    expect(tuiSettingsFields.map(field => field.path[0])).toEqual(['isolateSpaces', 'idleTimeoutMin', 'residentExecutor', 'residentIdleMin', 'disableFrameRelay', 'egoBin', 'chromePath', 'captureBackend', 'streamProfile', 'ffmpegPath', 'tuiAutoOpenPanel'])
     for (const field of tuiSettingsFields) {
       expect(field.descriptions?.zh).toBeTruthy()
       expect(field.hintDescriptions?.zh).toBeTruthy()

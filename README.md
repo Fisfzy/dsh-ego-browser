@@ -14,7 +14,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license MIT"></a>
 </p>
 
-> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.6**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
+> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.7**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
 
 ### 版本兼容矩阵
 
@@ -25,7 +25,7 @@
 | **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、纯文字侧栏面板；缺席时静默跳过，无额外 I/O |
 | **Node.js** | `22` | — | harness 环境自带 |
 
-**DSH 全版本适配说明**：v0.9.6 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
+**DSH 全版本适配说明**：v0.9.7 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
 
 **dsh-better-sidebar 适配说明**：ego-browser 通过 `ctx.betterSidebar` 服务（try-catch 防御性获取）注册侧边栏 Tab 并监听外部链接。关键 API 引入版本：
 
@@ -64,7 +64,7 @@ cookie 值不出现在任何日志与输出中；导入是单次快照。配合�
 
 ```sh
 # 安装（任选一种；桌面端也可以走 插件 → 添加插件）
-dsh plugin --profile desktop add dsh-ego-browser@0.9.6
+dsh plugin --profile desktop add dsh-ego-browser@0.9.7
 ```
 
 1. 在 DSH 会话里说一句让 agent 用浏览器的话，例如：
@@ -129,6 +129,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.6
 
 ## ✨ 近期亮点
 
+- **v0.9.7**：**运行时选型说明**——内置 `runtime/ego-linux`（默认）与官方 ego lite 的定位、能力差异和桥接方式写清（#87）；**`egoBin` 设置页字段**（Node 脚本，不是 `.exe`）+ 启动前校验，填 exe 直接给出可执行错误；**`ego_doctor`** 显示 egoBin 类型/警告；**`ego_tabs` 能力降级**（运行时缺 `createTab`/`closeTab`/`listTabs` 时返回明确错误，不再抛脚本异常）；Windows 内置运行时排查与 `cpu-features` 噪音说明。
 - **v0.9.6**：**`ego_wait_for_response` 回放已完成的响应**（`includeBuffered` 默认 true，load 后再等文档响应不再空等超时；缓存命中会解释并建议 cache-busting）；**会话级 task space**（`sessionScopedSpaces` 默认开，每个 DSH session 独立 context/window/tab/cursor，不再互相抢标签；可关闭保持旧行为）；**截图/下载卡片**（`ego_screenshot`/`ego_download` 在 Web GUI 显示可点击卡片，`deliver:false` 可关）；新增 **`ego_wait_for_human`**（CAPTCHA/登录/2FA 阻塞等待，超时返回提示而非报错）；合并 PR #84/#85/#86。
 - **v0.9.5**：**侧栏滚轮/触控板滚动恢复**（#81：wheel 改绑常驻 stage）；**双缓冲细节硬化**（#82：冷 seed、失败帧不换层、切目标 generation guard）；**合并 PR #83**（社区 @mecamangeg）——多标签跨调用固定 agent 当前 tab（per-space cursor + `@@EGO_TARGET@@`）、`ego_script`/`ego_cli` 支持 `tab`、`viewportWidth/Height/deviceScaleFactor` 覆盖、`ego_select` 按 value → label → index 回退，新增 25 个测试。
 - **v0.9.4**：**Chrome 风格面板**（`#f1f3f4` 工具区、Chrome 式标签、蓝色主按钮、移除登录提示条）；**一键复用 Chrome 登录态**——标题栏「连接 Chrome 登录态」配对一次后，之后点「复用 Chrome 登录态」即可由扩展后台自动导出当前网站 cookie（无需每次开 Chrome UI/点 Export）；**`ego_tabs`**（list / switch / open / close）；**#69 双安全路径**：安全复制（源 profile 永不打开/写入）+ Chrome 扩展桥接（Windows/macOS/Linux 的 Chrome/Edge/Brave 均可），已用真实 Bilibili 21 条 cookie 验证。
@@ -158,6 +159,46 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.6
 | DSH（插件装载） | 插件页添加，或 `dsh plugin --profile <profile> add dsh-ego-browser`；npm 包名 `dsh-ego-browser` |
 | 带图形界面的 DSH Web（观察窗） | headless 会话仍可用 `ego_*` 工具，仅无观察窗 |
 
+## 运行时选型：内置运行时 vs 官方 ego lite
+
+插件默认使用**内置运行时**（`runtime/ego-linux`，随 npm 包分发），它会自己拉起受管 Chrome 并通过 CDP 提供 `page` / `browser` / `ego` 门面。另一条线是**官方 ego lite**（独立桌面程序 `ego-browser.exe`），只有你明确需要官方程序时才使用。
+
+| | 内置 `runtime/ego-linux`（默认） | 官方 ego lite |
+|---|---|---|
+| 形态 | JS 运行时 + 受管 Chrome/CDP 宿主 | 独立桌面程序 `ego-browser.exe` |
+| 安装 | 随插件 npm 包提供，无需另装 | 用户自行安装 |
+| `egoBin` | 默认指向内置 `ego-browser.mjs` | **不能直接填 exe**，需要自写 Node `.mjs` 桥 |
+| `--serve` 常驻 | 支持 | 取决于桥 |
+| `waitForResponse` 缓冲回放 | 支持（0.9.6+） | 取决于桥/官方能力 |
+| `ego_tabs` open/close | 支持 | 需要运行时提供 `ego.createTab` / `browser.closeTab` |
+| 元素级截图 | 支持 | 官方可能只能整页 |
+| Windows | 社区移植，实验性；失败需按下方排查 | 以官方 ego lite 为准 |
+
+**`egoBin` 是被 `node` 执行的脚本，不是浏览器可执行文件。** 设置页「运行时脚本（egoBin）」留空即使用内置运行时；填入 `.exe` / `.cmd` / `.bat` 会被拒绝并提示原因。若要接官方 ego lite，需要写一个 Node 桥脚本（实现 `nodejs` 子命令、`@@DSH_RESULT@@` 哨兵、以及插件期望的 `browser` / `ego` 方法），例如：
+
+```yaml
+# cordis.patch.yml
+- id: ego-browser
+  name: "dsh-ego-browser"
+  config:
+    egoBin: 'C:\Users\you\.dsh\ego-bridge\ego-cli.mjs'
+    isolateSpaces: false
+```
+
+桥接注意：**只能给已有 `ego` 对象补方法，不能整体替换**（否则 `listTaskSpaces` 等会丢失）；官方 CLI 的 `console.log` 可能走 stderr，桥需把带 `@@DSH_RESULT@@` 哨兵的行镜像到 stdout。工具在运行时缺少 API 时会返回明确的 `runtime capability missing` 错误，而不是脚本异常。
+
+### Windows 内置运行时排查
+
+内置运行时在 Windows 是社区移植、实验性支持。若出现：
+
+```text
+Chrome came up on port 6668 but exposed no WebSocket URL within 20000ms
+```
+
+请先收集 `/json/version` 的返回、Chrome 完整版本、`--user-data-dir`、6668 端口占用，以及是否同时开着官方 ego lite / 另一个 Chrome；这些信息能区分是 Chrome 启动参数、profile 锁还是官方程序占端口。插件会在错误里保留该提示；`ego_doctor` 可查看 `egoBin`、Chrome 路径与运行时状态。
+
+> 安装日志中出现 `cpu-features` / `ssh2` 原生编译失败属于可选依赖噪音，**不是本插件运行所需**，不影响插件加载与 `ego_*` 工具。
+
 ## 安装
 
 **方式 A：桌面端插件页**：插件 → 添加插件 → 搜索 `dsh-ego-browser`。
@@ -165,7 +206,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.6
 **方式 B：命令行（npm，推荐）**：
 
 ```sh
-dsh plugin --profile <profile> add dsh-ego-browser@0.9.6
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.7
 dsh plugin --profile <profile> list                 # 应看到 dsh-ego-browser
 # 升级
 dsh plugin --profile <profile> add dsh-ego-browser@latest
@@ -175,7 +216,7 @@ dsh plugin --profile <profile> add dsh-ego-browser@latest
 
 ```sh
 dsh plugin --profile <profile> add https://github.com/Fisfzy/dsh-ego-browser.git
-dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.6.tgz
+dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.7.tgz
 ```
 
 > **从旧版本升级（DSH Desktop 2.0.5+）**：本插件包名是 **`dsh-ego-browser`**（非 `@dsh-external/ego-browser`）。DSH Desktop 2.0.5 起增加了「profile 依赖名 == 包实际 name」的一致性校验，若 profile 仍用旧名 `@dsh-external/ego-browser` 引用，启动会挂进恢复模式（`profile package identity is invalid for @dsh-external/ego-browser`）。升级到 2.0.5 后请把 profile 的 `package.json` 依赖键 **和** `dsh.profile.bundles` 条目**两处**都改为 `dsh-ego-browser`：
@@ -204,7 +245,7 @@ dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.6.tgz
 
 ```sh
 pkg install chromium            # Termux x11 仓库；约 159 MB deb / 644 MB 安装后
-dsh plugin --profile <profile> add dsh-ego-browser@0.9.6
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.7
 ```
 
 - `chromium-browser` 已在 `COMMON_CHROME_BINS` 中，`ego_doctor` 会自动探测 `/data/data/com.termux/files/usr/bin/chromium-browser`，**无需**设置 `chromePath`
@@ -273,6 +314,8 @@ When the existing metadata response includes `capture`, the panel displays its b
 | 元工具 | `ego_help` `ego_doctor` `ego_http` |
 
 > `ego_tabs` 为 0.9.4 新增，`ego_wait_for_human` 为 0.9.6 新增；当前共 35 个工具。
+>
+> `ego_tabs` 的 `open/close` 依赖运行时提供 `ego.createTab` / `browser.closeTab`（内置运行时完整支持；官方 ego lite 或精简桥缺失时会返回 `runtime capability missing`，不会让脚本崩溃）。
 
 > 导航/等待语义（v0.9.7）：`ego_wait_for_url` 先比对当前 URL 再等未来导航，结果带 `matchedCurrent`；`ego_wait_for_response` 超时返回结构化 `reached:false`，不再抛错，并**默认回放当前文档已完成的请求**（`includeBuffered`，可传 `false` 回到严格只等未来事件）——所以 `page.goto()` 之后再去等那一次文档响应也能命中；跨 `ego_*` 调用仍然只能等到未来响应，触发动作与等待要放在同一个 `ego_script` 里。缓存命中的请求不产生网络事件，超时错误会点名具体 URL 并建议加 cache-busting 查询。`ego_script`/`ego_cli` 的脚本需以 `console.log('@@DSH_RESULT@@' + JSON.stringify({...}))` 结尾（忘记哨兵时会兜底解析最后一行 JSON，并标记 `fallback: true`）。
 

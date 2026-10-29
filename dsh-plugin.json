@@ -2,7 +2,7 @@
   "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "id": "dsh-ego-browser",
   "name": "ego-browser",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "manifestVersion": "0.15",
   "facets": {
     "host": {
@@ -121,6 +121,22 @@
               "hintTitles": {
                 "en": "No watch panel frames, no screencast capture and no cast worker. Handy in TUI/headless setups. ego_* tools keep working.",
                 "zh": "不传输观察窗画面、不做 screencast 采集、不启动 cast worker；适合 TUI/无头环境，ego_* 工具不受影响。"
+              }
+            },
+            {
+              "path": [
+                "egoBin"
+              ],
+              "label": "Runtime script (egoBin)",
+              "kind": "text",
+              "hint": "Node-executable script (.mjs/.js); NOT the official ego-browser.exe. Empty = bundled runtime.",
+              "titles": {
+                "en": "Runtime script (egoBin)",
+                "zh": "运行时脚本（egoBin）"
+              },
+              "hintTitles": {
+                "en": "Node-executable script (.mjs/.js); NOT the official ego-browser.exe. Empty = bundled runtime.",
+                "zh": "Node 可执行脚本（.mjs/.js），不是官方 ego-browser.exe；留空使用内置运行时。"
               }
             },
             {

@@ -65,12 +65,33 @@ const volatilePrefs = Object.fromEntries(
 // a schema default before the one-release migration runs.
 export const Config = z.object({
   ...volatilePrefs,
+  /** Optional Node-executable runtime script (not the official .exe). */
+  egoBin: z.string(),
   // Deprecated read-compatible keys. The settings UI only writes canonical keys.
   castFpsCap: z.number().min(0).max(60).step(1),
   screencastQuality: z.number().min(1).max(100).step(1),
   screencastMaxWidth: z.number().min(320).max(1920).step(40),
   backstopIntervalMs: z.number().min(200).max(10000).step(100),
 }) as unknown as z<Record<string, unknown>>
+
+/**
+ * `egoBin` is executed as `node <egoBin> …`; a browser executable such as the
+ * official `ego-browser.exe` cannot work directly (issue #87). Keep the check
+ * pure so settings, tools and ego_doctor can share it.
+ */
+export function validateEgoBinPath(value: string): { ok: boolean; reason?: string } {
+  const p = typeof value === 'string' ? value.trim() : ''
+  if (!p) return { ok: false, reason: 'egoBin is empty' }
+  if (/\.(exe|cmd|bat)$/i.test(p)) {
+    return {
+      ok: false,
+      reason:
+        'egoBin must be a Node-executable script (.mjs/.js/.cjs), not a Windows executable. ' +
+        'The official ego-browser.exe needs a Node bridge; use the bundled runtime or set egoBin to a .mjs bridge.',
+    }
+  }
+  return { ok: true }
+}
 
 // ── user-defined extra CLI args ─────────────────────────────────────────────
 /**
