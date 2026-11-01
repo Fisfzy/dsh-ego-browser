@@ -1255,6 +1255,70 @@ export const rawScriptPrelude = (
 ): string => `try {\n${ensureRealTab(tab, cfg)}} catch {}\n`
 
 /**
+ * ego_tabs script builder (list / switch / open / close).
+ *
+ * Split out of the tool registration so the generated heredoc is unit-testable:
+ * 0.9.7 interpolated `useSpace(...)` (which declares `const task`) three times
+ * per action — once before the guard, once inside its `if` branch, once at its
+ * tail — and `new AsyncFunction(code)` rejects the repeated block-scoped
+ * `const`, so all four actions died with `SyntaxError: Identifier 'task' has
+ * already been declared` before anything reached the browser.
+ *
+ * Contract: the space pin is declared EXACTLY once, ahead of the capability
+ * guard, and the branches never re-declare it.
+ *
+ * #87: the official ego-lite runtime does not implement every helper the
+ * bundled runtime provides. A missing capability reports
+ * `runtime capability missing: …` instead of a raw ReferenceError.
+ */
+export const tabsScript = (opts: {
+  action: string
+  targetId?: string
+  url?: string
+  space: string | number
+}): string => {
+  const space = useSpace(opts.space)
+  const action = opts.action
+  const targetId = opts.targetId ?? ''
+  const url = opts.url ?? ''
+  const fail = (message: string): string =>
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(message)} }))\n`
+  const done = (extra: string): string =>
+    `const __tabs = await browser.listTabs()\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true${extra}, tabs: __tabs }))\n`
+  const noBrowser = (cap: string): string =>
+    `typeof browser === 'undefined' || typeof browser.${cap} !== 'function'`
+  // The body is emitted after the guard's `else {`, and close brace at the end.
+  const guard = (expr: string, missing: string, body: string): string =>
+    `${space}if (${expr}) {\n${fail(`runtime capability missing: ${missing}; use the bundled runtime or extend your bridge with it`)}} else {\n${body}}\n`
+  if (action === 'switch') {
+    if (!targetId) return `${space}${fail('targetId is required for action=switch')}`
+    return guard(
+      `${noBrowser('switchTab')} || ${noBrowser('listTabs')}`,
+      'browser.switchTab / browser.listTabs',
+      `await browser.switchTab(${j(targetId)})\n${done(`, switched: ${j(targetId)}`)}`,
+    )
+  }
+  if (action === 'open') {
+    return guard(
+      `${noBrowser('listTabs')} || typeof ego === 'undefined' || typeof ego.createTab !== 'function'`,
+      'ego.createTab / browser.listTabs',
+      `const __created = await ego.createTab(${j(url || 'about:blank')})\n${done(`, created: __created && __created.targetId || null`)}`,
+    )
+  }
+  if (action === 'close') {
+    if (!targetId) return `${space}${fail('targetId is required for action=close')}`
+    return guard(
+      `${noBrowser('closeTab')} || ${noBrowser('listTabs')}`,
+      'browser.closeTab / browser.listTabs',
+      `await browser.closeTab(${j(targetId)})\n${done(`, closed: ${j(targetId)}`)}`,
+    )
+  }
+  if (action !== 'list') return `${space}${fail(`unknown action: ${action}`)}`
+  return guard(noBrowser('listTabs'), 'browser.listTabs', done(''))
+}
+
+/**
  * selectOption with value → label → index fallback.
  *
  * `selectOption` matches option VALUES; a caller passing the visible label
@@ -2389,49 +2453,13 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         },
         space: spaceParam,
       },
-      buildScript: (args) => {
-        const action = str(args.action, 'list')
-        const targetId = str(args.targetId, '')
-        const url = str(args.url, '')
-        const space = useSpace(str(args.space, cfg.defaultSpace))
-        const done = (extra: string): string =>
-          `const __tabs = await browser.listTabs()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true${extra}, tabs: __tabs }))\n`
-        // #87: the official ego-lite runtime does not implement every helper
-        // the bundled runtime provides. Fail with an actionable message instead
-        // of a raw ReferenceError/TypeError inside the heredoc.
-        const fail = (message: string): string =>
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(message)} }))\n`
-        const guard = (expr: string, missing: string, body: string): string =>
-          `${space}if (${expr}) {\n${fail(`runtime capability missing: ${missing}; use the bundled runtime or extend your bridge with it`)}${space}} else {\n${body}${space}}\n`
-        const noBrowser = (cap: string): string =>
-          `typeof browser === 'undefined' || typeof browser.${cap} !== 'function'`
-        if (action === 'switch') {
-          if (!targetId) return `${space}${fail('targetId is required for action=switch')}`
-          return guard(
-            `${noBrowser('switchTab')} || ${noBrowser('listTabs')}`,
-            'browser.switchTab / browser.listTabs',
-            `${space}await browser.switchTab(${j(targetId)})\n${done(`, switched: ${j(targetId)}`)}`,
-          )
-        }
-        if (action === 'open') {
-          return guard(
-            `${noBrowser('listTabs')} || typeof ego === 'undefined' || typeof ego.createTab !== 'function'`,
-            'ego.createTab / browser.listTabs',
-            `${space}const __created = await ego.createTab(${j(url || 'about:blank')})\n${done(`, created: __created && __created.targetId || null`)}`,
-          )
-        }
-        if (action === 'close') {
-          if (!targetId) return `${space}${fail('targetId is required for action=close')}`
-          return guard(
-            `${noBrowser('closeTab')} || ${noBrowser('listTabs')}`,
-            'browser.closeTab / browser.listTabs',
-            `${space}await browser.closeTab(${j(targetId)})\n${done(`, closed: ${j(targetId)}`)}`,
-          )
-        }
-        if (action !== 'list') return `${space}${fail(`unknown action: ${action}`)}`
-        return guard(noBrowser('listTabs'), 'browser.listTabs', `${space}${done('')}`)
-      },
+      buildScript: (args) =>
+        tabsScript({
+          action: str(args.action, 'list'),
+          targetId: str(args.targetId, ''),
+          url: str(args.url, ''),
+          space: str(args.space, cfg.defaultSpace),
+        }),
       // Tab switches must move the per-space cursor too, otherwise the next
       // page tool would re-pin the tab this call just left.
       afterExecute: (args, value) => {
