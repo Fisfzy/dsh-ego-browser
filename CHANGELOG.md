@@ -2,6 +2,16 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.8] - 2026-11-01 — ego_tabs 脚本生成的重复 space 声明
+
+### 修复
+- **`ego_tabs` 四个动作全部报 `SyntaxError: Identifier 'task' has already been declared`（#88，0.9.7 回归）**：0.9.7 给 `ego_tabs` 加能力降级守卫（#87）时，`guard()` 把 `useSpace(...)`（声明 `const task`）拼进了 `if` 分支、`else` 分支和结尾各一次，加上 action body 自带的那次，单次脚本里同一段 `const task` 出现 4 次。运行时用 `new AsyncFunction(code)` 编译 heredoc，重复的块级 `const` 在编译期就被拒绝，因此 `list/switch/open/close` 在碰到浏览器之前就失败，而其它工具不受影响（它们不经过这个 guard）。
+
+  `guard()` 现在只保留一处空格锚定：space 在守卫之前声明一次，两个分支不再重复声明。`ego_tabs` 的脚本生成同时被抽成 `tabsScript()`（`src/index.ts`），以便对生成结果做编译级单测；`runtime capability missing: …` 的 #87 文案与 `switch/open/close` 的行为保持不变。
+
+### 测试
+- 新增 `tests/tabs-script.test.ts`（13 项）：用运行时同款 `new AsyncFunction(...)` 编译四个 action 的生成脚本，断言 `const task` 恰好声明一次、守卫在声明之后、#87 能力文案齐全、缺 `targetId`/未知 action 的早退分支仍可编译。
+
 ## [0.9.7] - 2026-10-29 — egoBin 运行时选型 / 官方 ego lite 文档 / ego_tabs 能力降级
 
 ### 修复
