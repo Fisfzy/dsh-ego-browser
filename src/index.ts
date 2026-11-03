@@ -55,7 +55,7 @@ import { installEgoBrowserSettings } from './settings.ts'
 import { registerEgoBrowserGateway } from './gateway.ts'
 import { ResidentProcess, ResidentNotRunningError, type ResidentFrame } from './resident.ts'
 import { getSharedFfmpegInstallationManager } from './ffmpeg-installation.ts'
-import { SENTINEL, j, str, num, bool, readAll, SAFE_FN } from './util.ts'
+import { SENTINEL, j, str, num, bool, readAll, SAFE_FN, parseJsonArg, asStringArray } from './util.ts'
 import type { EgoContext, RawConfig, ResolvedConfig, SubprocessService, ToolExec, WebServerLike } from './types.ts'
 
 export const name = 'ego-browser'
@@ -2001,6 +2001,7 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             matched: { type: 'integer' },
             written: { type: 'integer' },
             domains: { type: 'json' },
+            warning: { type: 'string' },
             closedSource: { type: 'boolean' },
             disabled: { type: 'boolean' },
             error: { type: 'string' },
@@ -2012,7 +2013,7 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       execute: async (args: Record<string, unknown>) =>
         withEgoLock(() => observeEgoTool(cfg, 'ego_login_import', args, async () => {
           try {
-            const domains = Array.isArray(args.domains) ? (args.domains as unknown[]).map(String) : undefined
+            const domains = asStringArray(args.domains)
             const source = typeof args.source === 'string' && args.source !== '' ? args.source : 'auto'
             if (!['chrome', 'edge', 'brave', 'auto', 'extension'].includes(source)) {
               return { ok: false, error: `invalid source "${source}" — expected chrome|edge|brave|auto|extension` }
@@ -2360,7 +2361,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         space: spaceParam,
       },
       buildScript: (args) => {
-        const params = args.params
+        const params = parseJsonArg(args.params)
         const call =
           params !== undefined && params !== null
             ? `await cdp(${j(str(args.method, ''))}, ${j(params)})`
@@ -2765,7 +2766,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       },
       buildScript: (args) =>
         `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
-        selectOptionScript(str(args.selector, ''), args.value ?? ''),
+        selectOptionScript(str(args.selector, ''), parseJsonArg(args.value) ?? ''),
     }),
   )
   reg(
@@ -2791,8 +2792,9 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         space: spaceParam,
       },
       buildScript: (args) => {
-        const pts = Array.isArray(args.points)
-          ? (args.points as unknown[]).map(Number).filter((n) => Number.isFinite(n))
+        const rawPoints = parseJsonArg(args.points)
+        const pts = Array.isArray(rawPoints)
+          ? (rawPoints as unknown[]).map(Number).filter((n) => Number.isFinite(n))
           : []
         const hasEl =
           str(args.from, '') !== '' && str(args.to, '') !== ''
@@ -3008,9 +3010,10 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         space: spaceParam,
       },
       buildScript: (args) => {
+        const headers = parseJsonArg(args.headers)
         const opts: Record<string, unknown> = {
           method: str(args.method, 'GET'),
-          headers: args.headers && typeof args.headers === 'object' ? args.headers : {},
+          headers: headers && typeof headers === 'object' ? headers : {},
           timeout: num(args.timeout, 20000),
         }
         if (str(args.body, '') !== '') opts.body = str(args.body, '')

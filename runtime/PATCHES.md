@@ -29,6 +29,7 @@
 | `runtime/ego-linux/src/task-spaces.mjs` | `createSeededContext()` 增加 `EGO_ISOLATE_SPACES` 环境变量开关支持；未开启（默认）时返回 `null` 复用磁盘 Profile，开启时保留原作者内存沙盒隔离 | 登录态持久化与沙盒隔离双模可配：用户在设置中选择是否开启空间隔离；默认关闭时所有登录态直接落盘，跨关机重启永久保留，开启时恢复独立内存沙盒 |
 | `runtime/ego-browser/screenshot-clip.mjs` + `runtime/ego-browser/dist/out/index.js` `screenshot()` | viewport / locator 截图的 CDP clip 原点改为 `pageInfo().sx/sy`（`scrollX/scrollY`），不再固定 `{x:0,y:0}`；fullPage 仍从文档原点截整页 | CDP clip 是文档坐标且默认 `captureBeyondViewport:false`：滚动后 clip 落在未绘制区域会得到空白 PNG。与 `spaces-server.mjs` followClip 同一约定 |
 | `runtime/ego-browser/dist/out/index.js`（`enablePageEvents` / `waitForNetworkMatch` / `acquireNetworkEvents`） | ① 会话 attach 时即 `Network.enable`（原来只在等待期间启用）；② 等待结束后**不再** `Network.disable`，全局事件缓冲因此保留整段导航；③ `waitForResponse({includeBuffered:true})` 先回放缓冲：窗口从当前文档的 `Network.requestWillBeSent` 开始（该事件早于 `Page.frameNavigated`，不能简单从 frameNavigated 之后切片）；④ 超时若匹配请求由缓存提供（`Network.requestServedFromCache`，无网络往返）则在错误里列出 URL 并提示 cache-busting | 等待“已经完成”的响应：`page.goto()` 之后的文档响应此前永远等不到（Network 域尚未开启，且 wait 只看未来事件）。缓存命中时干等 10s 也无从判断，现在错误自解释 |
+| `runtime/ego-linux/src/chrome.mjs` | `displayUsable()` 现在同时检查 X socket 与 `.Xn-lock` 中的 pid 是否存活；`pickFreeDisplayNumber()` 只把 live display 算作占用。两者新增可选 `x11Dir`/`lockDir` 参数供测试；文件末尾导出 `__test` seam | issue #91：Xvfb 退出后 `/tmp/.X11-unix/X99` 与 `.X99-lock` 会残留，旧逻辑只查 socket 存在性，把死 display 当成可用 → Chrome 冷启动白等 20s，兜底 Xvfb 又把僵尸号算占用 → display 号每次重启漂移。读 lock pid 判活可复用 :99 并避免 20s 超时 |
 | （其余 runtime 文件）| 与 vendoring 时一致 | 无后续本地改动 |
 
 ## 说明

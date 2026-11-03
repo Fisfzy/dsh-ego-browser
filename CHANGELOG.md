@@ -2,6 +2,19 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.9] - 2026-11-03 — 登录参数归一化 / X display 存活判断
+
+### 修复
+- **`ego_login_import(source="extension")` 恒 0 条（#90）**：DSH 宿主会把 `type: "json"` 参数以 JSON 字符串交给 `execute`，旧代码的 `Array.isArray(args.domains)` 因此恒为 false，`domains` 变成空数组，扩展静默读到 0 条。新增 `parseJsonArg()` / `asStringArray()` / `asArrayArg()` 统一归一化 JSON 字符串、数组和逗号分隔值；`domains`、`ego_select.value`、`ego_drag.points`、`ego_cdp.params`、`ego_http.headers` 都走归一化。
+- **扩展 domains 语义**：省略/空 domains 现在按文档读取**全部 cookie**（`chrome.cookies.getAll({})`），不再静默导出 0 条；结果带 `warning`，面板卡片也会展示。
+- **僵尸 X display（#91）**：`displayUsable()` 现在同时检查 `/tmp/.X11-unix/X<n>` 与 `.X<n>-lock` 中的 pid 是否存活；`pickFreeDisplayNumber()` 只把 live display 算作占用。死 Xvfb 不再触发一次 20s 冷启动失败，也不会让 display 号每次重启漂移。
+
+### 测试
+- 新增 `tests/json-args.test.ts`：JSON/数组/逗号分隔归一化、domains/select/points/CDP 接线、空 domains 全量读取、0 条 warning。
+- 新增 `tests/display-usable.test.ts`：死/活 lock pid、无 socket、无 lock、僵尸 display 复用、live display 跳过。
+- `tests/login-extension.test.ts` 增加“扩展返回 0 条时 warning”用例。
+- 全量：**350 passed / 7 skipped**；typecheck/build 通过。
+
 ## [0.9.8] - 2026-11-01 — ego_tabs 脚本生成的重复 space 声明
 
 ### 修复

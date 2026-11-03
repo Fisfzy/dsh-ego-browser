@@ -98,6 +98,29 @@ describe('login extension bridge (#69 A)', () => {
     }
   })
 
+  it('warns when the extension returns zero cookies (#90)', async () => {
+    const state = await mkdtemp(join(tmpdir(), 'ego-ext-zero-'))
+    const port = bridgePort()
+    try {
+      const job = await startLoginExtensionJob({ domains: [], dryRun: true, timeoutMs: 5000 })
+      const token = await getOrCreateLoginExtensionToken()
+      const pending = await fetch(`http://127.0.0.1:${port}/pending`, { headers: { 'x-ego-token': token } })
+      const pj = (await pending.json()) as { jobId?: string }
+      expect(pj.jobId).toBe(job.jobId)
+      await fetch(`http://127.0.0.1:${port}/cookies`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, jobId: job.jobId, cookies: [] }),
+      })
+      const report = await job.done
+      expect(report).toMatchObject({ ok: true, dryRun: true, totalRead: 0, matched: 0 })
+      expect(report.warning).toMatch(/returned 0 cookies/)
+    } finally {
+      stopLoginExtensionBridge()
+      await rm(state, { recursive: true, force: true })
+    }
+  })
+
   it('pairs with a one-time code and lets the extension poll a waiting job', async () => {
     const port = bridgePort()
     try {

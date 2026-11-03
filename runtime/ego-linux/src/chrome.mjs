@@ -522,23 +522,58 @@ export async function clearProfileLock(profileDir) {
 // never touched.
 
 const X11_UNIX_DIR = "/tmp/.X11-unix";
+const X11_LOCK_DIR = "/tmp";
+
+/**
+ * Read the pid recorded in `/tmp/.Xn-lock`. X leaves this file behind even
+ * after the server dies, so the socket alone is not proof that the display is
+ * usable (#91).
+ */
+async function readXLockPid(num, lockDir = X11_LOCK_DIR) {
+  try {
+    const raw = await readFile(join(lockDir, `.X${num}-lock`), "utf8");
+    const pid = Number(raw.trim().split(/\s+/)[0]);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Is a pid still alive? `kill(pid, 0)` does not send a signal. */
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but belongs to another user.
+    return error?.code === "EPERM";
+  }
+}
+
+/** A local X socket is only usable when its lock pid is alive (or no lock). */
+async function displaySocketAlive(num, x11Dir = X11_UNIX_DIR, lockDir = X11_LOCK_DIR) {
+  if (!(await exists(join(x11Dir, `X${num}`)))) return false;
+  const pid = await readXLockPid(num, lockDir);
+  if (pid === null) return true;
+  return isProcessAlive(pid);
+}
 
 /**
  * Does this $DISPLAY value name a usable X server right now?
  *
  * The env var is the primary signal, but a set-but-stale value (a dead
  * session, a wiped /tmp) would read as "X is here" when it is not — so a
- * local display must also have its socket file present. A display with a
- * host part names a *remote* X server whose socket is not local; trust it
- * as-is instead of shadowing it with a local Xvfb.
+ * local display must also have its socket file present AND a live lock pid.
+ * A display with a host part names a *remote* X server whose socket is not
+ * local; trust it as-is instead of shadowing it with a local Xvfb.
  */
-async function displayUsable(display) {
+async function displayUsable(display, x11Dir = X11_UNIX_DIR, lockDir = X11_LOCK_DIR) {
   if (typeof display !== "string" || display === "") return false;
   const [host, numPart] = display.split(":");
   const num = Number((numPart ?? "").split(".")[0]);
   if (!Number.isInteger(num)) return false;
   if (host) return true;
-  return exists(join(X11_UNIX_DIR, `X${num}`));
+  return await displaySocketAlive(num, x11Dir, lockDir);
 }
 
 /**
@@ -587,13 +622,17 @@ async function findLiveXvfbDisplay() {
 }
 
 /** Pick a display number whose socket does not exist yet. */
-async function pickFreeDisplayNumber() {
+async function pickFreeDisplayNumber(x11Dir = X11_UNIX_DIR, lockDir = X11_LOCK_DIR) {
   const taken = new Set();
   try {
-    const sockets = await readdir(X11_UNIX_DIR);
+    const sockets = await readdir(x11Dir);
     for (const socket of sockets) {
       const match = socket.match(/^X(\d+)$/);
-      if (match) taken.add(Number(match[1]));
+      if (!match) continue;
+      const num = Number(match[1]);
+      // A leftover socket from a dead X server is not "taken" (#91); counting
+      // it would drift new displays to a fresh number on every restart.
+      if (await displaySocketAlive(num, x11Dir, lockDir)) taken.add(num);
     }
   } catch {
     // no X runtime dir yet — nothing taken
@@ -1023,3 +1062,7 @@ export async function browserStatus() {
   const wsUrl = await probe(state.port);
   return wsUrl ? { running: true, ...state, wsUrl } : { running: false, ...state };
 }
+
+/** Internal seams for unit tests (not part of the runtime API). */
+export const __test = { displayUsable, pickFreeDisplayNumber };
+

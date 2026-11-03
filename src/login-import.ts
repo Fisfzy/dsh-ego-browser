@@ -328,6 +328,8 @@ export interface LoginImportReport {
   /** True when the source cookie store lost rows during the session and was restored from the pre-boot backup. */
   /** Domain → cookie count. Values never leave this module. */
   domains?: { domain: string; cookies: number }[]
+  /** Non-fatal notice (e.g. the extension returned zero cookies). */
+  warning?: string
   error?: string
 }
 

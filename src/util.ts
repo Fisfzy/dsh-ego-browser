@@ -21,6 +21,42 @@ export const bool = (v: unknown, fallback: boolean): boolean =>
 export const SAFE_FN =
   'function safe(v){try{return JSON.parse(JSON.stringify(v))}catch{return String(v)}}\n'
 
+/**
+ * DSH can hand a `type: 'json'` parameter to `execute` as either the parsed
+ * value or the raw JSON string. Normalize the string form without treating an
+ * ordinary string as JSON (so `"a"` remains a string, not an unexpected value).
+ */
+export function parseJsonArg(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const text = value.trim()
+  if (text === '') return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return value
+  }
+}
+
+/** Normalize a JSON/array parameter to a string array (domain names, etc.). */
+export function asStringArray(value: unknown): string[] | undefined {
+  const parsed = parseJsonArg(value)
+  if (parsed === undefined || parsed === null) return undefined
+  const list = Array.isArray(parsed)
+    ? parsed
+    : typeof parsed === 'string'
+      ? parsed.split(',')
+      : [parsed]
+  return list.map((item) => String(item).trim()).filter(Boolean)
+}
+
+/** Normalize a JSON/array parameter to an array of arbitrary values. */
+export function asArrayArg(value: unknown): unknown[] | undefined {
+  const parsed = parseJsonArg(value)
+  if (parsed === undefined || parsed === null) return undefined
+  if (Array.isArray(parsed)) return parsed
+  return [parsed]
+}
+
 export interface CollectReaderLike {
   readFrom(offset: number): { text: string; nextOffset: number; lossy: boolean; spillPath?: string }
 }

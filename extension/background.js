@@ -6,8 +6,7 @@ const ALARM = 'ego-bridge-poll'
 async function readCookies(domains) {
   const out = []
   const seen = new Set()
-  for (const domain of domains) {
-    const list = await chrome.cookies.getAll({ domain })
+  const add = (list) => {
     for (const c of list) {
       const key = c.name + '|' + c.domain + '|' + c.path
       if (seen.has(key)) continue
@@ -25,6 +24,13 @@ async function readCookies(domains) {
       })
     }
   }
+  // No explicit domains means "all cookies" (the documented tool semantics).
+  // An empty list must not silently export nothing.
+  if (!Array.isArray(domains) || domains.length === 0) {
+    add(await chrome.cookies.getAll({}))
+    return out
+  }
+  for (const domain of domains) add(await chrome.cookies.getAll({ domain }))
   return out
 }
 

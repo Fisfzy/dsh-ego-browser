@@ -300,6 +300,18 @@ async function buildExtensionReport(cookies: CdpCookie[], received: number, dryR
 }
 
 function settlement(job: ExtensionJob, report: LoginImportReport): void {
+  if (report.ok) {
+    // #90: surface an empty result instead of looking like "logged in but no
+    // cookies". This is the difference between a clear diagnosis and a long
+    // hunt for a nonexistent login problem.
+    if ((report.totalRead ?? 0) === 0) {
+      report.warning =
+        'the Chrome extension returned 0 cookies — check that the browser profile is signed in and the requested domains are correct'
+    } else if (job.domains.length === 0) {
+      report.warning =
+        'no domains specified — all cookies were exported; prefer an explicit domain list to limit scope'
+    }
+  }
   job.state = 'done'
   job.report = report
   const waiter = bridge?.waiters.get(job.id)

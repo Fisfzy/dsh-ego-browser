@@ -818,6 +818,7 @@ declare function require(id: string): any
 				} else {
 					resultText = result.error || 'failed'
 				}
+				if (result.warning) resultText += ' · ' + result.warning
 			}
 			return h('div', { className: 'dsh-ego-card__ffmpeg' },
 				h('div', { className: 'dsh-ego-card__ffmpeg-title' }, t('loginImportTitle')),
