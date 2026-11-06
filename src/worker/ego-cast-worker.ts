@@ -455,13 +455,14 @@ async function main(): Promise<void> {
         const requestedHeight = Number(body.height)
         const requestedDy = Number(body.dy)
         const requestedAspect = Number(body.aspect)
+        const maximize = body.maximize === true
         const hasWidth = Number.isFinite(requestedWidth) && requestedWidth >= 200
         const hasDelta = Number.isFinite(requestedDelta) && requestedDelta !== 0
         const hasHeight = Number.isFinite(requestedHeight) && requestedHeight >= 120
         const hasDy = Number.isFinite(requestedDy) && requestedDy !== 0
         const hasAspect = Number.isFinite(requestedAspect) && requestedAspect > 0 && requestedAspect < 10
-        if (!hasWidth && !hasDelta && !hasHeight && !hasDy && !hasAspect) {
-          return sendJson(res, 400, { ok: false, error: 'width, delta, height, dy or aspect is required' })
+        if (!hasWidth && !hasDelta && !hasHeight && !hasDy && !hasAspect && !maximize) {
+          return sendJson(res, 400, { ok: false, error: 'width, delta, height, dy, aspect or maximize is required' })
         }
         if (!active) return sendJson(res, 409, { ok: false, code: 'browser-disconnected', error: 'no live browser' })
         // Capture the browser for the whole request: `active` can go null while
@@ -471,6 +472,15 @@ async function main(): Promise<void> {
         if (!targetId) return sendJson(res, 409, { ok: false, error: 'no active target' })
         try {
           const now = Date.now()
+          if (maximize) {
+            const { windowId } = await browser.cdp.call('Browser.getWindowForTarget', { targetId }) as { windowId?: number }
+            if (typeof windowId !== 'number') {
+              return sendJson(res, 409, { ok: false, code: 'headless', error: 'the browser has no window (headless); use the pop-out button first' })
+            }
+            await browser.cdp.call('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } })
+            windowSizeCache.delete(targetId)
+            return sendJson(res, 200, { ok: true, windowId, maximized: true })
+          }
           let cache = windowSizeCache.get(targetId)
           if (!cache || now - cache.measuredAt > 10000) {
             const { windowId } = await browser.cdp.call('Browser.getWindowForTarget', { targetId }) as { windowId?: number }
@@ -567,8 +577,42 @@ async function main(): Promise<void> {
           return sendJson(res, 503, { ok: false, code: 'input-dispatch-failed', error: (error as Error).message || String(error) })
         }
       }
+      if (req.method === 'POST' && url.pathname === '/api/navigate') {
+        const body = await readJson(req)
+        if (!active) return sendJson(res, 409, { ok: false, code: 'browser-disconnected', error: 'no live browser' })
+        const targetId = typeof body.targetId === 'string' && body.targetId ? body.targetId : await activeTargetId()
+        if (!targetId) return sendJson(res, 409, { ok: false, error: 'no active target' })
+        const targets = await listTargets()
+        if (!targets.some((target) => target.targetId === targetId)) {
+          return sendJson(res, 409, { ok: false, code: 'target-stale', error: 'target is no longer available' })
+        }
+        try {
+          if (body.reload === true) {
+            await active.sessions.call(targetId, 'Page.reload', { ignoreCache: body.hard === true })
+          } else if (typeof body.url === 'string' && body.url.trim()) {
+            await active.sessions.call(targetId, 'Page.navigate', { url: body.url.trim() })
+          } else {
+            return sendJson(res, 400, { ok: false, error: 'url or reload is required' })
+          }
+          return sendJson(res, 200, { ok: true, targetId, ...(body.reload === true ? { reloaded: true } : { navigated: true }) })
+        } catch (error) {
+          return sendJson(res, 503, { ok: false, code: 'navigate-failed', error: (error as Error).message || String(error) })
+        }
+      }
       if (req.method === 'POST' && url.pathname === '/api/close') { const { targetId } = await readJson(req); if (!active || !targetId) return sendJson(res, 400, { ok: false, error: 'targetId required' }); await active.cdp.call('Target.closeTarget', { targetId }); return sendJson(res, 200, { ok: true }) }
-      if (req.method === 'POST' && url.pathname === '/api/flush') { if (!active) return sendJson(res, 409, { ok: false, error: 'no live browser' }); await active.cdp.call('Storage.flushCookies').catch(() => { /* ignore */ }); return sendJson(res, 200, { ok: true }) }
+      if (req.method === 'POST' && url.pathname === '/api/flush') {
+        if (!active) return sendJson(res, 409, { ok: false, error: 'no live browser' })
+        // Report the actual jar size before nudging Chrome to persist it. The
+        // old handler returned {ok:true} without counts, so callers saw
+        // total:0 even when the browser held cookies (#93).
+        let total = 0
+        try {
+          const jar = await active.cdp.call('Storage.getCookies', {}) as { cookies?: unknown[] }
+          total = Array.isArray(jar.cookies) ? jar.cookies.length : 0
+        } catch { /* leave 0 */ }
+        try { await active.cdp.call('Storage.flushCookies') } catch { /* best effort */ }
+        return sendJson(res, 200, { ok: true, total, flushed: total })
+      }
       if (req.method === 'GET' && url.pathname === '/api/stream') {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' })
         res.write(':ok\n\n')

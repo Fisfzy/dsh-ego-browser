@@ -15,6 +15,45 @@ const BINARY_CANDIDATES = [
   "microsoft-edge",
 ].filter(Boolean);
 
+/**
+ * Platform installation paths that PATH lookup cannot find (#95).
+ *
+ * macOS browsers live inside `.app` bundles; Windows installs under Program
+ * Files/LocalAppData. These paths are only checked after `which`/`where`
+ * misses, so a PATH-provided binary still wins.
+ */
+function installPathCandidates() {
+  const out = [];
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (process.platform === "darwin") {
+    const bundles = [
+      ["Google Chrome", "Google Chrome"],
+      ["Chromium", "Chromium"],
+      ["Microsoft Edge", "Microsoft Edge"],
+      ["Brave Browser", "Brave Browser"],
+      ["Tungsten Edge", "Tungsten Edge"],
+    ];
+    for (const base of ["/Applications", ...(home ? [join(home, "Applications")] : [])]) {
+      for (const [bundle, binary] of bundles) {
+        out.push(join(base, `${bundle}.app`, "Contents", "MacOS", binary));
+      }
+    }
+  } else if (process.platform === "win32") {
+    const roots = [
+      process.env.PROGRAMFILES,
+      process.env["PROGRAMFILES(X86)"],
+      process.env.LOCALAPPDATA,
+    ].filter(Boolean);
+    const relatives = [
+      ["Google", "Chrome", "Application", "chrome.exe"],
+      ["Microsoft", "Edge", "Application", "msedge.exe"],
+      ["BraveSoftware", "Brave-Browser", "Application", "brave.exe"],
+    ];
+    for (const root of roots) for (const rel of relatives) out.push(join(root, ...rel));
+  }
+  return out;
+}
+
 // Chrome writes the negotiated port here once the DevTools endpoint is live.
 const PORT_FILE = "DevToolsActivePort";
 
@@ -167,8 +206,13 @@ async function resolveBinary() {
     const found = await which(candidate);
     if (found) return found;
   }
+  // #95: macOS `.app` bundles / Windows Program Files are not on PATH.
+  for (const candidate of installPathCandidates()) {
+    if (await exists(candidate)) return candidate;
+  }
   throw new Error(
-    `no Chrome/Chromium binary found (tried: ${BINARY_CANDIDATES.join(", ")}). ` +
+    `no Chrome/Chromium binary found (tried: ${BINARY_CANDIDATES.join(", ")}; ` +
+      `platform install paths: ${installPathCandidates().join(", ") || "(none)"}). ` +
       `Set EGO_LINUX_CHROME to an absolute path.`,
   );
 }
@@ -1064,5 +1108,5 @@ export async function browserStatus() {
 }
 
 /** Internal seams for unit tests (not part of the runtime API). */
-export const __test = { displayUsable, pickFreeDisplayNumber };
+export const __test = { displayUsable, pickFreeDisplayNumber, installPathCandidates };
 

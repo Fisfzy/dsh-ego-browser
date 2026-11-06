@@ -12,14 +12,20 @@ import {
 import { resolveConfig } from '../src/config.ts'
 
 describe('tab targeting prelude', () => {
-  it('prefers the active tab over the first real tab', () => {
+  it('prefers a non-blank active tab, then a non-blank tab', () => {
     const script = ensureRealTab()
-    expect(script).toContain('t.active === true')
-    // The active-tab branch must be consulted BEFORE the first-real-tab fallback.
-    expect(script.indexOf('t.active === true')).toBeLessThan(
-      script.indexOf("!t.url.startsWith('about:')"),
+    expect(script).toContain('const __blank')
+    expect(script).toContain("__blank = (u) => /^(about:|chrome:|chrome-extension:|edge:|devtools:|data:)/")
+    expect(script).toContain('t.active === true && !__blank(t.url)')
+    expect(script).toContain('__tabs.find(t => !__blank(t.url))')
+    expect(script.indexOf('t.active === true && !__blank(t.url)')).toBeLessThan(
+      script.indexOf('__tabs.find(t => !__blank(t.url))'),
     )
-    expect(script).toContain('__active ?? __tabs.find')
+  })
+
+  it('avoids re-activating an already-active tab (Windows focus regression)', () => {
+    expect(ensureRealTab()).toContain('__real.active !== true')
+    expect(ensureRealTab()).toContain('await browser.switchTab(__real.targetId)')
   })
 
   it('pins an explicit target id ahead of the active tab', () => {
@@ -53,6 +59,42 @@ describe('tab targeting prelude', () => {
   it('documents the tab parameter on tools that accept it', () => {
     expect(tabParam.type).toBe('string')
     expect(tabParam.description).toMatch(/targetId/)
+  })
+
+  async function resolveTarget(tabs: { targetId: string; url: string; active?: boolean }[], preferred = '') {
+    const switched: string[] = []
+    const code = ensureRealTab(preferred)
+    const run = new Function('browser', `return (async () => {${code}})()`) as (
+      browser: unknown,
+    ) => Promise<void>
+    await run({
+      listTabs: async () => tabs,
+      switchTab: async (id: string) => { switched.push(id) },
+    })
+    return switched
+  }
+
+  it('ignores a blank active new-tab page when a real page exists', async () => {
+    const switched = await resolveTarget([
+      { targetId: 'blank', url: 'chrome://newtab/', active: true },
+      { targetId: 'real', url: 'https://example.com/' },
+    ])
+    expect(switched).toEqual(['real'])
+  })
+
+  it('does not switch an already-active real page', async () => {
+    const switched = await resolveTarget([
+      { targetId: 'real', url: 'https://example.com/', active: true },
+    ])
+    expect(switched).toEqual([])
+  })
+
+  it('honours an explicit pinned target even when it is not active', async () => {
+    const switched = await resolveTarget([
+      { targetId: 'one', url: 'https://one.test/', active: true },
+      { targetId: 'two', url: 'https://two.test/' },
+    ], 'two')
+    expect(switched).toEqual(['two'])
   })
 })
 
@@ -88,7 +130,17 @@ describe('raw heredoc prelude', () => {
   it('is guarded so a browser-less diagnostic script still runs', () => {
     const script = rawScriptPrelude({}, '')
     expect(script.startsWith('try {\n')).toBe(true)
+    expect(script).toContain('taskSpaces.useOrCreate(')
     expect(script.trimEnd().endsWith('} catch {}')).toBe(true)
+  })
+
+  it('carries the session space into raw scripts', () => {
+    expect(rawScriptPrelude({ defaultSpace: 'dsh-agent-abc' }, '')).toContain(
+      'taskSpaces.useOrCreate("dsh-agent-abc")',
+    )
+    expect(rawScriptPrelude({}, '', 'custom-space')).toContain(
+      'taskSpaces.useOrCreate("custom-space")',
+    )
   })
 
   it('carries both the viewport and the tab prelude', () => {

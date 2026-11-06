@@ -1065,6 +1065,13 @@ export const tabParam = {
     'Optional tab targetId (from ego_tabs list). Omit to use the tab Chrome reports as active, falling back to the first real page.',
 }
 
+/** Optional `space` parameter shared by action and raw-script tools. */
+export const spaceParam = {
+  type: 'string',
+  description:
+    'Task-space name or numeric id. Omit to use this session’s own space (dsh-agent-<session>) when session-scoped spaces are on (default), otherwise the most recently opened or explicitly selected space.',
+}
+
 /**
  * Side-channel line the prelude prints with the target it actually chose.
  * The host records it per space so the NEXT call — a brand-new process — can
@@ -1203,9 +1210,18 @@ export const ensureRealTab = (preferred?: string, viewport?: ViewportSpec): stri
   return (
     `const __tabs = await browser.listTabs()\n` +
     `const __want = ${pin !== undefined ? j(pin) : 'null'}\n` +
-    `const __active = __want ? __tabs.find(t => t.targetId === __want) : __tabs.find(t => t.active === true)\n` +
-    `const __real = __active ?? __tabs.find(t => !t.url.startsWith('about:') && !t.url.startsWith('chrome://')) ?? __tabs[0]\n` +
-    `if (__real) await browser.switchTab(__real.targetId)\n` +
+    `const __blank = (u) => /^(about:|chrome:|chrome-extension:|edge:|devtools:|data:)/.test(String(u || ''))\n` +
+    `const __pinned = __want ? __tabs.find(t => t.targetId === __want) : null\n` +
+    `const __real = __pinned\n` +
+    `  ?? __tabs.find(t => t.active === true && !__blank(t.url))\n` +
+    `  ?? __tabs.find(t => !__blank(t.url))\n` +
+    `  ?? __tabs.find(t => t.active === true)\n` +
+    `  ?? __tabs[0]\n` +
+    // Do not re-activate a tab that is already active: Target.activateTarget
+    // restores a minimized Chrome window on Windows, which made every tool
+    // call pop the browser back up (#96). A pinned/background target still
+    // needs the switch.
+    `if (__real && __real.active !== true) await browser.switchTab(__real.targetId)\n` +
     `if (__real) console.log('${TARGET_MARKER}' + __real.targetId)\n` +
     // Guarded: an existing space can be tab-less (every tab closed), and cdp
     // has no session then. Skip emulation rather than failing the whole call.
@@ -1250,9 +1266,15 @@ export const viewportPrelude = (cfg: {
  * must keep working even when no browser is up.
  */
 export const rawScriptPrelude = (
-  cfg: { viewportWidth?: number; viewportHeight?: number; deviceScaleFactor?: number },
+  cfg: {
+    viewportWidth?: number
+    viewportHeight?: number
+    deviceScaleFactor?: number
+    defaultSpace?: string | number
+  },
   tab: string,
-): string => `try {\n${ensureRealTab(tab, cfg)}} catch {}\n`
+  space?: string | number,
+): string => `try {\n${useSpace(space ?? cfg.defaultSpace ?? '')}${ensureRealTab(tab, cfg)}} catch {}\n`
 
 /**
  * ego_tabs script builder (list / switch / open / close).
@@ -2081,11 +2103,6 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       opts.afterExecute?.(args, result)
     },
   })
-  const spaceParam = {
-    type: 'string',
-    description:
-      'Task-space name or numeric id. Omit to use this session’s own space (dsh-agent-<session>) when session-scoped spaces are on (default), otherwise the most recently opened or explicitly selected space.',
-  }
   reg(
     t({
       name: 'ego_space_open',
@@ -2395,18 +2412,26 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           description:
             'Surface the PNG as a deliverable card in the conversation (default true). Set false to keep it a bare path.',
         },
+        hideCursor: {
+          type: 'boolean',
+          description:
+            'Hide the agent cursor overlay while capturing (default true), then restore it. Set false to include the cursor in the PNG.',
+        },
         space: spaceParam,
       },
       buildScript: (args) => {
         const sel = str(args.selector, '')
         const pth = str(args.path, '')
+        const hideCursor = args.hideCursor !== false
         const shot =
           sel !== ''
             ? `await page.locator(${j(sel)}).screenshot(${pth ? `{ path: ${j(pth)} }` : ''})`
             : `await page.screenshot(${pth ? `{ path: ${j(pth)} }` : ''})`
         return (
           `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
-          `const path = ${shot}\n` +
+          `${hideCursor ? `try { if (ego && ego.hideCursor) await ego.hideCursor() } catch {}\nawait new Promise(r => setTimeout(r, 60))\n` : ''}` +
+          `let path\n` +
+          `try { path = ${shot} } finally { ${hideCursor ? `try { if (ego && ego.showCursor) await ego.showCursor() } catch {}` : ''} }\n` +
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`
         )
       },
@@ -3048,6 +3073,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
               "Full JS script body for the heredoc; ego-browser helpers are preloaded. End with console.log('@@DSH_RESULT@@' + JSON.stringify({...})) — the literal @@DSH_RESULT@@ sentinel is required. (A trailing plain JSON line is accepted as a fallback, with result.fallback=true.)",
           },
           tab: tabParam,
+          space: spaceParam,
         },
         output: {
           schema: {
@@ -3069,12 +3095,12 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           try {
             markEgoToolCall(sessionId)
             const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
-              rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''),
+              rawScriptPrelude(cfg, str(args.tab, ''), str(args.space, cfg.defaultSpace)) + str(args.script, ''),
             )
             if (!result.ok) throw new Error(result.error)
             recordPinnedTarget(
               cfg.targetTracker,
-              scopedTargetKey(sessionId, cfg.defaultSpace),
+              scopedTargetKey(sessionId, str(args.space, cfg.defaultSpace)),
               result.stdout,
             )
             const stdout = stripTargetMarkers(result.stdout)
@@ -3381,6 +3407,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
           },
           timeoutMs: { type: 'integer', description: 'Per-run timeout in ms (default plugin grace).' },
           tab: tabParam,
+          space: spaceParam,
         },
         output: {
           schema: {
@@ -3412,7 +3439,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
                 : undefined
             const start = Date.now()
             const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
-              rawScriptPrelude(cfg, str(args.tab, '')) + str(args.script, ''), timeoutMs)
+              rawScriptPrelude(cfg, str(args.tab, ''), str(args.space, cfg.defaultSpace)) + str(args.script, ''), timeoutMs)
             const durationMs = Date.now() - start
             if (!result.ok)
               return {
@@ -3425,7 +3452,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
               }
             recordPinnedTarget(
               cfg.targetTracker,
-              scopedTargetKey(sessionId, cfg.defaultSpace),
+              scopedTargetKey(sessionId, str(args.space, cfg.defaultSpace)),
               result.stdout,
             )
             const stdout = stripTargetMarkers(result.stdout)

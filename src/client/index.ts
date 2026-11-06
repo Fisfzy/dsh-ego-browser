@@ -182,6 +182,14 @@ declare function require(id: string): any
 			sizeSyncHint: 'Unlocked: resizing this panel resizes the REAL agent browser window (CDP window bounds). Click again to lock.',
 			sizePresets: 'Size presets',
 			sizePresetsHint: 'Set the agent browser window to a fixed aspect ratio',
+			refreshPage: 'Refresh',
+			refreshHint: 'Reload the current agent page',
+			openUrl: 'URL',
+			openUrlHint: 'Open a URL in the current agent page',
+			openUrlPrompt: 'Enter a URL to open in the agent browser',
+			maximizeWindow: 'Maximize',
+			maximizeHint: 'Maximize the real agent browser window',
+			actionFailed: 'Action failed',
 			resizeHint: 'Drag to resize the agent browser window',
 			sizeApiOutdated: 'Size API not loaded — restart DSH to pick up the new host build',
 			executorResident: 'resident',
@@ -256,6 +264,14 @@ declare function require(id: string): any
 			sizeSyncHint: '解锁后拖动面板会直接改变 agent 浏览器真实窗口大小（CDP 窗口 bounds）；再点一下锁定。',
 			sizePresets: '尺寸预设',
 			sizePresetsHint: '按固定比例设置 agent 浏览器窗口',
+			refreshPage: '刷新',
+			refreshHint: '重新加载当前 agent 页面',
+			openUrl: '网址',
+			openUrlHint: '在当前 agent 页面打开网址',
+			openUrlPrompt: '输入要在 agent 浏览器打开的网址',
+			maximizeWindow: '最大化',
+			maximizeHint: '最大化真实 agent 浏览器窗口',
+			actionFailed: '操作失败',
 			resizeHint: '拖动调整 agent 浏览器窗口大小',
 			sizeApiOutdated: '尺寸接口未就绪：请重启 DSH 以加载最新 host 构建',
 			executorResident: '常驻',
@@ -1385,6 +1401,8 @@ declare function require(id: string): any
 		const ICON_LOCK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="10" rx="2.2"/><path d="M8 10V8a4 4 0 0 1 8 0v2"/></svg>`;
 		const ICON_UNLOCK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="10" rx="2.2"/><path d="M8 10V8a4 4 0 0 1 7.6-1.8"/></svg>`;
 		const ICON_ASPECT = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="M3 10h18"/><path d="M8 5v5"/></svg>`;
+		const ICON_LINK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/></svg>`;
+		const ICON_MAXIMIZE = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M8 21H3v-5"/><path d="M16 21h5v-5"/></svg>`;
 		const ICON_KEY = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="3.2"/><path d="M10.3 12.7L20 3"/><path d="M17 6l2 2"/><path d="M14.5 8.5l2 2"/></svg>`;
 
 		function apply(ctx) {
@@ -1731,6 +1749,7 @@ declare function require(id: string): any
   color: var(--ego-text-2); white-space: nowrap;
 }
 .dsh-ego-side-back:hover { background: var(--ego-hover); color: var(--ego-text); }
+.dsh-ego-side-back:disabled { opacity: .4; cursor: default; pointer-events: none; }
 .dsh-ego-side-back:active { transform: scale(.98); }
 .dsh-ego-side-back:focus-visible { outline: 2px solid var(--ego-accent); outline-offset: 1px; }
 .dsh-ego-side-back-on { color: var(--ego-accent); background: rgba(26,115,232,.10); }
@@ -2849,6 +2868,48 @@ declare function require(id: string): any
 					})
 				}).catch(function () { return null })
 			}
+			var panelNavigate = function (url, reload) {
+				var targetId = currentSpace && currentSpace.targetId
+				if (!targetId) { setSizeNotice(wt('noActivePages')); return }
+				var body = reload ? { targetId: targetId, reload: true } : { targetId: targetId, url: url }
+				setSizeNotice('')
+				fetch('/api/ego/navigate', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(body),
+				}).then(function (r) {
+					return r.json().catch(function () { return null }).then(function (parsed) {
+						if (r.status === 404) setSizeNotice(wt('sizeApiOutdated'))
+						else if (parsed && parsed.ok === true) { setSizeNotice(''); controller.refresh() }
+						else setSizeNotice((parsed && parsed.error) || wt('actionFailed'))
+						return parsed
+					})
+				}).catch(function () { setSizeNotice(wt('actionFailed')) })
+			}
+			var openUrlInPanel = function () {
+				var entered = window.prompt(wt('openUrlPrompt'), (currentSpace && currentSpace.url) || 'https://')
+				if (!entered) return
+				var url = entered.trim()
+				if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url
+				panelNavigate(url, false)
+			}
+			var maximizeWindow = function () {
+				var targetId = currentSpace && currentSpace.targetId
+				if (!targetId) { setSizeNotice(wt('noActivePages')); return }
+				setSizeNotice('')
+				fetch('/api/ego/window-size', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ targetId: targetId, maximize: true }),
+				}).then(function (r) {
+					return r.json().catch(function () { return null }).then(function (parsed) {
+						if (r.status === 404) setSizeNotice(wt('sizeApiOutdated'))
+						else if (parsed && parsed.ok === true) setSizeNotice('')
+						else setSizeNotice((parsed && parsed.error) || wt('actionFailed'))
+						return parsed
+					})
+				}).catch(function () { setSizeNotice(wt('actionFailed')) })
+			}
 			React.useEffect(function () {
 				if (!presetOpen) return
 				var onDoc = function (event) {
@@ -3214,11 +3275,14 @@ declare function require(id: string): any
 							h('div', { className: 'dsh-ego-side-actionline' },
 								h('div', { className: 'dsh-ego-side-btngroup' },
 									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('openExternal'), onClick: function () { var url = currentSpace.url; if (url && !url.startsWith('about:') && !url.startsWith('chrome://')) window.open(url, '_blank', 'noopener') } }, icon(ICON_OPEN_EXTERNAL), wt('openExternal')),
-									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('raiseWindowHint'), onClick: function () { fetch('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function (r) { return r.json().catch(function () { return null }) }).catch(function () { return null }) } }, icon(ICON_POPOUT), wt('raiseWindow'))
+									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('raiseWindowHint'), onClick: function () { fetch('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function (r) { return r.json().catch(function () { return null }) }).catch(function () { return null }) } }, icon(ICON_POPOUT), wt('raiseWindow')),
+									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('refreshHint'), disabled: !currentSpace, onClick: function () { panelNavigate('', true) } }, icon(ICON_REFRESH), wt('refreshPage')),
+									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('openUrlHint'), disabled: !currentSpace, onClick: openUrlInPanel }, icon(ICON_LINK), wt('openUrl'))
 								),
 								h('div', { className: 'dsh-ego-side-btngroup' },
 									h('button', { className: 'dsh-ego-side-back' + (sizeSyncOn ? ' dsh-ego-side-back-on' : ''), type: 'button', title: wt('sizeSyncHint'), onClick: function () { var next = !sizeSyncOn; setSizeSyncOn(next); sizeSync.setEnabled(next); if (next) sizeSync.attach(imgRef.current || videoRef.current) } }, icon(sizeSyncOn ? ICON_LOCK : ICON_UNLOCK), sizeSyncOn ? wt('sizeSyncOn') : wt('sizeSyncOff')),
-									h('button', { className: 'dsh-ego-side-back' + (presetOpen ? ' dsh-ego-side-back-on' : ''), type: 'button', title: wt('sizePresetsHint'), onClick: function () { setPresetOpen(!presetOpen) } }, icon(ICON_ASPECT), wt('sizePresets'))
+									h('button', { className: 'dsh-ego-side-back' + (presetOpen ? ' dsh-ego-side-back-on' : ''), type: 'button', title: wt('sizePresetsHint'), onClick: function () { setPresetOpen(!presetOpen) } }, icon(ICON_ASPECT), wt('sizePresets')),
+									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('maximizeHint'), disabled: !currentSpace, onClick: maximizeWindow }, icon(ICON_MAXIMIZE), wt('maximizeWindow'))
 								),
 								presetOpen ? h('div', { className: 'dsh-ego-side-presets', ref: presetRef }, PRESETS.map(function (preset) { return h('button', { key: preset.label, type: 'button', className: 'dsh-ego-side-preset-item', onClick: function () { applyPreset(preset.ratio) } }, preset.label) })) : null,
 							),

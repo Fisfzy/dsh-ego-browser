@@ -127,6 +127,11 @@ export async function createEgoShim({ headless = false } = {}) {
     // so this reads as `await ego.highlight("free shipping")`.
     highlight: (target, options) => cursor.highlight(target, options),
     clearHighlight: () => cursor.clearHighlight(),
+    // Screenshot support: hide the DOM cursor overlay for one capture, then
+    // restore it. The browser window keeps its cursor for the human; only the
+    // captured PNG is clean (#96).
+    hideCursor: () => cursor.hide(),
+    showCursor: () => cursor.show(),
 
     // --- App-lifecycle: no-ops on Linux -------------------------------------
     async getBrowserVersion() {

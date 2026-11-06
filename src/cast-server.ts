@@ -38,6 +38,7 @@ export const EGO_FLUSH_ROUTE = '/api/ego/flush'
 export const EGO_RAISE_ROUTE = '/api/ego/raise'
 export const EGO_LOGIN_IMPORT_ROUTE = '/api/ego/login-import'
 export const EGO_INPUT_ROUTE = '/api/ego/input'
+export const EGO_NAVIGATE_ROUTE = '/api/ego/navigate'
 export const EGO_WINDOW_SIZE_ROUTE = '/api/ego/window-size'
 export const EGO_WATCH_START_ROUTE = '/api/ego/watch/start'
 export const EGO_WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
@@ -523,6 +524,28 @@ export function initCastServer(
     },
   })
 
+  // POST /api/ego/navigate — panel refresh / manual URL. The worker performs
+  // Page.reload or Page.navigate on the selected target without activating a
+  // different tab.
+  const disposeNavigate = server.register({
+    kind: 'exact',
+    path: EGO_NAVIGATE_ROUTE,
+    handler: async (reqRaw: unknown, resRaw: unknown) => {
+      const req = reqRaw as IncomingMessage
+      const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
+      const port = await ensureWorker()
+      if (port === null) return sendJson(res, 400, { ok: false, error: 'no live agent browser' })
+      const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
+      if (body.reload !== true && !(typeof body.url === 'string' && body.url.trim())) {
+        return sendJson(res, 400, { ok: false, error: 'url or reload is required' })
+      }
+      const result = await proxyPost(port, '/api/navigate', body)
+      if (!result) return sendJson(res, 502, { ok: false, error: 'navigate worker unavailable' })
+      return sendJson(res, result.status, result.body)
+    },
+  })
+
   // POST /api/ego/window-size — the watch panel's size-sync toggle drives the
   // REAL agent browser window. The body carries the desired PAGE viewport in
   // CSS px; the worker adds Chrome's frame and calls Browser.setWindowBounds.
@@ -541,8 +564,9 @@ export function initCastServer(
       const height = Number(body.height)
       const dy = Number(body.dy)
       const aspect = Number(body.aspect)
-      if (!Number.isFinite(width) && !Number.isFinite(delta) && !Number.isFinite(height) && !Number.isFinite(dy) && !Number.isFinite(aspect)) {
-        return sendJson(res, 400, { ok: false, error: 'width, delta, height, dy or aspect is required' })
+      const maximize = body.maximize === true
+      if (!Number.isFinite(width) && !Number.isFinite(delta) && !Number.isFinite(height) && !Number.isFinite(dy) && !Number.isFinite(aspect) && !maximize) {
+        return sendJson(res, 400, { ok: false, error: 'width, delta, height, dy, aspect or maximize is required' })
       }
       const result = await proxyPost(port, '/api/window-size', {
         ...(Number.isFinite(width) ? { width } : {}),
@@ -553,6 +577,7 @@ export function initCastServer(
         ...(Number.isFinite(dy) ? { dy } : {}),
         // Aspect presets keep the current width and derive the height.
         ...(Number.isFinite(aspect) && aspect > 0 ? { aspect } : {}),
+        ...(maximize ? { maximize: true } : {}),
         ...(typeof body.targetId === 'string' && body.targetId ? { targetId: body.targetId } : {}),
       })
       if (!result) return sendJson(res, 502, { ok: false, error: 'window-size worker unavailable' })
@@ -776,6 +801,7 @@ export function initCastServer(
     try { disposeSpaces() } catch { /* ignore */ }
     try { disposeStream() } catch { /* ignore */ }
     try { disposeInput() } catch { /* ignore */ }
+    try { disposeNavigate() } catch { /* ignore */ }
     try { disposeWindowSize() } catch { /* ignore */ }
     try { disposeExecutor() } catch { /* ignore */ }
     try { disposeLoginBridge.forEach((dispose) => dispose()) } catch { /* ignore */ }

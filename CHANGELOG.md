@@ -2,6 +2,24 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.10] - 2026-11-06 — 标签页选择 / 脚本 space / 面板刷新与最大化
+
+### 修复
+- **`ensureRealTab` 选中 `chrome://newtab`（#92）**：没有 active 标签时，旧兜底把 `__tabs[0]`（常驻 newtab）当成真实页，`ego_script` 的 `page` 句柄指向空白页。现在统一识别 `about:/chrome:/chrome-extension:/edge:/devtools:/data:`，优先「active 且非空白」→ 非空白 → active → 第一个标签；显式 pin 仍优先。
+- **`ego_script` / `ego_cli` 没有 space（#92）**：两个脚本工具现在接受 `space` 参数，脚本前置 `taskSpaces.useOrCreate(space)`，并使用同一个 space 记录 targetId pin，和结构化工具的 target 保持一致。
+- **Windows 最小化后每次调用弹窗（#96）**：`ensureRealTab` 不再对已经 active 的标签调用 `browser.switchTab`（`Target.activateTarget` 会恢复最小化窗口）；只有 pinned/后台目标才切换。
+- **截图包含 agent 光标（#96）**：新增 `ego_screenshot({ hideCursor })`，默认 `true`：截图前临时 `ego.hideCursor()`，完成后 `ego.showCursor()`；浏览器窗口仍显示光标，PNG 不再截到它。
+- **macOS 运行时仍只认 Linux PATH（#95）**：`runtime/ego-linux/src/chrome.mjs` 的 `resolveBinary()` 在 `which` 失败后增加平台安装路径兜底——macOS `/Applications` 与 `~/Applications` 下的 Chrome/Chromium/Edge/Brave/Tungsten Edge `.app`，Windows Program Files/LocalAppData；PATH 仍优先。README 增加 macOS 官方 ego lite 桥接说明。
+- **`ego_auth_flush` 报告真实 cookie 数量（#93 诊断）**：worker `/api/flush` 现在先 `Storage.getCookies` 统计 jar，再 `Storage.flushCookies`，返回 `{total, flushed}`；不再固定 `total:0`。macOS 持久化是否落盘仍需报告者按 issue 步骤复测。
+
+### 新增
+- **面板刷新 / 手动网址 / 最大化（#94）**：工具栏新增「刷新」「网址」按钮，以及尺寸预设右侧的「最大化」按钮；新增 `/api/ego/navigate` 主机路由和 worker 的 `Page.reload`/`Page.navigate`；`/api/ego/window-size` 支持 `maximize`（`Browser.setWindowBounds({windowState:'maximized'})`）。
+
+### 测试
+- 扩充 `tests/tab-and-viewport.test.ts`：模拟 tab 列表验证空白 active、已 active 不切换、显式 pin；验证脚本 space 前置。
+- 新增 `tests/panel-actions.test.ts`：刷新/网址/最大化路由与 UI 接线、焦点回归、截图隐藏光标。
+- 全量：**361 passed / 7 skipped**；typecheck/build 通过。
+
 ## [0.9.9] - 2026-11-03 — 登录参数归一化 / X display 存活判断
 
 ### 修复

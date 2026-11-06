@@ -5643,14 +5643,15 @@ async function main() {
 				const requestedHeight = Number(body.height);
 				const requestedDy = Number(body.dy);
 				const requestedAspect = Number(body.aspect);
+				const maximize = body.maximize === true;
 				const hasWidth = Number.isFinite(requestedWidth) && requestedWidth >= 200;
 				const hasDelta = Number.isFinite(requestedDelta) && requestedDelta !== 0;
 				const hasHeight = Number.isFinite(requestedHeight) && requestedHeight >= 120;
 				const hasDy = Number.isFinite(requestedDy) && requestedDy !== 0;
 				const hasAspect = Number.isFinite(requestedAspect) && requestedAspect > 0 && requestedAspect < 10;
-				if (!hasWidth && !hasDelta && !hasHeight && !hasDy && !hasAspect) return sendJson(res, 400, {
+				if (!hasWidth && !hasDelta && !hasHeight && !hasDy && !hasAspect && !maximize) return sendJson(res, 400, {
 					ok: false,
-					error: "width, delta, height, dy or aspect is required"
+					error: "width, delta, height, dy, aspect or maximize is required"
 				});
 				if (!active) return sendJson(res, 409, {
 					ok: false,
@@ -5665,6 +5666,24 @@ async function main() {
 				});
 				try {
 					const now = Date.now();
+					if (maximize) {
+						const { windowId } = await browser.cdp.call("Browser.getWindowForTarget", { targetId });
+						if (typeof windowId !== "number") return sendJson(res, 409, {
+							ok: false,
+							code: "headless",
+							error: "the browser has no window (headless); use the pop-out button first"
+						});
+						await browser.cdp.call("Browser.setWindowBounds", {
+							windowId,
+							bounds: { windowState: "maximized" }
+						});
+						windowSizeCache.delete(targetId);
+						return sendJson(res, 200, {
+							ok: true,
+							windowId,
+							maximized: true
+						});
+					}
 					let cache = windowSizeCache.get(targetId);
 					if (!cache || now - cache.measuredAt > 1e4) {
 						const { windowId } = await browser.cdp.call("Browser.getWindowForTarget", { targetId });
@@ -5809,6 +5828,43 @@ async function main() {
 					});
 				}
 			}
+			if (req.method === "POST" && url.pathname === "/api/navigate") {
+				const body = await readJson(req);
+				if (!active) return sendJson(res, 409, {
+					ok: false,
+					code: "browser-disconnected",
+					error: "no live browser"
+				});
+				const targetId = typeof body.targetId === "string" && body.targetId ? body.targetId : await activeTargetId();
+				if (!targetId) return sendJson(res, 409, {
+					ok: false,
+					error: "no active target"
+				});
+				if (!(await listTargets()).some((target) => target.targetId === targetId)) return sendJson(res, 409, {
+					ok: false,
+					code: "target-stale",
+					error: "target is no longer available"
+				});
+				try {
+					if (body.reload === true) await active.sessions.call(targetId, "Page.reload", { ignoreCache: body.hard === true });
+					else if (typeof body.url === "string" && body.url.trim()) await active.sessions.call(targetId, "Page.navigate", { url: body.url.trim() });
+					else return sendJson(res, 400, {
+						ok: false,
+						error: "url or reload is required"
+					});
+					return sendJson(res, 200, {
+						ok: true,
+						targetId,
+						...body.reload === true ? { reloaded: true } : { navigated: true }
+					});
+				} catch (error) {
+					return sendJson(res, 503, {
+						ok: false,
+						code: "navigate-failed",
+						error: error.message || String(error)
+					});
+				}
+			}
 			if (req.method === "POST" && url.pathname === "/api/close") {
 				const { targetId } = await readJson(req);
 				if (!active || !targetId) return sendJson(res, 400, {
@@ -5823,8 +5879,19 @@ async function main() {
 					ok: false,
 					error: "no live browser"
 				});
-				await active.cdp.call("Storage.flushCookies").catch(() => {});
-				return sendJson(res, 200, { ok: true });
+				let total = 0;
+				try {
+					const jar = await active.cdp.call("Storage.getCookies", {});
+					total = Array.isArray(jar.cookies) ? jar.cookies.length : 0;
+				} catch {}
+				try {
+					await active.cdp.call("Storage.flushCookies");
+				} catch {}
+				return sendJson(res, 200, {
+					ok: true,
+					total,
+					flushed: total
+				});
 			}
 			if (req.method === "GET" && url.pathname === "/api/stream") {
 				res.writeHead(200, {

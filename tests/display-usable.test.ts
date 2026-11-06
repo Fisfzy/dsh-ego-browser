@@ -81,3 +81,16 @@ describe("X display liveness (#91)", () => {
     }
   });
 });
+
+describe("platform browser install candidates (#95)", () => {
+  it("includes macOS .app bundles / Windows Program Files paths", () => {
+    const candidates: string[] = __test.installPathCandidates();
+    if (process.platform === "darwin") {
+      expect(candidates.some((p) => p.endsWith("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))).toBe(true);
+      expect(candidates.some((p) => p.endsWith("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"))).toBe(true);
+    } else if (process.platform === "win32") {
+      expect(candidates.some((p) => /chrome\.exe$/i.test(p))).toBe(true);
+      expect(candidates.some((p) => /msedge\.exe$/i.test(p))).toBe(true);
+    }
+  });
+});
