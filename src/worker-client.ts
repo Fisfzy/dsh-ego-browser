@@ -7,20 +7,21 @@ import { resolveEgoStateDir } from './login-import.ts'
 
 const WORKER_BIN = fileURLToPath(new URL('../bin/ego-cast-worker.mjs', import.meta.url))
 
-function castStatePath(): string {
+export function castStatePath(): string {
   // Mirror the ego-lite runtime state dir across platforms so we find the
   // worker's ego-cast.json wherever it ran: Windows uses
   // %LOCALAPPDATA%\ego-lite-linux; POSIX uses $XDG_STATE_HOME (default
-  // ~/.local/state)/ego-lite-linux. Honors EGO_LINUX_STATE_DIR overrides.
+  // ~/.local/state)/ego-lite-linux. EGO_LINUX_STATE_DIR is already the state
+  // root: the worker writes `<ENV>/ego-cast.json` there, so do not append
+  // another `ego-lite-linux` layer (#97).
   const e = process.env
+  if (e.EGO_LINUX_STATE_DIR) return join(e.EGO_LINUX_STATE_DIR, 'ego-cast.json')
   const isWin = process.platform === 'win32'
   const home = e.HOME || e.USERPROFILE || (isWin ? e.LOCALAPPDATA || '' : '/root')
-  const stateHome = e.EGO_LINUX_STATE_DIR || (isWin
+  const stateHome = isWin
     ? (e.LOCALAPPDATA || `${home}\\AppData\\Local`)
-    : (e.XDG_STATE_HOME || `${home}/.local/state`))
-  return stateHome.endsWith('ego-lite-linux')
-    ? `${stateHome}/ego-cast.json`
-    : `${stateHome}/ego-lite-linux/ego-cast.json`
+    : (e.XDG_STATE_HOME || `${home}/.local/state`)
+  return join(stateHome, 'ego-lite-linux', 'ego-cast.json')
 }
 
 /** Proxy a worker loopback endpoint. Returns null when the worker is unreachable. */
@@ -132,6 +133,8 @@ export type EnsureWorker = () => Promise<number | null>
  */
 export function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegManager: FfmpegInstallationManager | null): EnsureWorker {
   let lastAttempt = 0
+  let attemptInFlight = false
+  let backoffMs = 8000
   async function launchedWorkerPort(): Promise<number | null> {
     const state = await knownWorkerState()
     if (state.pid === null || !isProcessAlive(state.pid)) return null
@@ -140,51 +143,63 @@ export function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegMan
   }
   return async function ensureWorker(): Promise<number | null> {
     const running = await launchedWorkerPort()
-    if (running !== null) return running
-    // Worker is dead or not yet up; spawn one, rate-limited.
-    const now = Date.now()
-    if (now - lastAttempt > 8000) {
-      lastAttempt = now
-      try {
-        // Pass the current cast config to the worker as a JSON argv arg so it
-        // starts with the right screencast parameters without needing an
-        // extra round-trip POST. The worker reads process.argv[2].
-        await ffmpegManager?.check({ configuredPath: cfg.ffmpegPath, requestedEncoder: cfg.ffmpegEncoder }).catch(() => null)
-        const initCfg = JSON.stringify(captureConfig(cfg, ffmpegManager))
-        const handle = ctx.subprocess.spawn({
-          argv: [process.execPath, WORKER_BIN, initCfg],
-          // cwd is required by the dsh-subprocess provider on DSH >= 0.1.5 —
-          // omitting it throws inside spawn() and the catch below swallowed it
-          // silently, making the watch panel never start (issue #34 defect 1).
-          cwd: process.cwd(),
-          // Electron hosts (DSH Desktop): process.execPath is the Electron
-          // binary; children need ELECTRON_RUN_AS_NODE=1 or they boot as a
-          // second Electron app (issue #42). Mirror of resolveEgoEnv's guard —
-          // inlined here because cast-server cannot import from index.ts
-          // (circular import).
-          env: (process.versions as { electron?: string }).electron
-            ? { ...process.env, ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? '1' }
-            : undefined,
-          stdio: {
-            stdin: { data: '' },
-            stdout: { maxBytes: 8192 },
-            stderr: { maxBytes: 4096 },
-          },
-          graceMs: 12_000,
-        })
-        handle.done.catch(() => null)
-        const deadline = Date.now() + 8000
-        while (Date.now() < deadline) {
-          const ready = await launchedWorkerPort()
-          if (ready !== null) return ready
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-        return null
-      } catch {
-        return null
-      }
+    if (running !== null) {
+      backoffMs = 8000
+      return running
     }
-    return null
+    // Worker is dead or not yet up; spawn one with a monotonic backoff. A
+    // stuck state path used to re-spawn forever (issue #97); never overlap
+    // spawn attempts here either.
+    if (attemptInFlight) return null
+    const now = Date.now()
+    if (now - lastAttempt < backoffMs) return null
+    lastAttempt = now
+    attemptInFlight = true
+    try {
+      // Pass the current cast config to the worker as a JSON argv arg so it
+      // starts with the right screencast parameters without needing an
+      // extra round-trip POST. The worker reads process.argv[2].
+      await ffmpegManager?.check({ configuredPath: cfg.ffmpegPath, requestedEncoder: cfg.ffmpegEncoder }).catch(() => null)
+      const initCfg = JSON.stringify(captureConfig(cfg, ffmpegManager))
+      const handle = ctx.subprocess.spawn({
+        argv: [process.execPath, WORKER_BIN, initCfg],
+        // cwd is required by the dsh-subprocess provider on DSH >= 0.1.5 —
+        // omitting it throws inside spawn() and the catch below swallowed it
+        // silently, making the watch panel never start (issue #34 defect 1).
+        cwd: process.cwd(),
+        // Electron hosts (DSH Desktop): process.execPath is the Electron
+        // binary; children need ELECTRON_RUN_AS_NODE=1 or they boot as a
+        // second Electron app (issue #42). Mirror of resolveEgoEnv's guard —
+        // inlined here because cast-server cannot import from index.ts
+        // (circular import).
+        env: (process.versions as { electron?: string }).electron
+          ? { ...process.env, ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? '1' }
+          : undefined,
+        stdio: {
+          stdin: { data: '' },
+          stdout: { maxBytes: 8192 },
+          stderr: { maxBytes: 4096 },
+        },
+        graceMs: 12_000,
+      })
+      handle.done.catch(() => null)
+      const deadline = Date.now() + 8000
+      while (Date.now() < deadline) {
+        const ready = await launchedWorkerPort()
+        if (ready !== null) {
+          backoffMs = 8000
+          return ready
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      backoffMs = Math.min(backoffMs * 2, 60_000)
+      return null
+    } catch {
+      backoffMs = Math.min(backoffMs * 2, 60_000)
+      return null
+    } finally {
+      attemptInFlight = false
+    }
   }
 }
 

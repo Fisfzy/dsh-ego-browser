@@ -41,7 +41,7 @@ describe('shared worker client', () => {
     expect(await readTaskSpaceGroups()).toEqual([])
   })
 
-  it('keeps construction lazy and failed launches throttled for eight seconds', async () => {
+  it('keeps construction lazy and backs off failed launches', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(100_000)
     const spawn = vi.fn(() => { throw new Error('browser unavailable') })
@@ -52,13 +52,14 @@ describe('shared worker client', () => {
     vi.setSystemTime(108_000)
     expect(await ensure()).toBeNull()
     expect(spawn).toHaveBeenCalledTimes(1)
-    vi.setSystemTime(108_001)
+    // First failure doubles the backoff to 16s.
+    vi.setSystemTime(116_000)
     expect(await ensure()).toBeNull()
     expect(spawn).toHaveBeenCalledTimes(2)
   })
 
   it('reuses the live worker and preserves the existing cast-state path', async () => {
-    await writeFile(join(stateDir, 'ego-lite-linux', 'ego-cast.json'), JSON.stringify({ port: 41234, pid: process.pid }))
+    await writeFile(join(stateDir, 'ego-cast.json'), JSON.stringify({ port: 41234, pid: process.pid }))
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response(JSON.stringify({ workerOk: true })))
     vi.stubGlobal('fetch', fetcher)
     const spawn = vi.fn()

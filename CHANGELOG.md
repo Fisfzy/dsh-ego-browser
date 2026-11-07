@@ -2,6 +2,19 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.11] - 2026-11-06 — cast worker 状态路径修复 / macOS Cookie 诊断
+
+### 诊断
+- **macOS 27 + Chrome 156 cookie 不落盘（#93 后续）**：新增 `EGO_LINUX_USE_MOCK_KEYCHAIN=1`（或 `chromeArgs: "--use-mock-keychain"`）对照开关：macOS 上让 Chrome 使用 mock/test Keychain，用于判断实时 cookie jar 非空但 `Default/Cookies` 不变是否由登录 Keychain 引起。**默认关闭**，开启会降低静态加密强度，只建议诊断使用。
+- README 增加 macOS Cookie 落盘排查步骤，并明确 macOS 仍使用 `Default/Cookies`（不是 Windows 的 `Default/Network/Cookies`）。
+
+### 修复
+- **自定义 `EGO_LINUX_STATE_DIR` 下 cast worker 无限重启（#97）**：worker 把 `ego-cast.json` 直接写在 `$EGO_LINUX_STATE_DIR`，而插件 `castStatePath()` 又拼了一层 `ego-lite-linux`，导致永远找不到 worker → 每 8 秒重新 spawn，旧 worker 不退出、内存持续增长。现在两边统一为 `<EGO_LINUX_STATE_DIR>/ego-cast.json`；`ensureWorker()` 增加单次 in-flight 保护与 8s→16s→…→60s 指数退避，避免重复 spawn。
+
+### 测试
+- 新增 `tests/worker-state.test.ts`：自定义 state dir 路径、读取 ego-cast.json。
+- 全量：**364 passed / 7 skipped**；typecheck/build 通过。
+
 ## [0.9.10] - 2026-11-06 — 标签页选择 / 脚本 space / 面板刷新与最大化
 
 ### 修复
@@ -10,7 +23,7 @@
 - **Windows 最小化后每次调用弹窗（#96）**：`ensureRealTab` 不再对已经 active 的标签调用 `browser.switchTab`（`Target.activateTarget` 会恢复最小化窗口）；只有 pinned/后台目标才切换。
 - **截图包含 agent 光标（#96）**：新增 `ego_screenshot({ hideCursor })`，默认 `true`：截图前临时 `ego.hideCursor()`，完成后 `ego.showCursor()`；浏览器窗口仍显示光标，PNG 不再截到它。
 - **macOS 运行时仍只认 Linux PATH（#95）**：`runtime/ego-linux/src/chrome.mjs` 的 `resolveBinary()` 在 `which` 失败后增加平台安装路径兜底——macOS `/Applications` 与 `~/Applications` 下的 Chrome/Chromium/Edge/Brave/Tungsten Edge `.app`，Windows Program Files/LocalAppData；PATH 仍优先。README 增加 macOS 官方 ego lite 桥接说明。
-- **`ego_auth_flush` 报告真实 cookie 数量（#93 诊断）**：worker `/api/flush` 现在先 `Storage.getCookies` 统计 jar，再 `Storage.flushCookies`，返回 `{total, flushed}`；不再固定 `total:0`。macOS 持久化是否落盘仍需报告者按 issue 步骤复测。
+- **`ego_auth_flush` 报告真实 cookie 数量（#93 诊断）**：worker `/api/flush` 现在先 `Storage.getCookies` 统计 jar，再 `Storage.flushCookies`，返回 `{total, flushed}`；不再固定 `total:0`。macOS 持久化是否落盘仍需报告者按 issue 步骤复测。另新增 macOS 的 `EGO_LINUX_USE_MOCK_KEYCHAIN=1` / `chromeArgs: "--use-mock-keychain"` 对照开关（默认关闭，会降低静态加密强度），用于判断是否 Keychain 导致 cookie 不落盘。
 
 ### 新增
 - **面板刷新 / 手动网址 / 最大化（#94）**：工具栏新增「刷新」「网址」按钮，以及尺寸预设右侧的「最大化」按钮；新增 `/api/ego/navigate` 主机路由和 worker 的 `Page.reload`/`Page.navigate`；`/api/ego/window-size` 支持 `maximize`（`Browser.setWindowBounds({windowState:'maximized'})`）。
@@ -18,7 +31,7 @@
 ### 测试
 - 扩充 `tests/tab-and-viewport.test.ts`：模拟 tab 列表验证空白 active、已 active 不切换、显式 pin；验证脚本 space 前置。
 - 新增 `tests/panel-actions.test.ts`：刷新/网址/最大化路由与 UI 接线、焦点回归、截图隐藏光标。
-- 全量：**361 passed / 7 skipped**；typecheck/build 通过。
+- 全量：**362 passed / 7 skipped**；typecheck/build 通过。
 
 ## [0.9.9] - 2026-11-03 — 登录参数归一化 / X display 存活判断
 

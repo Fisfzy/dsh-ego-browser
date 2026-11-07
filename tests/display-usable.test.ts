@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 // @ts-expect-error runtime chrome.mjs is plain ESM without a .d.ts
@@ -92,5 +92,14 @@ describe("platform browser install candidates (#95)", () => {
       expect(candidates.some((p) => /chrome\.exe$/i.test(p))).toBe(true);
       expect(candidates.some((p) => /msedge\.exe$/i.test(p))).toBe(true);
     }
+  });
+
+  it("keeps the macOS mock-keychain diagnostic opt-in (#93)", () => {
+    const chromeSource = readFile(new URL("../runtime/ego-linux/src/chrome.mjs", import.meta.url), "utf8");
+    return chromeSource.then((source) => {
+      expect(source).toMatch(/EGO_LINUX_USE_MOCK_KEYCHAIN/);
+      expect(source).toMatch(/--use-mock-keychain/);
+      expect(source).toMatch(/process\.platform === "darwin"/);
+    });
   });
 });

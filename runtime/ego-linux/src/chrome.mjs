@@ -107,6 +107,14 @@ const LAUNCH_FLAGS = [
   // without first going through useSpace+ensureRealTab; the structured tools
   // all do, so it no longer applies.
   "--no-startup-window",
+  // macOS Chrome 156 has been observed keeping the cookie jar in memory while
+  // leaving Default/Cookies empty (#93). `--use-mock-keychain` lets Chrome use
+  // its test keychain instead of the login keychain; opt-in only, because it
+  // weakens at-rest protection. The plugin's `chromeArgs` setting can pass this
+  // too; the env var keeps the diagnostic reproducible without editing config.
+  ...(process.platform === "darwin" && process.env.EGO_LINUX_USE_MOCK_KEYCHAIN === "1"
+    ? ["--use-mock-keychain"]
+    : []),
 ];
 
 // ── user-defined extra Chrome args (mirrors lib/config.js) ──────────────────

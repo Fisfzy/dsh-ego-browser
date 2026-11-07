@@ -23,8 +23,9 @@ import { resolveConfig } from "../src/config.ts";
 // SIGTERM) running the few loopback endpoints the host touches.
 
 const STATE_DIR = mkdtempSync(join(tmpdir(), "ego-frame-relay-"));
-// castStatePath() appends the "ego-lite-linux" segment to EGO_LINUX_STATE_DIR.
-const CAST_DIR = join(STATE_DIR, "ego-lite-linux");
+// EGO_LINUX_STATE_DIR is already the state root (#97); ego-cast.json lives
+// directly there, matching bin/ego-cast-worker.mjs.
+const CAST_DIR = STATE_DIR;
 const PREV_STATE_DIR = process.env.EGO_LINUX_STATE_DIR;
 const WORKER_SCRIPT = fileURLToPath(new URL("./fixtures/fake-cast-worker.cjs", import.meta.url));
 

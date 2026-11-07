@@ -32,6 +32,7 @@
 | `runtime/ego-linux/src/chrome.mjs` | `displayUsable()` 现在同时检查 X socket 与 `.Xn-lock` 中的 pid 是否存活；`pickFreeDisplayNumber()` 只把 live display 算作占用。两者新增可选 `x11Dir`/`lockDir` 参数供测试；文件末尾导出 `__test` seam | issue #91：Xvfb 退出后 `/tmp/.X11-unix/X99` 与 `.X99-lock` 会残留，旧逻辑只查 socket 存在性，把死 display 当成可用 → Chrome 冷启动白等 20s，兜底 Xvfb 又把僵尸号算占用 → display 号每次重启漂移。读 lock pid 判活可复用 :99 并避免 20s 超时 |
 | `runtime/ego-linux/src/shim.mjs` | `ego` 门面新增 `hideCursor()` / `showCursor()`，供截图临时隐藏 DOM 光标覆盖层 | issue #96：用户希望浏览器窗口中保留 agent 光标，但截图 PNG 不出现鼠标光标；截图工具默认 `hideCursor:true`，捕获后恢复 |
 | `runtime/ego-linux/src/chrome.mjs` | `resolveBinary()` 在 PATH/`which` 失败后增加 `installPathCandidates()` 平台兜底：macOS 扫描 `/Applications` 与 `~/Applications` 的 Chrome/Chromium/Edge/Brave/Tungsten Edge `.app`，Windows 扫描 Program Files/LocalAppData；`__test` 暴露该 helper | issue #95：#68 只修了插件层，运行时层仍只认 Linux PATH 名称；macOS 没装 Chrome 或显式关闭 auto-adapt 时仍会报 “no Chrome/Chromium binary found”。`.app` 内二进制不在 PATH，必须在运行时层再查安装位置 |
+| `runtime/ego-linux/src/chrome.mjs` | macOS 上 `EGO_LINUX_USE_MOCK_KEYCHAIN=1` 时给 Chrome 追加 `--use-mock-keychain` | issue #93：macOS 27 + Chrome 156 出现 `Storage.getCookies` 非零但 `Default/Cookies` 不落盘，需用 mock keychain 做对照实验（会降低静态加密强度，默认关闭） |
 | （其余 runtime 文件）| 与 vendoring 时一致 | 无后续本地改动 |
 
 ## 说明
