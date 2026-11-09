@@ -36,6 +36,7 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { existsSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
@@ -59,7 +60,7 @@ import { registerEgoBrowserGateway } from './gateway.ts'
 import { ResidentProcess, ResidentNotRunningError, type ResidentFrame } from './resident.ts'
 import { getSharedFfmpegInstallationManager } from './ffmpeg-installation.ts'
 import { SENTINEL, j, str, num, bool, readAll, SAFE_FN, parseJsonArg, asStringArray } from './util.ts'
-import type { EgoContext, RawConfig, ResolvedConfig, SubprocessService, ToolExec, WebServerLike } from './types.ts'
+import type { AttachmentStoreLike, EgoContext, ImageAttachmentRefLike, RawConfig, ResolvedConfig, SubprocessService, ToolExec, WebServerLike } from './types.ts'
 
 export const name = 'ego-browser'
 // Platform-aware host services: the web shell exposes `webServer`, other Web
@@ -1533,6 +1534,48 @@ function renderEgoToolText(args: unknown, value: unknown): unknown[] {
   }
   return renderText(args, value)
 }
+/**
+ * Model-visible renderer for `ego_screenshot`: an inline image block when the
+ * host saved the PNG as an attachment, otherwise the normal text/JSON render.
+ * Pure: it only reads the canonical value.
+ */
+export function renderScreenshot(args: Record<string, unknown>, value: unknown): unknown[] {
+  const v = value as
+    | { ok?: unknown; path?: unknown; attachment?: ImageAttachmentRefLike }
+    | null
+  if (v !== null && v.ok === true && v.attachment !== undefined) {
+    return [
+      { type: 'image', attachment: v.attachment },
+      { type: 'text', text: `screenshot saved: ${typeof v.path === 'string' ? v.path : ''}` },
+    ]
+  }
+  return renderEgoToolText(args, value)
+}
+
+/**
+ * Save a screenshot PNG through the host attachment service so the renderer can
+ * return an image block. Feature-detected: without an attachment service (TUI /
+ * headless / older host) the value keeps only the path, exactly as before.
+ */
+export async function attachScreenshot(
+  ctx: EgoContext,
+  args: Record<string, unknown>,
+  value: unknown,
+): Promise<unknown> {
+  const v = value as { ok?: unknown; path?: unknown } | null
+  if (v === null || v.ok !== true || typeof v.path !== 'string' || v.path === '') return value
+  if (args.inline === false) return value
+  const store = (ctx.attachments ?? ctx.get?.('attachments')) as AttachmentStoreLike | undefined
+  if (store === null || typeof store?.saveImage !== 'function') return value
+  try {
+    const data = await readFile(v.path)
+    const attachment = await store.saveImage({ data, mediaType: 'image/png' })
+    return { ...v, attachment }
+  } catch (error) {
+    // Inline is a convenience, never a reason for the screenshot to fail.
+    return { ...v, inlineError: error instanceof Error ? error.message : String(error) }
+  }
+}
 const commonOutputSchema = {
   type: 'object',
   additionalProperties: true,
@@ -1560,15 +1603,21 @@ interface EgoToolOptions {
   afterExecute?: (args: Record<string, unknown>, value: unknown) => void
   /**
    * Post-process the canonical tool value before it is rendered. Used by
-   * `ego_snapshot` to turn a full tree into a diff; must be pure with respect
-   * to the arguments (it may read/update plugin state such as the snapshot
-   * cache, but must not do I/O or spawn anything).
+   * `ego_snapshot` to turn a full tree into a diff and by `ego_screenshot` to
+   * save the PNG as a host attachment. May be async; the value it returns is
+   * what the renderer and the session log see.
    */
   transformValue?: (
     args: Record<string, unknown>,
     value: unknown,
     context: { sessionId?: string; spaceKey: string },
-  ) => unknown
+  ) => unknown | Promise<unknown>
+  /**
+   * Optional model-visible renderer. Must stay pure (no I/O): it reads only
+   * `args` and the already-computed canonical value. Defaults to
+   * `renderEgoToolText`.
+   */
+  render?: (args: Record<string, unknown>, value: unknown) => unknown[]
   /**
    * Optional one-line reminder appended to a successful value. Used by the
    * interaction tools to carry the "observe before repeating" rule at the
@@ -1590,7 +1639,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
     parameters: opts.parameters,
     output: {
       schema: commonOutputSchema,
-      render: renderEgoToolText,
+      render: opts.render ?? renderEgoToolText,
     },
     timeoutMs: TOOL_TIMEOUT_MS,
     execute: async (args: Record<string, unknown>, exec: ToolExec) =>
@@ -1633,7 +1682,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
           recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
           const value =
             typeof opts.transformValue === 'function'
-              ? opts.transformValue(args, result.value, { sessionId, spaceKey })
+              ? await opts.transformValue(args, result.value, { sessionId, spaceKey })
               : result.value
           const hint = typeof opts.successHint === 'function' ? opts.successHint(args, value) : undefined
           const finalValue =
@@ -2377,7 +2426,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_snapshot',
       description:
-        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. This is the main observation tool for any browser task. refs are re-created by every snapshot — always act from the newest one. Set diff=true to get only what changed since the previous snapshot in this task space (cheaper after the first observation); diff mode never returns actionable refs, so take a full snapshot before acting.',
+        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. This is the main observation tool for any browser task. refs are re-created by every snapshot — always act from the newest one. Set diff=true to get only what changed since the previous snapshot in this task space (cheaper after the first observation); diff mode never returns actionable refs, so take a full snapshot before acting. Canvas/WebGL/custom-drawn content has no semantic nodes: use ego_screenshot for it. Elements inside a cross-origin iframe do appear with a ref — click/fill them by ref, because CSS selectors only search the main document.',
       parameters: {
         space: spaceParam,
         scope: {
@@ -2470,7 +2519,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       name: 'ego_click',
       successHint: () => ACTION_SUCCESS_HINT,
       description:
-        'Click an element in the current page. Target with a CSS selector, an xpath=.../loc=.../ref=N value from the LATEST ego_snapshot, or viewport coordinates. On a timeout or missing target, re-snapshot and rebuild the locator; do not replay the same selector. See ego_help discipline.',
+        'Click an element in the current page. Target with a CSS selector, an xpath=.../loc=.../ref=N value from the LATEST ego_snapshot, or viewport coordinates. On a timeout or missing target, re-snapshot and rebuild the locator; do not replay the same selector. For elements inside a cross-origin iframe use the snapshot ref (CSS selectors only search the main document). See ego_help discipline.',
       parameters: {
         selector: {
           type: 'string',
@@ -2535,7 +2584,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       name: 'ego_fill',
       successHint: () => ACTION_SUCCESS_HINT,
       description:
-        'Type text into an input field. Target with a CSS selector, xpath=..., loc=..., or ref=N from the LATEST ego_snapshot. On a timeout or missing target, re-snapshot instead of retrying the same selector.',
+        'Type text into an input field. Target with a CSS selector, xpath=..., loc=..., or ref=N from the LATEST ego_snapshot. On a timeout or missing target, re-snapshot instead of retrying the same selector. For inputs inside a cross-origin iframe use the snapshot ref (CSS selectors only search the main document).',
       parameters: {
         selector: {
           type: 'string',
@@ -2616,7 +2665,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_screenshot',
       description:
-        'Capture a screenshot of the current page (or of a single element if selector is given). Returns the file path of the saved PNG, which you can then read with a vision/image tool. Take screenshots only when visual evidence is actually needed (layout/rendering, user asked for one, or the target is not in the semantic tree); do not snapshot and screenshot by default.',
+        'Capture a screenshot of the current page (or of a single element if selector is given). Returns the PNG as an inline image (default) plus the saved file path. Take screenshots only when visual evidence is actually needed (layout/rendering, user asked for one, canvas/custom-drawn content, or the target is not in the semantic tree); do not snapshot and screenshot by default.',
       parameters: {
         selector: {
           type: 'string',
@@ -2648,6 +2697,11 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           type: 'boolean',
           description:
             'Surface the PNG as a deliverable card in the conversation (default true). Set false to keep it a bare path.',
+        },
+        inline: {
+          type: 'boolean',
+          description:
+            'Return the PNG as an inline image in the tool result so you can see it immediately (default true). Set false when you only need the file path.',
         },
         hideCursor: {
           type: 'boolean',
@@ -2701,6 +2755,8 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path, fullPage: ${fullPage} }))\n`
         )
       },
+      transformValue: (args, value) => attachScreenshot(ctx, args, value),
+      render: renderScreenshot,
       deliverFiles: (args, value) => {
         const file = (value as { path?: unknown } | null)?.path
         if (args.deliver === false || typeof file !== 'string' || file === '') return []

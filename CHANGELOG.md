@@ -2,6 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.14] - 2026-11-09 — 视觉观测增强（DEV1 开发中，未发布）
+
+### 新增
+- **`ego_screenshot` 默认内联图片**：截图同时返回 `{ path, attachment }`，渲染为 image block，模型当轮即可看到画面，不再需要额外 `read_image`。依赖宿主 `ctx.attachments.saveImage()`；没有附件服务（TUI/无头/旧宿主）或保存失败时自动退回“仅路径”，不影响截图本身。新增 `inline:false` 可只保留路径。
+- **Canvas / iframe 观测边界写入文档**：`ego_snapshot` 描述与 `ego_help discipline/screenshots` 明确——Canvas/WebGL/自定义绘制内容不在语义树中，必须用 `ego_screenshot`；跨域 iframe 内元素用 snapshot 的 `ref` 点击/填写，CSS selector 只搜索主文档。
+
+### 验证
+- 实机确认：4399 跨域 age iframe 内的 `#btn_login` 通过 `ref` 点击成功（弹出登录框），说明 iframe 交互无需新增 frame 工具。
+- 单元测试新增：截图在附件服务可用时返回 image block、`inline:false` 与无附件服务时自动降级。
+
+### 测试
+- 全量：**422 passed / 7 skipped**；typecheck 通过。
+- `scripts/smoke-0.9.13.mjs`：真实 vendored runtime + 本地页面，**31/31 通过**（截图内联在无附件服务的 fake ctx 下按预期退回路径）。
+
 ## [0.9.13] - 2026-11-09 — 浏览器操作能力增强 & 观察窗 UI 重做
 
 ### 新增

@@ -1,6 +1,6 @@
 {
   "name": "dsh-ego-browser",
-  "version": "0.9.13",
+  "version": "0.9.14",
   "description": "Agent 浏览器：把浏览器自动化封装为 34 个 ego_* 结构化工具，内置 ego-lite 运行时；右侧栏实时观察窗（实时画面 + 鼠标交互 + 下载捕获 + 人机验证提醒），支持 Chrome 登录态导入与 TUI/无头环境。",
   "type": "module",
   "main": "./lib/index.js",

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
-import { apply } from '../src/index.ts'
+import { apply, renderScreenshot } from '../src/index.ts'
 import type { EgoContext, SpawnSpec, ToolExec } from '../src/types.ts'
 
 vi.mock('../src/ffmpeg-installation.ts', () => ({
@@ -14,9 +14,14 @@ type RegisteredTool = {
   name: string
   execute(args: Record<string, unknown>, exec: ToolExec): Promise<unknown>
   presentCall(args: Record<string, unknown>): { title: string; rawInput: unknown }
+  output?: { render?: (args: Record<string, unknown>, value: unknown) => unknown[] }
 }
 function reader(text: string) { return { readFrom: () => ({ text, nextOffset: text.length, lossy: false }) } }
-function bench(options: { idle?: boolean; services?: boolean } = {}) {
+function bench(options: {
+  idle?: boolean
+  services?: boolean
+  attachments?: { saveImage(input: { data: Uint8Array; mediaType: string }): Promise<unknown> }
+} = {}) {
   const tools = new Map<string, RegisteredTool>(), cleanup: (() => void)[] = []
   const setField = vi.fn((_key: string, _text: string, _options: unknown) => () => {})
   const show = vi.fn()
@@ -25,6 +30,7 @@ function bench(options: { idle?: boolean; services?: boolean } = {}) {
   const ctx = {
     tools: { register: (tool: RegisteredTool) => { tools.set(tool.name, tool); return () => tools.delete(tool.name) } },
     subprocess: { spawn },
+    get: (name: string) => (name === 'attachments' ? options.attachments : undefined),
     effect: (factory: () => unknown, label?: string) => {
       // Exercise the existing reaper without running the unrelated legacy teardown effect.
       if (label === 'ego-browser: idle reaper') {
@@ -95,6 +101,51 @@ describe('registered browser tools with TUI observers', () => {
     expect(result).toMatchObject({ ok: true })
     expect((result as { hint?: string }).hint).toContain('不要重复同一动作')
     b.dispose()
+  })
+
+  it('returns an inline image when the host provides an attachment store', async () => {
+    const saveImage = vi.fn(async () => ({
+      attachmentId: 'att-1',
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+    }))
+    const b = bench({ attachments: { saveImage } })
+    vi.mocked(readFile).mockResolvedValue(Buffer.from([0x89, 0x50, 0x4e, 0x47]) as never)
+    const path = '/tmp/ego-inline-shot.png'
+    b.spawn.mockImplementationOnce(() => ({
+      done: Promise.resolve({ exitCode: 0, signal: null }),
+      collected: {
+        stdout: reader(`@@DSH_RESULT@@${JSON.stringify({ ok: true, path, fullPage: false })}`),
+        stderr: reader(''),
+      },
+    }))
+    const value = await b.call('ego_screenshot', {})
+    expect(value).toMatchObject({ ok: true, path, attachment: { attachmentId: 'att-1' } })
+    expect(saveImage).toHaveBeenCalledWith({ data: expect.any(Uint8Array), mediaType: 'image/png' })
+    const rendered = renderScreenshot({}, value)
+    expect(rendered.some((block) => (block as { type?: string }).type === 'image')).toBe(true)
+    b.dispose()
+  })
+
+  it('skips the attachment when inline=false or the host has no attachment store', async () => {
+    const saveImage = vi.fn(async () => ({ attachmentId: 'att-1', mediaType: 'image/png', bytes: 1, width: 1, height: 1 }))
+    const b = bench({ attachments: { saveImage } })
+    const path = '/tmp/ego-no-inline.png'
+    const payload = `@@DSH_RESULT@@${JSON.stringify({ ok: true, path, fullPage: false })}`
+    b.spawn.mockImplementation(() => ({
+      done: Promise.resolve({ exitCode: 0, signal: null }),
+      collected: { stdout: reader(payload), stderr: reader('') },
+    }))
+    const value = await b.call('ego_screenshot', { inline: false })
+    expect(value).not.toHaveProperty('attachment')
+    expect(saveImage).not.toHaveBeenCalled()
+    b.dispose()
+
+    const bare = bench()
+    expect(await bare.call('ego_screenshot', {})).not.toHaveProperty('attachment')
+    bare.dispose()
   })
 
   it('builds fullPage/clip screenshot options and rejects invalid combinations', async () => {
