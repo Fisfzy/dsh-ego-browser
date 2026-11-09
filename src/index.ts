@@ -106,6 +106,8 @@ const STATUS_RULES_SUMMARY = [
  * corresponds to a fresh runtime anyway).
  */
 const snapshotCache = new SnapshotCache(32)
+/** Whether the host accepted the native rules prompt section. */
+let rulesSectionRegistered = false
 /**
  * Appended to interaction results so the "cheapest observation" rule arrives
  * exactly when a repeated action would otherwise be tempting.
@@ -1807,7 +1809,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   // until this process has seen an ego_* call. Feature-detected, so a host
   // without the systemPrompt service is unaffected; `rulesPrompt=false` keeps
   // the section registered but renders an empty string.
-  registerEgoRulesSection(ctx, {
+  rulesSectionRegistered = registerEgoRulesSection(ctx, {
     isEnabled: () => resolveConfig(bridge.source() as RawConfig).rulesPrompt,
   })
   // Realtime watch-panel host routes (/api/ego/*). Guarded: only meaningful
@@ -1984,6 +1986,7 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
             exitCode: { type: 'integer' },
             resident: { type: 'object', additionalProperties: true },
             rulesSummary: { type: 'string' },
+            rulesPrompt: { type: 'object', additionalProperties: true },
             help: { type: 'string' },
           },
         },
@@ -2017,6 +2020,10 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
               exitCode: outcome.exitCode,
               resident: residentDiagnostics(cfg),
               rulesSummary: STATUS_RULES_SUMMARY,
+              rulesPrompt: {
+                enabled: cfg.rulesPrompt,
+                registered: rulesSectionRegistered,
+              },
               help: 'ego_help discipline / errors',
             }
           } catch (err) {
