@@ -4,14 +4,6 @@
   "name": "ego-browser",
   "version": "0.9.13",
   "manifestVersion": "0.15",
-  "icon": "assets/icon.png",
-  "icons": {
-    "32": "assets/icon-32.png",
-    "64": "assets/icon-64.png",
-    "128": "assets/icon-128.png",
-    "256": "assets/icon-256.png",
-    "512": "assets/icon-512.png"
-  },
   "facets": {
     "host": {
       "entry": "lib/index.js",
