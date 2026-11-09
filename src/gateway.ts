@@ -35,7 +35,7 @@ const API_PREFIX = '/ego/api'
 const ALLOWED_KEYS = new Set<string>([
   'isolateSpaces', 'idleTimeoutMin', 'disableFrameRelay',
   'residentExecutor', 'residentIdleMin',
-  'chromePath', 'captureBackend', 'streamProfile', 'cdpFps', 'cdpQuality',
+  'chromePath', 'useMockKeychain', 'captureBackend', 'streamProfile', 'cdpFps', 'cdpQuality',
   'cdpMaxWidth', 'cdpBackstopIntervalMs', 'ffmpegFps', 'ffmpegMaxWidth', 'ffmpegBitrateKbps',
   'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',
 ])

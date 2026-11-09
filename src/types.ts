@@ -139,6 +139,8 @@ export interface ResolvedConfig {
   /** Minutes without an ego_* call before the resident process is stopped. 0 = keep until unmount. */
   residentIdleMin: number
   chromePath: string
+  /** macOS only: pass `--use-mock-keychain` to Chrome so cookies flush to disk (issue #93). */
+  useMockKeychain: boolean
   captureBackend: 'auto' | 'cdp' | 'ffmpeg'
   streamProfile: 'low' | 'balanced' | 'high'
   cdpFps: number

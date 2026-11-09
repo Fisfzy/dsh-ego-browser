@@ -28,6 +28,12 @@ const prefs = {
   residentExecutor: z.boolean().description('Reuse one resident `ego-browser --serve` process across ego_* calls: the first call pays startup, later calls skip it (~16ms). Off = spawn per call. A dead resident falls back to a fresh spawn automatically.'),
   residentIdleMin: z.number().min(0).max(1440).step(1).description('Stop the resident process after N minutes without an ego_* call (0 = keep it until the plugin unmounts). The browser itself is unaffected.'),
   chromePath: z.string().description('Path to Chrome/Chromium. Empty = auto-detect.'),
+  // macOS 27 + Chrome 156: Chrome's login-Keychain path silently fails to write
+  // cookies to disk, so task-space logins vanish after a browser restart (#93).
+  // `--use-mock-keychain` makes Chrome use its test Keychain and the jar then
+  // flushes (observed ~60s later, not immediately). Opt-in: it weakens at-rest
+  // cookie encryption. The vendored runtime only appends the flag on darwin.
+  useMockKeychain: z.boolean().description('macOS only: launch Chrome with --use-mock-keychain so cookies persist to disk (fixes an empty Default/Cookies jar on Chrome 156+/macOS 27, issue #93). Weakens at-rest cookie encryption; requires a browser cold start.'),
   captureBackend: backend.description('Capture backend: auto, cdp, or ffmpeg.'),
   streamProfile: profile.description('Capture quality profile.'),
   cdpFps: z.number().min(5).max(30).step(1).description('CDP preview FPS.'),
@@ -290,6 +296,10 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     viewportHeight: finiteIn(config.viewportHeight, 0, 2160) ? config.viewportHeight : 0,
     deviceScaleFactor: finiteIn(config.deviceScaleFactor, 0, 4) ? config.deviceScaleFactor : 0,
     isolateSpaces: typeof config.isolateSpaces === 'boolean' ? config.isolateSpaces : config.isolateSpaces === 'true' || config.isolateSpaces === '1' || config.isolateSpaces === 1,
+    // #93: opt-in macOS cookie-persistence workaround (default false = the flag
+    // stays off, so Windows/Linux and macOS setups that already persist cookies
+    // keep their stronger at-rest encryption).
+    useMockKeychain: typeof config.useMockKeychain === 'boolean' ? config.useMockKeychain : config.useMockKeychain === 'true' || config.useMockKeychain === '1' || config.useMockKeychain === 1,
     // Default true: two sessions silently sharing one space was the root of
     // cross-session tab theft. Explicit opt-out keeps the old shared space.
     sessionScopedSpaces: typeof config.sessionScopedSpaces === 'boolean'

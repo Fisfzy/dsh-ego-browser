@@ -2,6 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.12] - 2026-11-09 — macOS Cookie 落盘修复开关（#93 收尾）
+
+### 新增
+- **「macOS Cookie 落盘修复」设置（`useMockKeychain`，默认关闭）**：把 0.9.11 的诊断开关升级为正式 opt-in 选项。开启后插件在 macOS 上向运行时注入 `EGO_LINUX_USE_MOCK_KEYCHAIN=1`，Chrome 以 `--use-mock-keychain` 启动，恢复 cookie 落盘（#93 社区实测：重启后探针 cookie 仍存在）。仅 macOS 生效，Windows/Linux 不注入；用户显式设置的同名环境变量仍然优先。
+- 设置页（Web 设置卡片 + TUI settings section，manifest 同步）新增该布尔项与中英文文案；`ego_doctor` 输出 `useMockKeychain` 状态，并在 macOS 未开启时给出提示。
+
+### 文档
+- README 的 macOS Cookie 章节改写为**已确认成因 + 修复开关 + 验证步骤**：明确 `--use-mock-keychain` 已被真机验证有效；**落盘是延迟的（约 60 秒后出现在 `Default/Cookies`）**，flush 后立刻查询会误判为 0 行；说明 mock Keychain 降低静态加密强度、需浏览器冷启动，以及 `chromeArgs` / `EGO_LINUX_USE_MOCK_KEYCHAIN` 的等价做法与官方 ego lite 线的差异。
+
+### 测试
+- `tests/config.test.ts`：`useMockKeychain` 默认 false 与字符串/数字真值解析。
+- `tests/env.test.ts`：macOS 注入 `EGO_LINUX_USE_MOCK_KEYCHAIN=1`、关闭时不注入、Windows/Linux 不注入、用户环境变量优先。
+- `tests/tui-integration.test.ts`：同步 manifest 字段列表（含新字段）。
+
 ## [0.9.11] - 2026-11-06 — cast worker 状态路径修复 / macOS Cookie 诊断
 
 ### 诊断

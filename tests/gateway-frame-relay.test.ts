@@ -90,3 +90,24 @@ describe("ego-browser settings gateway — disableFrameRelay", () => {
     expect(g.captured).toEqual([{ disableFrameRelay: true, isolateSpaces: true }]);
   });
 });
+
+describe("ego-browser settings gateway — useMockKeychain (#93)", () => {
+  // Same contract as above: a switch missing from the allow-list would look
+  // saved in the card while nothing persists.
+  it("persists the macOS cookie fix switch through /ego/api/set", async () => {
+    const g = mountGateway({ useMockKeychain: false });
+    const res = await g.set({ useMockKeychain: true });
+    expect(g.captured).toEqual([{ useMockKeychain: true }]);
+    const body = res.body() as { ok: boolean; value: { config: { useMockKeychain: boolean } } };
+    expect(body.ok).toBe(true);
+    expect(body.value.config.useMockKeychain).toBe(true);
+  });
+
+  it("drops a non-scalar value instead of persisting junk", async () => {
+    const g = mountGateway({});
+    await g.set({ useMockKeychain: ["nope"] });
+    expect(g.captured).toEqual([]);
+    expect(g.cfg.useMockKeychain).toBeUndefined();
+  });
+});
+

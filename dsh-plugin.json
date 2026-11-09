@@ -2,7 +2,7 @@
   "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "id": "dsh-ego-browser",
   "name": "ego-browser",
-  "version": "0.9.11",
+  "version": "0.9.12",
   "manifestVersion": "0.15",
   "facets": {
     "host": {
@@ -153,6 +153,22 @@
               "hintTitles": {
                 "en": "Path to Chrome, Chromium or Edge. Empty means auto-detect.",
                 "zh": "Chrome、Chromium 或 Edge 路径；留空自动检测。"
+              }
+            },
+            {
+              "path": [
+                "useMockKeychain"
+              ],
+              "label": "macOS cookie fix (--use-mock-keychain)",
+              "kind": "boolean",
+              "hint": "macOS only. Chrome 156+ can stop persisting cookies to disk; this makes Chrome use its mock Keychain so the jar flushes again. Weakens at-rest cookie encryption; requires a browser cold start.",
+              "titles": {
+                "en": "macOS cookie fix (--use-mock-keychain)",
+                "zh": "macOS Cookie 落盘修复（--use-mock-keychain）"
+              },
+              "hintTitles": {
+                "en": "macOS only. Chrome 156+ can stop persisting cookies to disk; this makes Chrome use its mock Keychain so the jar flushes again. Weakens at-rest cookie encryption; requires a browser cold start.",
+                "zh": "仅 macOS。Chrome 156+ 可能不再把 cookie 写入磁盘；开启后改用 mock Keychain 恢复落盘。会降低静态加密强度；需浏览器冷启动。"
               }
             },
             {

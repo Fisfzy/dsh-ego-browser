@@ -10,6 +10,7 @@ describe("dual capture config", () => {
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, sessionScopedSpaces: true, idleTimeoutMin: 0, disableFrameRelay: false,
       residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
       viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
+      useMockKeychain: false,
     });
   });
 
@@ -21,8 +22,17 @@ describe("dual capture config", () => {
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, sessionScopedSpaces: true, idleTimeoutMin: 0, disableFrameRelay: false,
       residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
       viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
+      useMockKeychain: false,
     });
     expect(resolveConfig({ cdpFps: 15, castFpsCap: 30 }).cdpFps).toBe(15);
+  });
+
+  it("parses useMockKeychain as an opt-in boolean (#93)", () => {
+    expect(resolveConfig({}).useMockKeychain).toBe(false);
+    expect(resolveConfig({ useMockKeychain: true }).useMockKeychain).toBe(true);
+    expect(resolveConfig({ useMockKeychain: "true" as any }).useMockKeychain).toBe(true);
+    expect(resolveConfig({ useMockKeychain: 1 as any }).useMockKeychain).toBe(true);
+    expect(resolveConfig({ useMockKeychain: "false" as any }).useMockKeychain).toBe(false);
   });
 
   it("falls back for invalid enums and numbers", () => {

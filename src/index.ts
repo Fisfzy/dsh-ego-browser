@@ -530,6 +530,14 @@ export function resolveEgoEnv(cfg: Partial<ResolvedConfig>, { platform = process
   if (env.EGO_LINUX_EXTRA_ARGS === undefined && typeof configChromeArgs === 'string' && configChromeArgs.trim() !== '') {
     env.EGO_LINUX_EXTRA_ARGS = configChromeArgs
   }
+  // #93: macOS 27 + Chrome 156 silently stop flushing the cookie jar to disk when
+  // the login Keychain is used. `--use-mock-keychain` (added by the vendored
+  // runtime on darwin) restores persistence. Bridge the opt-in settings field to
+  // the runtime switch; a user-set env var still wins. Only injected on darwin
+  // because the flag is darwin-only — other platforms must stay untouched.
+  if (env.EGO_LINUX_USE_MOCK_KEYCHAIN === undefined && cfg?.useMockKeychain === true && platform === 'darwin') {
+    env.EGO_LINUX_USE_MOCK_KEYCHAIN = '1'
+  }
   if (env.EGO_ISOLATE_SPACES === undefined && cfg?.isolateSpaces !== undefined) {
     env.EGO_ISOLATE_SPACES = cfg.isolateSpaces ? '1' : '0'
   }
@@ -725,6 +733,8 @@ interface EgoRuntimeConfig {
   maxOutputBytes: number
   graceMs: number
   readonly chromePath: string
+  /** macOS only: pass --use-mock-keychain to Chrome so cookies flush to disk (#93). */
+  readonly useMockKeychain: boolean
   readonly captureBackend: ResolvedConfig['captureBackend']
   readonly streamProfile: ResolvedConfig['streamProfile']
   readonly cdpFps: number
@@ -1481,7 +1491,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   // entry + user-layer overrides) feeds `chromePath` + cast settings into cfg
   // via getters so every spawn reads the latest value without re-registration.
   const settingKeys = [
-    'chromePath', 'captureBackend', 'streamProfile', 'cdpFps', 'cdpQuality',
+    'chromePath', 'useMockKeychain', 'captureBackend', 'streamProfile', 'cdpFps', 'cdpQuality',
     'cdpMaxWidth', 'cdpBackstopIntervalMs', 'ffmpegFps', 'ffmpegMaxWidth', 'ffmpegBitrateKbps',
     'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',
     'castFpsCap', 'screencastQuality', 'screencastMaxWidth', 'backstopIntervalMs',
@@ -1552,6 +1562,9 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // edits take effect on the next spawn / next browser cold start.
     get egoCliArgs() { return resolveConfig(bridge.source() as RawConfig).egoCliArgs },
     get chromeArgs() { return resolveConfig(bridge.source() as RawConfig).chromeArgs },
+    // #93: read on every spawn via resolveEgoEnv, so a settings toggle applies to
+    // the next browser cold start without a host restart.
+    get useMockKeychain() { return resolveConfig(bridge.source() as RawConfig).useMockKeychain },
     // Live getters: the viewport prelude is rebuilt for every call, so a GUI
     // edit takes effect on the next ego_* call without a restart.
     get viewportWidth() { return resolveConfig(bridge.source() as RawConfig).viewportWidth },
@@ -3353,6 +3366,11 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
         const chrArgs = filterArgs(cfg.chromeArgs ?? '', CHROME_BLOCKED)
         lines.push(`egoCliArgs (effective): ${cliArgs.length ? cliArgs.join(' ') : '(none)'}`)
         lines.push(`chromeArgs (effective, next cold start): ${chrArgs.length ? chrArgs.join(' ') : '(none)'}`)
+        // #93: macOS 27 + Chrome 156 only persists cookies with --use-mock-keychain.
+        lines.push(`useMockKeychain (macOS cookie fix): ${cfg.useMockKeychain ? 'on' : 'off'}`)
+        if (process.platform === 'darwin' && !cfg.useMockKeychain) {
+          lines.push('  hint: if task-space logins vanish after a browser restart, enable "macOS cookie fix" (issue #93)')
+        }
         // state dir + runtime state
         const isWin = process.platform === 'win32'
         const e = process.env

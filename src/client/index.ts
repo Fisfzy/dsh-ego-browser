@@ -104,6 +104,10 @@ declare function require(id: string): any
 		loginImportClosed: ' (source browser was closed and can be reopened)',
 			chromePath: 'Browser binary path',
 			chromePathHint: 'Path to the Chrome/Chromium/Edge binary. Empty = auto-detect.',
+			useMockKeychain: 'macOS cookie fix (--use-mock-keychain)',
+			useMockKeychainHint: 'macOS only. Chrome 156+/macOS 26+ can stop writing cookies to disk (logins vanish after a browser restart, issue #93); this flag makes Chrome use its mock/test Keychain so the jar flushes again — the write lands ~60s later, not instantly. It weakens at-rest cookie encryption, so keep it off unless you hit that bug. Requires a browser cold start (run `ego-browser --stop` or restart DSH).',
+			useMockKeychainOff: 'Off (default; login Keychain)',
+			useMockKeychainOn: 'On (mock Keychain — fixes macOS cookie loss)',
 			captureBackend: 'Capture backend', streamProfile: 'Quality profile', cdpFps: 'CDP FPS', cdpQuality: 'CDP JPEG quality', cdpMaxWidth: 'CDP max width', cdpBackstopIntervalMs: 'CDP recovery interval', ffmpegFps: 'FFmpeg FPS', ffmpegMaxWidth: 'FFmpeg max width', ffmpegBitrateKbps: 'FFmpeg bitrate', ffmpegEncoder: 'FFmpeg encoder', ffmpegPath: 'FFmpeg binary path', githubMirror: 'GitHub mirror', fpsUnit: 'fps', pxUnit: 'px', kbpsUnit: 'kbps', msUnit: 'ms',
 			ffmpegTitle: 'FFmpeg installation', ffmpegReady: 'Ready', ffmpegMissing: 'No compatible FFmpeg found', ffmpegChecking: 'Checking local FFmpeg…', ffmpegDownloading: 'Downloading FFmpeg…', ffmpegVerifying: 'Verifying download…', ffmpegExtracting: 'Extracting FFmpeg…', ffmpegProbing: 'Checking capture capabilities…', ffmpegUnsupported: 'FFmpeg capture is unsupported on this platform', ffmpegFailed: 'FFmpeg installation failed', ffmpegSource: 'Source', ffmpegVersion: 'Version', ffmpegInstall: 'Download FFmpeg', ffmpegReinstall: 'Reinstall', ffmpegRecheck: 'Recheck', ffmpegRequired: 'FFmpeg (install required)', githubMirrorHint: 'Replaces https://github.com for GitHub downloads, for example https://gh-proxy.com/github.com.',
 			egoCliArgs: 'Extra ego-browser CLI args', egoCliArgsHint: 'Appended to `ego-browser nodejs` argv. Takes effect on the next ego_* call. Blocked: --status/--stop/--open/--spaces/--help (they exit before the heredoc runs). Use --headless via the headless env instead.',
@@ -150,6 +154,10 @@ declare function require(id: string): any
 		loginImportClosed: '（源浏览器已关闭，可重新打开）',
 			chromePath: '浏览器路径',
 			chromePathHint: 'Chrome/Chromium/Edge 可执行文件路径。留空 = 自动检测。',
+			useMockKeychain: 'macOS Cookie 落盘修复（--use-mock-keychain）',
+			useMockKeychainHint: '仅 macOS。Chrome 156+/macOS 26+ 可能不再把 cookie 写入磁盘（浏览器重启后登录态丢失，issue #93）；开启后 Chrome 改用 mock/test Keychain，cookie jar 恢复落盘——写入约 60 秒后才出现，不是立即。会降低静态 cookie 加密强度，未遇到该问题请保持关闭。需要浏览器冷启动（`ego-browser --stop` 或重启 DSH）。',
+			useMockKeychainOff: '关闭（默认；使用登录 Keychain）',
+			useMockKeychainOn: '开启（mock Keychain，修复 macOS cookie 丢失）',
 			captureBackend: '捕获后端', streamProfile: '画质档位', cdpFps: 'CDP 帧率', cdpQuality: 'CDP JPEG 质量', cdpMaxWidth: 'CDP 最大宽度', cdpBackstopIntervalMs: 'CDP 恢复截图间隔', ffmpegFps: 'FFmpeg 帧率', ffmpegMaxWidth: 'FFmpeg 最大宽度', ffmpegBitrateKbps: 'FFmpeg 码率', ffmpegEncoder: 'FFmpeg 编码器', ffmpegPath: 'FFmpeg 路径', githubMirror: 'GitHub 镜像源', fpsUnit: 'fps', pxUnit: 'px', kbpsUnit: 'kbps', msUnit: 'ms',
 			ffmpegTitle: 'FFmpeg 安装', ffmpegReady: '已就绪', ffmpegMissing: '未找到兼容的 FFmpeg', ffmpegChecking: '正在检测本机 FFmpeg…', ffmpegDownloading: '正在下载 FFmpeg…', ffmpegVerifying: '正在校验下载文件…', ffmpegExtracting: '正在解压 FFmpeg…', ffmpegProbing: '正在检查捕获能力…', ffmpegUnsupported: '当前平台不支持 FFmpeg 捕获', ffmpegFailed: 'FFmpeg 安装失败', ffmpegSource: '来源', ffmpegVersion: '版本', ffmpegInstall: '下载 FFmpeg', ffmpegReinstall: '重新下载', ffmpegRecheck: '重新检测', ffmpegRequired: 'FFmpeg（需要安装）', githubMirrorHint: '替换 https://github.com，例如 https://gh-proxy.com/github.com。',
 			egoCliArgs: 'ego-browser CLI 附加参数', egoCliArgsHint: '追加到 `ego-browser nodejs` argv。下一次 ego_* 工具调用即生效。禁止：--status/--stop/--open/--spaces/--help（会在 heredoc 执行前退出）。--headless 请走 headless 环境变量。',
@@ -490,7 +498,7 @@ declare function require(id: string): any
 				status: 'idle',        // 'idle' | 'loading' | 'ready'
 				available: false,      // true after a successful /ego/api/get
 				writable: false,       // false when settings service is absent
-				draft: { isolateSpaces: false, disableFrameRelay: false, residentExecutor: false, residentIdleMin: '30', idleTimeoutMin: '0', chromePath: '', captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '1280', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '' },
+				draft: { isolateSpaces: false, disableFrameRelay: false, residentExecutor: false, residentIdleMin: '30', idleTimeoutMin: '0', chromePath: '', useMockKeychain: false, captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '1280', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '' },
 				ffmpegStatus: { state: 'checking', canDownload: false, canSelectFfmpeg: false },
 				dirty: false,
 				applyState: { kind: 'idle' }, // 'idle' | 'saving' | 'saved' | 'error'
@@ -545,6 +553,7 @@ declare function require(id: string): any
 				residentExecutor: config.residentExecutor === true || config.residentExecutor === 'true' || config.residentExecutor === 1 || config.residentExecutor === '1',
 				residentIdleMin: String(config.residentIdleMin ?? 30),
 				chromePath: config.chromePath || '',
+				useMockKeychain: config.useMockKeychain === true || config.useMockKeychain === 'true' || config.useMockKeychain === 1 || config.useMockKeychain === '1',
 				captureBackend: config.captureBackend === 'ffmpeg' && !ffmpegStatus.canSelectFfmpeg ? 'cdp' : (config.captureBackend || 'auto'), streamProfile: config.streamProfile || 'balanced',
 				cdpFps: String(config.cdpFps ?? 20), cdpQuality: String(config.cdpQuality ?? 55), cdpMaxWidth: String(config.cdpMaxWidth ?? 1280), cdpBackstopIntervalMs: String(config.cdpBackstopIntervalMs ?? 3000),
 				ffmpegFps: String(config.ffmpegFps ?? 20), ffmpegMaxWidth: String(config.ffmpegMaxWidth ?? 1280), ffmpegBitrateKbps: String(config.ffmpegBitrateKbps ?? 4000), ffmpegEncoder: config.ffmpegEncoder || 'auto', ffmpegPath: config.ffmpegPath || '', githubMirror: config.githubMirror || '',
@@ -676,6 +685,7 @@ declare function require(id: string): any
 				residentExecutor: config.residentExecutor === true || config.residentExecutor === 'true' || config.residentExecutor === 1 || config.residentExecutor === '1',
 				residentIdleMin: String(config.residentIdleMin ?? 30),
 				chromePath: config.chromePath || '',
+				useMockKeychain: config.useMockKeychain === true || config.useMockKeychain === 'true' || config.useMockKeychain === 1 || config.useMockKeychain === '1',
 				captureBackend: config.captureBackend === 'ffmpeg' && ffmpegStatus && !ffmpegStatus.canSelectFfmpeg ? 'cdp' : (config.captureBackend || 'auto'), streamProfile: config.streamProfile || 'balanced',
 				cdpFps: String(config.cdpFps ?? 20), cdpQuality: String(config.cdpQuality ?? 55), cdpMaxWidth: String(config.cdpMaxWidth ?? 1280), cdpBackstopIntervalMs: String(config.cdpBackstopIntervalMs ?? 3000),
 				ffmpegFps: String(config.ffmpegFps ?? 20), ffmpegMaxWidth: String(config.ffmpegMaxWidth ?? 1280), ffmpegBitrateKbps: String(config.ffmpegBitrateKbps ?? 4000), ffmpegEncoder: config.ffmpegEncoder || 'auto', ffmpegPath: config.ffmpegPath || '', githubMirror: config.githubMirror || '',
@@ -946,6 +956,18 @@ declare function require(id: string): any
 							placeholder: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
 							disabled: busy,
 							onEdit: function (v) { controller.edit('chromePath', v) },
+						}),
+						h(SettingsField, {
+							id: 'plugin-config-ego-browser-usemockkeychain',
+							label: t('useMockKeychain'),
+							hint: t('useMockKeychainHint'),
+							value: state.draft.useMockKeychain ? 'true' : 'false',
+							options: [
+								{ value: 'false', label: t('useMockKeychainOff') },
+								{ value: 'true', label: t('useMockKeychainOn') },
+							],
+							disabled: busy,
+							onEdit: function (v) { controller.edit('useMockKeychain', v === 'true') },
 						}),
 						h(SettingsField, {
 							id: 'plugin-config-ego-browser-backend', label: t('captureBackend'), value: state.draft.captureBackend, options: ['auto', 'cdp', { value: 'ffmpeg', label: ffmpegStatus.canSelectFfmpeg ? 'ffmpeg' : t('ffmpegRequired'), disabled: !ffmpegStatus.canSelectFfmpeg }], disabled: busy, onEdit: function (v) { controller.edit('captureBackend', v) },

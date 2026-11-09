@@ -307,6 +307,47 @@ describe("resolveEgoEnv (macOS)", () => {
   });
 });
 
+// ─── resolveEgoEnv: macOS cookie fix → EGO_LINUX_USE_MOCK_KEYCHAIN (#93) ────
+
+describe("resolveEgoEnv (useMockKeychain bridge)", () => {
+  it("bridges cfg.useMockKeychain to EGO_LINUX_USE_MOCK_KEYCHAIN on macOS (#93)", () => {
+    const env = resolveEgoEnv(
+      { useMockKeychain: true },
+      { platform: "darwin", baseEnv: { HOME: "/Users/test" } },
+    );
+    expect(env.EGO_LINUX_USE_MOCK_KEYCHAIN).toBe("1");
+  });
+
+  it("does not set EGO_LINUX_USE_MOCK_KEYCHAIN when the setting is off", () => {
+    const env = resolveEgoEnv(
+      { useMockKeychain: false },
+      { platform: "darwin", baseEnv: { HOME: "/Users/test" } },
+    );
+    expect(env.EGO_LINUX_USE_MOCK_KEYCHAIN).toBe(undefined);
+  });
+
+  it("never sets the darwin-only flag on Windows or Linux", () => {
+    const win = resolveEgoEnv(
+      { useMockKeychain: true },
+      { platform: "win32", baseEnv: { LOCALAPPDATA: "C:/Users/test/AppData/Local" } },
+    );
+    expect(win.EGO_LINUX_USE_MOCK_KEYCHAIN).toBe(undefined);
+    const linux = resolveEgoEnv(
+      { useMockKeychain: true },
+      { platform: "linux", baseEnv: { HOME: "/root" } },
+    );
+    expect(linux.EGO_LINUX_USE_MOCK_KEYCHAIN).toBe(undefined);
+  });
+
+  it("never overrides a user-set EGO_LINUX_USE_MOCK_KEYCHAIN (escape hatch)", () => {
+    const env = resolveEgoEnv(
+      { useMockKeychain: true },
+      { platform: "darwin", baseEnv: { EGO_LINUX_USE_MOCK_KEYCHAIN: "0", HOME: "/Users/test" } },
+    );
+    expect(env.EGO_LINUX_USE_MOCK_KEYCHAIN).toBe("0");
+  });
+});
+
 // ─── resolveEgoEnv: chromeArgs → EGO_LINUX_EXTRA_ARGS bridge ────────────────
 
 describe("resolveEgoEnv (chromeArgs bridge)", () => {
