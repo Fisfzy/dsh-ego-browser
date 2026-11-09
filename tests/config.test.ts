@@ -8,7 +8,7 @@ describe("dual capture config", () => {
       cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 1280, cdpBackstopIntervalMs: 3000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, sessionScopedSpaces: true, idleTimeoutMin: 0, disableFrameRelay: false,
-      residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
+      residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false, rulesPrompt: true,
       viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
       useMockKeychain: false,
     });
@@ -20,7 +20,7 @@ describe("dual capture config", () => {
       cdpFps: 30, cdpQuality: 70, cdpMaxWidth: 1200, cdpBackstopIntervalMs: 5000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, sessionScopedSpaces: true, idleTimeoutMin: 0, disableFrameRelay: false,
-      residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false,
+      residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false, rulesPrompt: true,
       viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
       useMockKeychain: false,
     });
@@ -77,6 +77,13 @@ describe("resident executor (#56)", () => {
     const config = resolveConfig({});
     expect(config.residentExecutor).toBe(false);
     expect(config.residentIdleMin).toBe(30);
+  });
+
+  it("parses rulesPrompt as a default-on switch", () => {
+    expect(resolveConfig({}).rulesPrompt).toBe(true);
+    expect(resolveConfig({ rulesPrompt: false }).rulesPrompt).toBe(false);
+    expect(resolveConfig({ rulesPrompt: "0" } as any).rulesPrompt).toBe(false);
+    expect(resolveConfig({ rulesPrompt: "true" } as any).rulesPrompt).toBe(true);
   });
 
   it("accepts the stored forms and clamps the idle window", () => {

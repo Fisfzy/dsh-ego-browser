@@ -72,7 +72,8 @@ function sessionIdFromContext(context: unknown): string | undefined {
  * per-session. Otherwise it degrades to "this process has seen an ego call",
  * which is the best available signal without the skills/service scope.
  */
-export function rulesTextForContext(context: unknown): string {
+export function rulesTextForContext(context: unknown, enabled = true): string {
+  if (!enabled) return ''
   const sessionId = sessionIdFromContext(context)
   if (sessionId !== undefined) return hasUsedEgo(sessionId) ? EGO_RULES_TEXT : ''
   return hasUsedEgo() ? EGO_RULES_TEXT : ''
@@ -92,15 +93,20 @@ export interface SystemPromptLike {
  * Register the native rules section. Feature-detected: a host without the
  * `systemPrompt` service (or with it retired) keeps working unchanged.
  *
+ * @param opts.isEnabled live predicate read on every assembly pass, so the
+ *   `rulesPrompt` setting takes effect without re-registering the section.
  * @returns true when the section was registered.
  */
-export function registerEgoRulesSection(ctx: { get?(name: string): unknown }): boolean {
+export function registerEgoRulesSection(
+  ctx: { get?(name: string): unknown },
+  opts: { isEnabled?: () => boolean } = {},
+): boolean {
   const systemPrompt = ctx.get?.('systemPrompt') as SystemPromptLike | undefined
   if (systemPrompt === null || typeof systemPrompt?.section !== 'function') return false
   systemPrompt.section({
     name: EGO_RULES_SECTION_NAME,
     order: EGO_RULES_SECTION_ORDER,
-    text: rulesTextForContext,
+    text: (context) => rulesTextForContext(context, opts.isEnabled?.() !== false),
   })
   return true
 }

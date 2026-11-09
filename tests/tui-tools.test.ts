@@ -64,6 +64,68 @@ describe('registered browser tools with TUI observers', () => {
     b.dispose()
   })
 
+  it('serves ego_snapshot diffs from the plugin-side cache', async () => {
+    const b = bench()
+    const tree = 'button "Save" [ref=1, loc=testid:save, action=click]'
+    const treeAfter = `${tree}\nbutton "Cancel" [ref=2, loc=testid:cancel, action=click]`
+    const send = (text: string) => b.spawn.mockImplementationOnce(() => ({
+      done: Promise.resolve({ exitCode: 0, signal: null }),
+      collected: {
+        stdout: reader(`@@DSH_RESULT@@${JSON.stringify({ ok: true, text, tries: 0 })}`),
+        stderr: reader(''),
+      },
+    }))
+    const space = 'snapshot-diff-test'
+    send(tree)
+    const first = await b.call('ego_snapshot', { space })
+    expect(first).toMatchObject({ ok: true, text: tree })
+    send(treeAfter)
+    const second = await b.call('ego_snapshot', { space, diff: true })
+    expect(second).toMatchObject({ ok: true, baseline: false, changed: true, addedCount: 1, removedCount: 0 })
+    expect((second as { added: string[] }).added[0]).toContain('Cancel')
+    send(treeAfter)
+    const third = await b.call('ego_snapshot', { space, diff: true })
+    expect(third).toMatchObject({ ok: true, changed: false, addedCount: 0, removedCount: 0 })
+    b.dispose()
+  })
+
+  it('appends the observation hint to interaction successes', async () => {
+    const b = bench()
+    const result = await b.call('ego_click', { selector: '#submit' })
+    expect(result).toMatchObject({ ok: true })
+    expect((result as { hint?: string }).hint).toContain('不要重复同一动作')
+    b.dispose()
+  })
+
+  it('builds fullPage/clip screenshot options and rejects invalid combinations', async () => {
+    const b = bench()
+    await b.call('ego_screenshot', { fullPage: true })
+    const full = b.spawn.mock.calls.at(-1)![0] as SpawnSpec
+    expect(full.stdio.stdin.data).toContain('fullPage: true')
+    await b.call('ego_screenshot', { clip: { x: 1, y: 2, width: 30, height: 40 } })
+    const clipped = b.spawn.mock.calls.at(-1)![0] as SpawnSpec
+    expect(clipped.stdio.stdin.data).toContain('clip: { x: 1, y: 2, width: 30, height: 40 }')
+    await expect(b.call('ego_screenshot', { selector: '#x', fullPage: true })).rejects.toThrow(
+      'fullPage/clip only apply',
+    )
+    // The clip object schema requires all four numbers; a partial object is
+    // rejected by argument validation before the script is built.
+    await expect(b.call('ego_screenshot', { clip: { x: 1 } })).rejects.toThrow(/clip\.y|clip requires/)
+    b.dispose()
+  })
+
+  it('returns the structured failure contract from ego_cli', async () => {
+    const b = bench()
+    b.spawn.mockImplementation(() => ({
+      done: Promise.resolve({ exitCode: 1, signal: null }),
+      collected: { stdout: reader(''), stderr: reader('element not found in page') },
+    }))
+    const result = await b.call('ego_cli', { script: 'console.log(1)' })
+    expect(result).toMatchObject({ ok: false, code: 'LOCATOR_NOT_FOUND', retry: 'reobserve' })
+    expect((result as { stdout: string }).stdout).toBe('')
+    b.dispose()
+  })
+
   it('presents shared titles, observes standalone help, and preserves outputs without spawning', async () => {
     const b = bench()
     expect(b.tools.get('ego_fill')!.presentCall({ selector: '#email', text: 'SECRET' })).toMatchObject({ title: 'ego_fill · #email', rawInput: null })
