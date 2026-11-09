@@ -15,6 +15,7 @@
     "bin/",
     "runtime/",
     "extension/",
+    "assets/",
     "cordis.patch.yml",
     "dsh-plugin.json",
     "THIRD_PARTY_NOTICES.md",
