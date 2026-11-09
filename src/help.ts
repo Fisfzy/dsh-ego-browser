@@ -20,7 +20,7 @@ export const EGO_HELP_INDEX: Record<string, string> = {
   tabs:
     'ego_tabs: 标签页管理。action=list 列出所有标签(targetId/title/url/active); switch 用 targetId 切换; open 用 url 新建标签(默认 about:blank); close 用 targetId 关闭。targetId 来自 list/open/ego_space_open/ego_navigate 的返回。依赖运行时提供 browser.listTabs/switchTab/closeTab 与 ego.createTab；官方 ego lite 若缺少这些 API 会返回明确错误（内置运行时完整支持）。',
   observe:
-    'ego_snapshot: 整页语义树(带[ref]/loc供点击); ego_page_info: url/标题/视口/滚动/对话框/人机验证; ego_read_element: 读单元素文本/HTML/值/属性/可见性/计数; ego_screenshot(+selector): 整页或元素截图。',
+    'ego_snapshot: 整页语义树(带[ref]/loc供点击)；diff=true 只返回与上次快照的差异（首次返回完整树作为基线；diff 不含可操作 ref，要操作前重新取完整快照）。ego_page_info: url/标题/视口/滚动/对话框/人机验证; ego_read_element: 读单元素文本/HTML/值/属性/可见性/计数; ego_screenshot(+selector): 整页或元素截图。',
   input: 'ego_click(selector/坐标, double双击); ego_fill(填框); ego_key(press组合键 或 text连续键入); ego_check(勾选/取消); ego_select(下拉); ego_upload(文件上传); ego_dialog(接受/取消JS对话框)。',
   'keyboard-mouse':
     'ego_key: 键盘(press/text); ego_hover: 悬停; ego_drag: 拖拽(元素或坐标); ego_scroll: 滚轮/滚到元素; ego_click: 点击/双击。',

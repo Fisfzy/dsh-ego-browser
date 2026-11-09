@@ -9,12 +9,13 @@
 - **结构化失败契约**：动作类工具失败不再抛异常，而是返回 `{ ok:false, code, actionSent, retry, hint }` 并渲染成一条可执行的恢复提示。覆盖 `TIMEOUT / LOCATOR_NOT_FOUND / NAVIGATION_FAILED / DIALOG_BLOCKING / CAPTCHA / USER_CONTROLLING / SPACE_STALE / BROWSER_DOWN / NO_PAYLOAD / INVALID_ARGS / UNKNOWN`；`actionSent=true` 表示动作可能已送达页面，应先观察而不是盲目重试。
 - **`ego_navigate` 新增 `reuse`**：`origin`（默认，同源已开标签页就地导航）/ `exact`（仅完全相同的 URL 切换、不重载）/ `none`（始终导航当前标签页，保持旧行为）。默认策略避免同站导航顶掉正在看的无关页面。
 - **`ego_help` 新增 `discipline` / `errors` / `screenshots` 主题与 `topic=list`**；`ego_status` 返回三行 `rulesSummary` 与 `help` 指针。
+- **`ego_snapshot({ diff: true })`**：按 session/space/scope 缓存上一份语义树，只返回新增/移除/变化的行（变化行成对给出 before/after），首次 diff 返回完整树作为基线；diff 结果不含可操作 ref，提示操作前重新取完整快照。
 - 关键工具描述补充失败/顺序规则：`ego_navigate`、`ego_snapshot`、`ego_click`、`ego_fill`、`ego_tabs`、`ego_screenshot`（其余工具描述不变，控制常驻 token）。
 
 ### 测试
-- 新增 `tests/errors.test.ts`（10）、`tests/rules.test.ts`（6）、`tests/navigate-reuse.test.ts`（9）。
+- 新增 `tests/errors.test.ts`（10）、`tests/rules.test.ts`（6）、`tests/navigate-reuse.test.ts`（9）、`tests/snapshot-diff.test.ts`（12）；`tests/tui-tools.test.ts` 增加 diff 端到端接线用例。
 - `tests/tui-tools.test.ts` 的冷启动用例改为断言结构化失败值（`ok:false, code:BROWSER_DOWN`）。
-- 全量：**396 passed / 7 skipped**；typecheck 通过。
+- 全量：**409 passed / 7 skipped**；typecheck 通过。
 
 ## [0.9.12] - 2026-11-09 — macOS Cookie 落盘修复开关（#93 收尾）
 

@@ -64,6 +64,31 @@ describe('registered browser tools with TUI observers', () => {
     b.dispose()
   })
 
+  it('serves ego_snapshot diffs from the plugin-side cache', async () => {
+    const b = bench()
+    const tree = 'button "Save" [ref=1, loc=testid:save, action=click]'
+    const treeAfter = `${tree}\nbutton "Cancel" [ref=2, loc=testid:cancel, action=click]`
+    const send = (text: string) => b.spawn.mockImplementationOnce(() => ({
+      done: Promise.resolve({ exitCode: 0, signal: null }),
+      collected: {
+        stdout: reader(`@@DSH_RESULT@@${JSON.stringify({ ok: true, text, tries: 0 })}`),
+        stderr: reader(''),
+      },
+    }))
+    const space = 'snapshot-diff-test'
+    send(tree)
+    const first = await b.call('ego_snapshot', { space })
+    expect(first).toMatchObject({ ok: true, text: tree })
+    send(treeAfter)
+    const second = await b.call('ego_snapshot', { space, diff: true })
+    expect(second).toMatchObject({ ok: true, baseline: false, changed: true, addedCount: 1, removedCount: 0 })
+    expect((second as { added: string[] }).added[0]).toContain('Cancel')
+    send(treeAfter)
+    const third = await b.call('ego_snapshot', { space, diff: true })
+    expect(third).toMatchObject({ ok: true, changed: false, addedCount: 0, removedCount: 0 })
+    b.dispose()
+  })
+
   it('presents shared titles, observes standalone help, and preserves outputs without spawning', async () => {
     const b = bench()
     expect(b.tools.get('ego_fill')!.presentCall({ selector: '#email', text: 'SECRET' })).toMatchObject({ title: 'ego_fill · #email', rawInput: null })

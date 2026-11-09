@@ -73,6 +73,6 @@ describe('deliverable wiring', () => {
     )
     expect(source).toContain("description: selector === '' ? 'Screenshot'")
     expect(source).toContain('`Download: ${name}`')
-    expect(source).toContain('deliverToSession(ctx, exec, opts.deliverFiles(args, result.value))')
+    expect(source).toContain('deliverToSession(ctx, exec, opts.deliverFiles(args, value))')
   })
 })

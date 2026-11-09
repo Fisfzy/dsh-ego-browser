@@ -51,6 +51,7 @@ import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-serv
 import { EGO_HELP_INDEX } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
+import { SnapshotCache } from './snapshot-diff.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs, validateEgoBinPath } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
@@ -98,6 +99,13 @@ const STATUS_RULES_SUMMARY = [
   '每次只做一个会改变页面的动作，之后用 ego_page_info / ego_read_element 确认效果。',
   '超时或找不到目标时重新快照，不要原样重试；失败按返回的 retry / hint 处理。',
 ].join('\n')
+/**
+ * Last full snapshot text per session/space/scope, used to serve
+ * `ego_snapshot({ diff: true })`. Bounded LRU; module-scoped so it survives
+ * tool calls but not a plugin reload (that is the right lifetime: a reload
+ * corresponds to a fresh runtime anyway).
+ */
+const snapshotCache = new SnapshotCache(32)
 
 export interface ActiveSpaceTracker {
   current(): string | number
@@ -1532,6 +1540,17 @@ interface EgoToolOptions {
   parameters: Record<string, unknown>
   buildScript: (args: Record<string, unknown>) => string
   afterExecute?: (args: Record<string, unknown>, value: unknown) => void
+  /**
+   * Post-process the canonical tool value before it is rendered. Used by
+   * `ego_snapshot` to turn a full tree into a diff; must be pure with respect
+   * to the arguments (it may read/update plugin state such as the snapshot
+   * cache, but must not do I/O or spawn anything).
+   */
+  transformValue?: (
+    args: Record<string, unknown>,
+    value: unknown,
+    context: { sessionId?: string; spaceKey: string },
+  ) => unknown
   /** Files this call produced, surfaced as session deliverables. */
   deliverFiles?: (args: Record<string, unknown>, value: unknown) => DeliverableFile[]
 }
@@ -1588,12 +1607,17 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
           // blindly replaying a non-idempotent action.
           if (!result.ok) return failureValue(opts.name, result.error ?? 'ego-browser call failed')
           recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
-          if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
+          const value =
+            typeof opts.transformValue === 'function'
+              ? opts.transformValue(args, result.value, { sessionId, spaceKey })
+              : result.value
+          if (typeof opts.afterExecute === 'function') opts.afterExecute(args, value)
           if (typeof opts.deliverFiles === 'function') {
-            deliverToSession(ctx, exec, opts.deliverFiles(args, result.value))
+            deliverToSession(ctx, exec, opts.deliverFiles(args, value))
           }
-          // Value is JSON.parse output of our own payload — fits the tool JSON contract.
-          return result.value
+          // Value is JSON.parse output of our own payload (or a pure transform of
+          // it) — fits the tool JSON contract.
+          return value
         } finally {
           pendingSessionId = undefined
         }
@@ -2312,13 +2336,18 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_snapshot',
       description:
-        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. This is the main observation tool for any browser task. refs are re-created by every snapshot — always act from the newest one.',
+        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. This is the main observation tool for any browser task. refs are re-created by every snapshot — always act from the newest one. Set diff=true to get only what changed since the previous snapshot in this task space (cheaper after the first observation); diff mode never returns actionable refs, so take a full snapshot before acting.',
       parameters: {
         space: spaceParam,
         scope: {
           type: 'string',
           description:
             "snapshot scope: 'full_page' (default) or 'only_within_viewport'.",
+        },
+        diff: {
+          type: 'boolean',
+          description:
+            'Compare with the previous snapshot in this session/space/scope and return added/removed/changed lines instead of the full tree. The first diff call returns the full tree as the baseline.',
         },
       },
       buildScript: (args) => {
@@ -2342,6 +2371,18 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           `  ? { ok: false, text, tries, reason: 'snapshot returned no content after retries (page may be blank, still loading, or the browser dropped)' }\n` +
           `  : { ok: true, text, tries }))\n`
         )
+      },
+      transformValue: (args, value, context) => {
+        const payload = value as { ok?: unknown; text?: unknown; tries?: unknown } | null
+        if (payload === null || payload.ok !== true || typeof payload.text !== 'string') return value
+        const key = `${context.sessionId ?? '-'}:${String(
+          args.space ?? cfg.defaultSpace,
+        )}:${str(args.scope, 'full_page')}`
+        const tries = typeof payload.tries === 'number' ? payload.tries : undefined
+        return snapshotCache.observe(key, payload.text, {
+          diff: bool(args.diff, false),
+          tries,
+        })
       },
     }),
   )
