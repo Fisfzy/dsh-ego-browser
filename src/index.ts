@@ -48,7 +48,7 @@ import { installBrowserPanel } from './tui/panel.ts'
 import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpaceGroups } from './worker-client.ts'
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
-import { EGO_HELP_INDEX } from './help.ts'
+import { EGO_HELP_DOCS, isEgoHelpVisible, renderEgoHelpList } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
 import { SnapshotCache } from './snapshot-diff.ts'
@@ -106,6 +106,12 @@ const STATUS_RULES_SUMMARY = [
  * corresponds to a fresh runtime anyway).
  */
 const snapshotCache = new SnapshotCache(32)
+/**
+ * Appended to interaction results so the "cheapest observation" rule arrives
+ * exactly when a repeated action would otherwise be tempting.
+ */
+const ACTION_SUCCESS_HINT =
+  '动作已执行。确认效果优先用 ego_page_info / ego_read_element；需要新定位再 ego_snapshot；若预期变化未出现，不要重复同一动作。'
 
 export interface ActiveSpaceTracker {
   current(): string | number
@@ -779,6 +785,8 @@ interface EgoRuntimeConfig {
   readonly residentExecutor: boolean
   /** Minutes without an ego_* call before the resident process is stopped. 0 = keep until unmount. */
   readonly residentIdleMin: number
+  /** Render the compact browser rules section in the system prompt after first use. */
+  readonly rulesPrompt: boolean
 }
 
 interface ExecLike {
@@ -1333,7 +1341,15 @@ export const tabsScript = (opts: {
     `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: ${j(message)} }))\n`
   const done = (extra: string): string =>
     `const __tabs = await browser.listTabs()\n` +
-    `console.log('${SENTINEL}' + JSON.stringify({ ok: true${extra}, tabs: __tabs }))\n`
+    // Ownership matters: a user-owned space must not be closed or taken over by
+    // the agent. The facade may be missing on an older bridge, so keep it
+    // best-effort instead of failing the whole action.
+    `let __spaces = []\n` +
+    `try {\n` +
+    `  const __all = await taskSpaces.list()\n` +
+    `  __spaces = (__all || []).map(s => ({ id: s.id, name: s.name, ownership: s.ownership, recentTabTitles: s.recentTabTitles || [] }))\n` +
+    `} catch {}\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true${extra}, tabs: __tabs, spaces: __spaces }))\n`
   const noBrowser = (cap: string): string =>
     `typeof browser === 'undefined' || typeof browser.${cap} !== 'function'`
   // The body is emitted after the guard's `else {`, and close brace at the end.
@@ -1551,6 +1567,12 @@ interface EgoToolOptions {
     value: unknown,
     context: { sessionId?: string; spaceKey: string },
   ) => unknown
+  /**
+   * Optional one-line reminder appended to a successful value. Used by the
+   * interaction tools to carry the "observe before repeating" rule at the
+   * moment it matters instead of paying for it in every prompt.
+   */
+  successHint?: (args: Record<string, unknown>, value: unknown) => string | undefined
   /** Files this call produced, surfaced as session deliverables. */
   deliverFiles?: (args: Record<string, unknown>, value: unknown) => DeliverableFile[]
 }
@@ -1611,13 +1633,18 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
             typeof opts.transformValue === 'function'
               ? opts.transformValue(args, result.value, { sessionId, spaceKey })
               : result.value
-          if (typeof opts.afterExecute === 'function') opts.afterExecute(args, value)
+          const hint = typeof opts.successHint === 'function' ? opts.successHint(args, value) : undefined
+          const finalValue =
+            hint !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
+              ? { ...(value as Record<string, unknown>), hint }
+              : value
+          if (typeof opts.afterExecute === 'function') opts.afterExecute(args, finalValue)
           if (typeof opts.deliverFiles === 'function') {
-            deliverToSession(ctx, exec, opts.deliverFiles(args, value))
+            deliverToSession(ctx, exec, opts.deliverFiles(args, finalValue))
           }
           // Value is JSON.parse output of our own payload (or a pure transform of
           // it) — fits the tool JSON contract.
-          return value
+          return finalValue
         } finally {
           pendingSessionId = undefined
         }
@@ -1646,6 +1673,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'tuiAutoOpenPanel',
     'residentExecutor',
     'residentIdleMin',
+    'rulesPrompt',
   ]
   const entry = Object.fromEntries(settingKeys.filter((key) => config[key] !== undefined).map((key) => [key, config[key]]))
   // DSH 0.1.7：可注册的 settings 命名空间被换成了 loader 条目上的配置文档，用户
@@ -1727,6 +1755,9 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // every call, so toggling the setting takes effect on the next ego_* call.
     get residentExecutor() { return resolveConfig(bridge.source() as RawConfig).residentExecutor },
     get residentIdleMin() { return resolveConfig(bridge.source() as RawConfig).residentIdleMin },
+    // Live getter: the rules section reads it on every assembly pass, so toggling
+    // the setting takes effect without re-registering the section.
+    get rulesPrompt() { return resolveConfig(bridge.source() as RawConfig).rulesPrompt },
   }
   const browserState = new BrowserStateStore()
   const tui = installTui(ctx, browserState)
@@ -1774,8 +1805,11 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   registerHelpAndDoctor(ctx, cfg, reg)
   // Native operating rules (no skill): a system-prompt section that stays empty
   // until this process has seen an ego_* call. Feature-detected, so a host
-  // without the systemPrompt service is unaffected.
-  registerEgoRulesSection(ctx)
+  // without the systemPrompt service is unaffected; `rulesPrompt=false` keeps
+  // the section registered but renders an empty string.
+  registerEgoRulesSection(ctx, {
+    isEnabled: () => resolveConfig(bridge.source() as RawConfig).rulesPrompt,
+  })
   // Realtime watch-panel host routes (/api/ego/*). Guarded: only meaningful
   // when the host exposes an HTTP server (web surface); headless safe-no-op.
   // The host service is `webServer` on the web shell (current runner). We only
@@ -2427,6 +2461,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   reg(
     t({
       name: 'ego_click',
+      successHint: () => ACTION_SUCCESS_HINT,
       description:
         'Click an element in the current page. Target with a CSS selector, an xpath=.../loc=.../ref=N value from the LATEST ego_snapshot, or viewport coordinates. On a timeout or missing target, re-snapshot and rebuild the locator; do not replay the same selector. See ego_help discipline.',
       parameters: {
@@ -2491,6 +2526,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   reg(
     t({
       name: 'ego_fill',
+      successHint: () => ACTION_SUCCESS_HINT,
       description:
         'Type text into an input field. Target with a CSS selector, xpath=..., loc=..., or ref=N from the LATEST ego_snapshot. On a timeout or missing target, re-snapshot instead of retrying the same selector.',
       parameters: {
@@ -2584,6 +2620,23 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           type: 'string',
           description: 'Optional absolute output path for the PNG.',
         },
+        fullPage: {
+          type: 'boolean',
+          description:
+            'Capture the whole scrollable page instead of the viewport (page screenshots only; ignored for element screenshots).',
+        },
+        clip: {
+          type: 'object',
+          additionalProperties: false,
+          description:
+            'Capture a viewport-region (page screenshots only). Coordinates are CSS pixels of the current viewport.',
+          properties: {
+            x: { type: 'number', required: true },
+            y: { type: 'number', required: true },
+            width: { type: 'number', required: true },
+            height: { type: 'number', required: true },
+          },
+        },
         deliver: {
           type: 'boolean',
           description:
@@ -2600,16 +2653,45 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         const sel = str(args.selector, '')
         const pth = str(args.path, '')
         const hideCursor = args.hideCursor !== false
+        const fullPage = args.fullPage === true
+        const clip = args.clip as
+          | { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+          | undefined
+        const hasClip =
+          clip !== undefined &&
+          typeof clip.x === 'number' &&
+          typeof clip.y === 'number' &&
+          typeof clip.width === 'number' &&
+          typeof clip.height === 'number'
+        if (clip !== undefined && !hasClip) {
+          throw new Error(
+            'ego_screenshot: clip requires numeric x, y, width and height',
+          )
+        }
+        if (sel !== '' && (fullPage || hasClip)) {
+          throw new Error(
+            'ego_screenshot: fullPage/clip only apply to page screenshots, not element screenshots (omit selector)',
+          )
+        }
+        const options: string[] = []
+        if (pth !== '') options.push(`path: ${j(pth)}`)
+        if (fullPage) options.push('fullPage: true')
+        if (hasClip) {
+          options.push(
+            `clip: { x: ${clip!.x}, y: ${clip!.y}, width: ${clip!.width}, height: ${clip!.height} }`,
+          )
+        }
+        const shotOpts = options.length > 0 ? `{ ${options.join(', ')} }` : ''
         const shot =
           sel !== ''
-            ? `await page.locator(${j(sel)}).screenshot(${pth ? `{ path: ${j(pth)} }` : ''})`
-            : `await page.screenshot(${pth ? `{ path: ${j(pth)} }` : ''})`
+            ? `await page.locator(${j(sel)}).screenshot(${shotOpts})`
+            : `await page.screenshot(${shotOpts})`
         return (
           `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
           `${hideCursor ? `try { if (ego && ego.hideCursor) await ego.hideCursor() } catch {}\nawait new Promise(r => setTimeout(r, 60))\n` : ''}` +
           `let path\n` +
           `try { path = ${shot} } finally { ${hideCursor ? `try { if (ego && ego.showCursor) await ego.showCursor() } catch {}` : ''} }\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path }))\n`
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, path, fullPage: ${fullPage} }))\n`
         )
       },
       deliverFiles: (args, value) => {
@@ -2640,7 +2722,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_tabs',
       description:
-        'List, switch, open, or close agent-browser tabs. Use it to keep tab hygiene: list the open pages, switch to one, open a new tab for a URL, or close scratch tabs. Tab ids are stable target ids (also returned by ego_space_open / ego_navigate). After an action that may open a popup/new tab, run action="list" before deciding; never act on a targetId from memory.',
+        'List, switch, open, or close agent-browser tabs. Use it to keep tab hygiene: list the open pages, switch to one, open a new tab for a URL, or close scratch tabs. list also reports task spaces with their ownership (agent/user) and recent tab titles — never close or take over a user-owned space. Tab ids are stable target ids (also returned by ego_space_open / ego_navigate). After an action that may open a popup/new tab, run action="list" before deciding; never act on a targetId from memory.',
       parameters: {
         action: {
           type: 'string',
@@ -2835,6 +2917,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   reg(
     t({
       name: 'ego_key',
+      successHint: () => ACTION_SUCCESS_HINT,
       description:
         "Press a keyboard key or shortcut combination on the current page, e.g. 'Enter', 'Tab', 'Control+a', 'Escape', 'ArrowDown'. Useful for forms, shortcuts and navigation. Pass `text` to type a string of characters instead (keyboard.type).",
       parameters: {
@@ -2951,6 +3034,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   reg(
     t({
       name: 'ego_select',
+      successHint: () => ACTION_SUCCESS_HINT,
       description:
         'Choose an option in a <select> dropdown by value, label, or index (a single value or an array for multi-select).',
       parameters: {
@@ -3147,6 +3231,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   reg(
     t({
       name: 'ego_check',
+      successHint: () => ACTION_SUCCESS_HINT,
       description:
         'Check (tick) or uncheck a checkbox/radio element. Does nothing if already in the desired state.',
       parameters: {
@@ -3261,9 +3346,14 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
               stdout: { type: 'string', required: true },
               stderr: { type: 'string' },
               result: { type: 'json' },
+              code: { type: 'string' },
+              actionSent: { type: 'boolean' },
+              retry: { type: 'string' },
+              hint: { type: 'string' },
+              error: { type: 'string' },
             },
           },
-          render: renderText,
+          render: renderEgoToolText,
         },
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
@@ -3274,7 +3364,15 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () =>
               rawScriptPrelude(cfg, str(args.tab, ''), str(args.space, cfg.defaultSpace)) + str(args.script, ''),
             )
-            if (!result.ok) throw new Error(result.error)
+            if (!result.ok) {
+              // Same failure contract as the structured tools: the escape hatch
+              // must not be the one place where the model sees a bare string.
+              return {
+                ...failureValue('ego_cli', result.error ?? 'ego_cli call failed'),
+                stdout: stripTargetMarkers(result.stdout),
+                stderr: result.stderr,
+              }
+            }
             recordPinnedTarget(
               cfg.targetTracker,
               scopedTargetKey(sessionId, str(args.space, cfg.defaultSpace)),
@@ -3452,7 +3550,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
     defineTool({
       name: 'ego_help',
       description:
-        'Query the built-in ego-browser guide. `topic` may be a category (overview/tools/navigate/tabs/observe/input/keyboard-mouse/form/wait/network/download/captcha/login/script/doctor/discipline/errors/screenshots) or a specific tool name (e.g. ego_click). `topic=list` lists every topic. Returns matching usage notes. Read `discipline` before a multi-step task and `errors` when a tool reports a failure code.',
+        'Query the built-in ego-browser guide. `topic` may be a category (overview/tools/navigate/tabs/observe/input/keyboard-mouse/form/wait/network/download/captcha/login/login-import/script/doctor/discipline/errors/screenshots/gui-test) or a specific tool name (e.g. ego_click). `topic=list` lists what this host offers. Read `discipline` before a multi-step task, `errors` when a tool reports a failure code, and `gui-test` for black-box UI testing.',
       parameters: {
         topic: {
           type: 'string',
@@ -3475,25 +3573,23 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       timeoutMs: 10_000,
       execute: async (args: Record<string, unknown>) => {
         const q = str(args.topic, '').trim().toLowerCase()
+        const env = { platform: process.platform }
         if (q === 'list') {
-          const names = Object.keys(EGO_HELP_INDEX).filter((k) => k !== 'overview')
-          return {
-            ok: true,
-            topic: 'list',
-            text: `可用主题: ${names.join(', ')}\n\noverview: ${EGO_HELP_INDEX.overview}`,
-          }
+          return { ok: true, topic: 'list', text: renderEgoHelpList(env) }
         }
-        const key = Object.prototype.hasOwnProperty.call(EGO_HELP_INDEX, q) ? q : ''
-        const text = key
-          ? EGO_HELP_INDEX[key]!
-          : (q
-              ? `未找到 topic "${q}"。可用: ` +
-                Object.keys(EGO_HELP_INDEX)
-                  .filter((k) => k !== 'overview')
-                  .join(', ') +
-                '\n\noverview: ' +
-                EGO_HELP_INDEX.overview
-              : EGO_HELP_INDEX.overview)
+        const entry = Object.prototype.hasOwnProperty.call(EGO_HELP_DOCS, q)
+          ? EGO_HELP_DOCS[q]
+          : undefined
+        if (entry !== undefined) {
+          const text = isEgoHelpVisible(q, env)
+            ? entry.text
+            : `${entry.text}\n\n（当前平台不可用：该主题仅在 macOS / Windows 提供）`
+          return { ok: true, topic: q, text }
+        }
+        const available = Object.keys(EGO_HELP_DOCS).filter((name) => isEgoHelpVisible(name, env))
+        const text = q
+          ? `未找到 topic "${q}"。可用: ${available.filter((name) => name !== 'overview').join(', ')}\n\noverview: ${EGO_HELP_DOCS.overview!.text}`
+          : EGO_HELP_DOCS.overview!.text
         return { ok: true, topic: q || 'overview', text }
       },
       presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_help', args), kind: 'other', rawInput: null }),
@@ -3610,10 +3706,14 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
               result: { type: 'json' },
               durationMs: { type: 'integer' },
               timedOut: { type: 'boolean' },
+              code: { type: 'string' },
+              actionSent: { type: 'boolean' },
+              retry: { type: 'string' },
+              hint: { type: 'string' },
               error: { type: 'string' },
             },
           },
-          render: renderText,
+          render: renderEgoToolText,
         },
         timeoutMs: TOOL_TIMEOUT_MS,
         execute: async (args: Record<string, unknown>, exec: ToolExec) => {
@@ -3633,12 +3733,11 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
             const durationMs = Date.now() - start
             if (!result.ok)
               return {
-                ok: false,
+                ...failureValue('ego_script', result.error ?? 'ego_script call failed'),
                 stdout: stripTargetMarkers(result.stdout),
                 stderr: result.stderr,
                 durationMs,
                 timedOut: false,
-                error: result.error,
               }
             recordPinnedTarget(
               cfg.targetTracker,

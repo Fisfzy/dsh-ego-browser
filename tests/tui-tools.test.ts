@@ -89,6 +89,43 @@ describe('registered browser tools with TUI observers', () => {
     b.dispose()
   })
 
+  it('appends the observation hint to interaction successes', async () => {
+    const b = bench()
+    const result = await b.call('ego_click', { selector: '#submit' })
+    expect(result).toMatchObject({ ok: true })
+    expect((result as { hint?: string }).hint).toContain('不要重复同一动作')
+    b.dispose()
+  })
+
+  it('builds fullPage/clip screenshot options and rejects invalid combinations', async () => {
+    const b = bench()
+    await b.call('ego_screenshot', { fullPage: true })
+    const full = b.spawn.mock.calls.at(-1)![0] as SpawnSpec
+    expect(full.stdio.stdin.data).toContain('fullPage: true')
+    await b.call('ego_screenshot', { clip: { x: 1, y: 2, width: 30, height: 40 } })
+    const clipped = b.spawn.mock.calls.at(-1)![0] as SpawnSpec
+    expect(clipped.stdio.stdin.data).toContain('clip: { x: 1, y: 2, width: 30, height: 40 }')
+    await expect(b.call('ego_screenshot', { selector: '#x', fullPage: true })).rejects.toThrow(
+      'fullPage/clip only apply',
+    )
+    // The clip object schema requires all four numbers; a partial object is
+    // rejected by argument validation before the script is built.
+    await expect(b.call('ego_screenshot', { clip: { x: 1 } })).rejects.toThrow(/clip\.y|clip requires/)
+    b.dispose()
+  })
+
+  it('returns the structured failure contract from ego_cli', async () => {
+    const b = bench()
+    b.spawn.mockImplementation(() => ({
+      done: Promise.resolve({ exitCode: 1, signal: null }),
+      collected: { stdout: reader(''), stderr: reader('element not found in page') },
+    }))
+    const result = await b.call('ego_cli', { script: 'console.log(1)' })
+    expect(result).toMatchObject({ ok: false, code: 'LOCATOR_NOT_FOUND', retry: 'reobserve' })
+    expect((result as { stdout: string }).stdout).toBe('')
+    b.dispose()
+  })
+
   it('presents shared titles, observes standalone help, and preserves outputs without spawning', async () => {
     const b = bench()
     expect(b.tools.get('ego_fill')!.presentCall({ selector: '#email', text: 'SECRET' })).toMatchObject({ title: 'ego_fill · #email', rawInput: null })

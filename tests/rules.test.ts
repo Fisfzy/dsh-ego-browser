@@ -49,6 +49,18 @@ describe('native rules prompt', () => {
     expect(typeof sections[0]!.text).toBe('function')
   })
 
+  it('respects the rulesPrompt switch on every assembly pass', () => {
+    noteEgoToolUse('s1')
+    expect(rulesTextForContext({}, false)).toBe('')
+    const sections: SystemPromptSectionSpec[] = []
+    registerEgoRulesSection(
+      { get: () => ({ section: (spec: SystemPromptSectionSpec) => sections.push(spec) }) },
+      { isEnabled: () => false },
+    )
+    expect(sections).toHaveLength(1)
+    expect((sections[0]!.text as (context: unknown) => string)({})).toBe('')
+  })
+
   it('is a silent no-op on a host without the service', () => {
     expect(registerEgoRulesSection({ get: () => undefined })).toBe(false)
     expect(registerEgoRulesSection({})).toBe(false)

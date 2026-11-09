@@ -138,6 +138,8 @@ export interface ResolvedConfig {
   residentExecutor: boolean
   /** Minutes without an ego_* call before the resident process is stopped. 0 = keep until unmount. */
   residentIdleMin: number
+  /** Inject the compact browser rules section into the system prompt after the first ego_* call. */
+  rulesPrompt: boolean
   chromePath: string
   /** macOS only: pass `--use-mock-keychain` to Chrome so cookies flush to disk (issue #93). */
   useMockKeychain: boolean

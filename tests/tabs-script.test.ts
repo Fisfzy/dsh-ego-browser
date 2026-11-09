@@ -89,6 +89,15 @@ describe('ego_tabs script codegen (#88)', () => {
     expect(tabsScript({ action: 'list', space: 's' })).toContain('await browser.listTabs()')
   })
 
+  it('reports task-space ownership alongside the tabs', () => {
+    const script = tabsScript({ action: 'list', space: 's' })
+    expect(script).toContain('await taskSpaces.list()')
+    expect(script).toContain('ownership: s.ownership')
+    expect(script).toContain('spaces: __spaces')
+    // A missing facade must not fail the whole action.
+    expect(script).toContain('} catch {}')
+  })
+
   it('rejects switch/close without a targetId and unknown actions', () => {
     for (const action of ['switch', 'close']) {
       const script = tabsScript({ action, space: 's' })

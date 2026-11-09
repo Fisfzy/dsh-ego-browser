@@ -27,6 +27,7 @@ const prefs = {
   disableFrameRelay: z.boolean().description('Disable the live frame relay (watch panel): no ego-cast worker, no screencast capture and no /api/ego stream routes. ego_* tools keep working.'),
   residentExecutor: z.boolean().description('Reuse one resident `ego-browser --serve` process across ego_* calls: the first call pays startup, later calls skip it (~16ms). Off = spawn per call. A dead resident falls back to a fresh spawn automatically.'),
   residentIdleMin: z.number().min(0).max(1440).step(1).description('Stop the resident process after N minutes without an ego_* call (0 = keep it until the plugin unmounts). The browser itself is unaffected.'),
+  rulesPrompt: z.boolean().description('Inject a compact browser operating-rules section into the system prompt after the first ego_* call (default true). Off keeps the prompt smaller; tool descriptions and failure hints still apply.'),
   chromePath: z.string().description('Path to Chrome/Chromium. Empty = auto-detect.'),
   // macOS 27 + Chrome 156: Chrome's login-Keychain path silently fails to write
   // cookies to disk, so task-space logins vanish after a browser restart (#93).
@@ -314,5 +315,9 @@ export function resolveConfig(config: RawConfig = {}): ResolvedConfig {
     residentExecutor: typeof config.residentExecutor === 'boolean' ? config.residentExecutor : config.residentExecutor === 'true' || config.residentExecutor === '1' || config.residentExecutor === 1,
     tuiAutoOpenPanel: typeof config.tuiAutoOpenPanel === 'boolean' ? config.tuiAutoOpenPanel : config.tuiAutoOpenPanel === 'true' || config.tuiAutoOpenPanel === '1' || config.tuiAutoOpenPanel === 1,
     residentIdleMin: finiteIn(config.residentIdleMin, 0, 1440) ? config.residentIdleMin : 30,
+    // Default true: the rule block is only rendered after the first ego_* call,
+    // so a browser-free session pays nothing. Opt-out for hosts that manage the
+    // prompt budget themselves.
+    rulesPrompt: typeof config.rulesPrompt === 'boolean' ? config.rulesPrompt : !(config.rulesPrompt === 'false' || config.rulesPrompt === '0' || config.rulesPrompt === 0),
   }
 }
