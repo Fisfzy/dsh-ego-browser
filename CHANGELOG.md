@@ -12,6 +12,9 @@
 - 实机确认：4399 跨域 age iframe 内的 `#btn_login` 通过 `ref` 点击成功（弹出登录框），说明 iframe 交互无需新增 frame 工具。
 - 单元测试新增：截图在附件服务可用时返回 image block、`inline:false` 与无附件服务时自动降级。
 
+### 修复
+- 首次实机测试发现直接访问 `ctx.attachments` 会被 Cordis 的 inject 保护拒绝（`cannot get property "attachments" without inject`）。改为 `ctx.inject(['attachments'], ...)` 捕获服务 + `ctx.get` 兜底；TUI/无头宿主仍自动退回“仅路径”。
+
 ### 测试
 - 全量：**422 passed / 7 skipped**；typecheck 通过。
 - `scripts/smoke-0.9.13.mjs`：真实 vendored runtime + 本地页面，**31/31 通过**（截图内联在无附件服务的 fake ctx 下按预期退回路径）。

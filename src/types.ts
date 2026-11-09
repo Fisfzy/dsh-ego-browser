@@ -130,8 +130,6 @@ export interface EgoContext {
   logger?: LoggerLike
   webServer?: WebServerLike
   httpServer?: HttpServerLike
-  /** Host image attachment store (image blocks in tool results). */
-  attachments?: AttachmentStoreLike
   get?(name: string): unknown
   effect?(fn: () => unknown, label?: string): unknown
   inject?(services: readonly string[], fn: (sctx: EgoContext) => void): void

@@ -110,6 +110,13 @@ const snapshotCache = new SnapshotCache(32)
 /** Whether the host accepted the native rules prompt section. */
 let rulesSectionRegistered = false
 /**
+ * Host attachment store, captured through a service inject. Direct
+ * `ctx.attachments` access is guarded by Cordis ("without inject") and throws;
+ * an optional inject callback is the supported way to observe the service when
+ * the host provides one.
+ */
+let attachmentsStore: AttachmentStoreLike | undefined
+/**
  * Appended to interaction results so the "cheapest observation" rule arrives
  * exactly when a repeated action would otherwise be tempting.
  */
@@ -1565,7 +1572,14 @@ export async function attachScreenshot(
   const v = value as { ok?: unknown; path?: unknown } | null
   if (v === null || v.ok !== true || typeof v.path !== 'string' || v.path === '') return value
   if (args.inline === false) return value
-  const store = (ctx.attachments ?? ctx.get?.('attachments')) as AttachmentStoreLike | undefined
+  const store = (() => {
+    if (attachmentsStore !== undefined) return attachmentsStore
+    try {
+      return ctx.get?.('attachments') as AttachmentStoreLike | undefined
+    } catch {
+      return undefined
+    }
+  })()
   if (store === null || typeof store?.saveImage !== 'function') return value
   try {
     const data = await readFile(v.path)
@@ -1811,6 +1825,13 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     get rulesPrompt() { return resolveConfig(bridge.source() as RawConfig).rulesPrompt },
   }
   const browserState = new BrowserStateStore()
+  // Capture the optional host attachment store for inline screenshots. The
+  // callback only runs on hosts that provide the service; TUI/headless hosts
+  // simply never get it and screenshots keep returning a path.
+  ctx.inject?.(['attachments'], (actx) => {
+    const store = (actx as unknown as { attachments?: AttachmentStoreLike }).attachments
+    if (store !== undefined) attachmentsStore = store
+  })
   const tui = installTui(ctx, browserState)
   installBrowserPanel(ctx, cfg, browserState, tui, {
     createTransport: () => ({ readBrowserState, readTaskSpaceGroups, ensureWorker: makeEnsureWorker(ctx, cfg, ffmpegManager), get: proxyFrom, post: proxyPost }),
