@@ -2,18 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [0.9.13] - 2026-11-09 — 原生操作规则 / 结构化失败 / 同源导航复用（NEWTOOL1 分支开发中，未发布）
+## [0.9.13] - 2026-11-09 — 浏览器操作能力增强 & 观察窗 UI 重做
 
 ### 新增
 - **原生操作规则提示（不引入 skill）**：注册 `plugin:ego-browser:rules` 系统提示段，文本按每个 step 重新求值——本进程第一次出现 `ego_*` 调用前为空（零 token），之后注入 8 条防错规则；装配上下文带 session id 时按会话门控，没有 `systemPrompt` 服务的主机静默跳过。
 - **结构化失败契约**：动作类工具失败不再抛异常，而是返回 `{ ok:false, code, actionSent, retry, hint }` 并渲染成一条可执行的恢复提示。覆盖 `TIMEOUT / LOCATOR_NOT_FOUND / NAVIGATION_FAILED / DIALOG_BLOCKING / CAPTCHA / USER_CONTROLLING / SPACE_STALE / BROWSER_DOWN / NO_PAYLOAD / INVALID_ARGS / UNKNOWN`；`actionSent=true` 表示动作可能已送达页面，应先观察而不是盲目重试。
 - **`ego_navigate` 新增 `reuse`**：`origin`（默认，同源已开标签页就地导航）/ `exact`（仅完全相同的 URL 切换、不重载）/ `none`（始终导航当前标签页，保持旧行为）。默认策略避免同站导航顶掉正在看的无关页面。
 - **`ego_help` 文档注册表**：主题升级为 `mode: inline/lookup` + 平台门控；新增 `gui-test`（黑盒 GUI 测试清单）、`login-import`（仅 macOS/Windows）；`topic=list` 按 inline/lookup/本平台不可用分组。
-- **`ego_status` 返回三行 `rulesSummary` 与 `help` 指针**；交互工具成功返回附带 `hint`（先做最便宜观察、不要重复同一动作）。
+- **`ego_status` 返回三行 `rulesSummary` 与 `help` 指针**；交互工具成功返回附带 `hint`（先做最便宜观察、不要重复同一动作）；新增 `rulesPrompt` 诊断（enabled/registered）。
 - **`rulesPrompt` 设置（默认 true）**：可关闭规则段；section 仍在注册，只是渲染为空，且按每次装配实时读取。
 - **`ego_snapshot({ diff: true })`**：按 session/space/scope 缓存上一份语义树，只返回新增/移除/变化的行（变化行成对给出 before/after），首次 diff 返回完整树作为基线；diff 结果不含可操作 ref，提示操作前重新取完整快照。
 - **`ego_tabs` 返回任务空间归属**：list/switch/open/close 的结果附带 `spaces: [{ id, name, ownership, recentTabTitles }]`；user-owned 空间不应被关闭或接管（facade 缺失时 best-effort，不影响动作）。
 - **`ego_screenshot` 新增 `fullPage` 与 `clip:{x,y,width,height}`**；与 `selector` 互斥，非法组合明确报错。
+- **观察窗 UI 重做**：实时观察面板改用 DSH 宿主主题 token（颜色/圆角/间距随主题切换），不再硬编码皮肤。
+- **插件图标与包元数据**：新增 `assets/icon*.png`，`package.json#icon` 与 `files` 收录；包描述更新为中文能力概览。
 
 ### 修复
 - **`ego_cli` / `ego_script` 失败统一为结构化值**（`code/actionSent/retry/hint`），不再是这两个逃生舱独有的裸字符串错误；两者 schema 同步扩展。
@@ -21,6 +23,7 @@
 ### 测试
 - 新增 `tests/errors.test.ts`（10）、`tests/rules.test.ts`（7）、`tests/navigate-reuse.test.ts`（9）、`tests/snapshot-diff.test.ts`（12）、`tests/help-topics.test.ts`（5）；`tests/tui-tools.test.ts` 增加 diff 接线、交互成功 hint、截图参数、`ego_cli` 失败契约用例。
 - `tests/tui-tools.test.ts` 的冷启动用例改为断言结构化失败值（`ok:false, code:BROWSER_DOWN`）。
+- 新增 `scripts/smoke-0.9.13.mjs`：真实 vendored runtime + 本地页面的端到端 smoke（31/31 通过），覆盖规则段、导航复用、diff、截图参数、tabs 归属、失败契约与 8 轮稳定性。
 - 全量：**420 passed / 7 skipped**；typecheck 通过。
 
 ## [0.9.12] - 2026-11-09 — macOS Cookie 落盘修复开关（#93 收尾）
