@@ -49,6 +49,8 @@ import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpace
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
 import { EGO_HELP_INDEX } from './help.ts'
+import { failureValue } from './errors.ts'
+import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs, validateEgoBinPath } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
@@ -90,6 +92,12 @@ const DEFAULT_SPACE = 'dsh-agent'
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const DEFAULT_GRACE_MS = 15_000
 const TOOL_TIMEOUT_MS = 120_000
+/** Three-line onboarding shown by ego_status; the full text lives in ego_help. */
+const STATUS_RULES_SUMMARY = [
+  '先观察再动作：ego_snapshot（ref 只对本次快照有效）/ ego_tabs list。',
+  '每次只做一个会改变页面的动作，之后用 ego_page_info / ego_read_element 确认效果。',
+  '超时或找不到目标时重新快照，不要原样重试；失败按返回的 retry / hint 处理。',
+].join('\n')
 
 export interface ActiveSpaceTracker {
   current(): string | number
@@ -1350,6 +1358,96 @@ export const tabsScript = (opts: {
   return guard(noBrowser('listTabs'), 'browser.listTabs', done(''))
 }
 
+/** Accepted tab-reuse policies for `ego_navigate`. */
+export const NAVIGATE_REUSE_MODES = ['origin', 'exact', 'none'] as const
+export type NavigateReuse = (typeof NAVIGATE_REUSE_MODES)[number]
+
+/** Default + validation for the `reuse` parameter (unknown values → origin). */
+export function normalizeNavigateReuse(value: unknown): NavigateReuse {
+  const v = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  return (NAVIGATE_REUSE_MODES as readonly string[]).includes(v) ? (v as NavigateReuse) : 'origin'
+}
+
+/**
+ * ego_navigate script builder.
+ *
+ * Split out so the generated heredoc is unit-testable (same reason as
+ * `tabsScript`). Three policies:
+ *
+ * - `origin` (default): an open tab on the same host is activated and
+ *   navigated IN PLACE. This is the ZCode `browsers.open(url)` behaviour and
+ *   stops a same-site navigation from hijacking an unrelated active tab.
+ * - `exact`: only an already-open exact URL is reused (switch, no reload).
+ * - `none`: always navigate the active tab (the pre-0.9.13 behaviour).
+ *
+ * Do NOT wire this to the runtime's `openOrReuseTab({ match: 'origin' })`: that
+ * helper switches to the same-origin tab but does NOT navigate it, so a
+ * same-site different path would silently stay on the old page.
+ */
+export const navigateScript = (opts: {
+  url: string
+  reuse?: string
+  wait?: boolean
+  timeout?: number
+  tab?: string
+  space: string | number
+}): string => {
+  const url = opts.url
+  if (url === '') {
+    return (
+      `${useSpace(opts.space)}` +
+      `console.log('${SENTINEL}' + JSON.stringify({ ok: false, code: 'INVALID_ARGS', ` +
+      `error: 'ego_navigate: url is required' }))\n`
+    )
+  }
+  const reuse = normalizeNavigateReuse(opts.reuse)
+  const wait = opts.wait !== false
+  const timeout =
+    typeof opts.timeout === 'number' && Number.isFinite(opts.timeout) && opts.timeout > 0
+      ? Math.round(opts.timeout)
+      : 20_000
+  const goto = `page.goto(${j(url)}, { wait: ${wait}, timeout: ${timeout} })`
+  if (reuse === 'none') {
+    return (
+      `${useSpace(opts.space)}${ensureRealTab(opts.tab ?? '')}` +
+      `const __url = ${j(url)}\n` +
+      `await ${goto}\n` +
+      `const pginfo = await page.info()\n` +
+      `console.log('${SENTINEL}' + JSON.stringify({ ok: true, reused: 'none', navigated: true, page: pginfo }))\n`
+    )
+  }
+  const originBranch =
+    reuse === 'origin'
+      ? `} else if (__reuse === 'origin') {\n` +
+        `  let __host = ''\n` +
+        `  try { __host = new URL(__url).host } catch { __host = '' }\n` +
+        `  const __same = __host === '' ? undefined : __tabs.find(t => {\n` +
+        `    try { return new URL(t.url).host === __host } catch { return false }\n` +
+        `  })\n` +
+        `  if (__same) {\n` +
+        `    if (__same.active !== true) await browser.switchTab(__same.targetId)\n` +
+        `    await ${goto}\n` +
+        `    __reused = 'origin'\n` +
+        `  }\n`
+      : ''
+  return (
+    `${useSpace(opts.space)}${ensureRealTab(opts.tab ?? '')}` +
+    `const __url = ${j(url)}\n` +
+    `const __reuse = ${j(reuse)}\n` +
+    `const __stripHash = (value) => String(value || '').split('#')[0]\n` +
+    `let __reused = 'none'\n` +
+    `const __exact = __tabs.find(t => __stripHash(t.url) === __stripHash(__url))\n` +
+    `if (__exact) {\n` +
+    `  if (__exact.active !== true) await browser.switchTab(__exact.targetId)\n` +
+    `  __reused = 'exact'\n` +
+    `${originBranch}` +
+    (reuse === 'origin' ? '}\n' : '}\n') +
+    `if (__reused === 'none') await ${goto}\n` +
+    `const pginfo = await page.info()\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, reused: __reused, navigated: __reused !== 'exact', page: pginfo }))\n`
+  )
+}
+
 /**
  * selectOption with value → label → index fallback.
  *
@@ -1387,6 +1485,27 @@ function renderText(_args: unknown, value: unknown): unknown[] {
     return [{ type: 'text', text: v.text }]
   }
   return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
+}
+/**
+ * Renderer for structured tool values: a failed domain result is shown as one
+ * short actionable block (code / actionSent / retry / hint) instead of a raw
+ * JSON dump, so the model sees the recovery path without parsing fields.
+ */
+function renderEgoToolText(args: unknown, value: unknown): unknown[] {
+  const v = value as Record<string, unknown> | null
+  if (v !== null && typeof v === 'object' && v.ok === false && typeof v.code === 'string') {
+    const error = typeof v.error === 'string' && v.error !== '' ? ` ${v.error}` : ''
+    return [
+      {
+        type: 'text',
+        text:
+          `error [${v.code}]${error}\n` +
+          `actionSent: ${String(v.actionSent)} | retry: ${String(v.retry)}\n` +
+          `hint: ${typeof v.hint === 'string' ? v.hint : ''}`,
+      },
+    ]
+  }
+  return renderText(args, value)
 }
 const commonOutputSchema = {
   type: 'object',
@@ -1428,7 +1547,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
     parameters: opts.parameters,
     output: {
       schema: commonOutputSchema,
-      render: renderText,
+      render: renderEgoToolText,
     },
     timeoutMs: TOOL_TIMEOUT_MS,
     execute: async (args: Record<string, unknown>, exec: ToolExec) =>
@@ -1464,7 +1583,10 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
             }
           }
           const result = await runWithStaleSpaceRetry(ctx, cfg, exec, buildScript)
-          if (!result.ok) throw new Error(result.error)
+          // Domain failure is a canonical value, not an exception: the renderer
+          // shows code/actionSent/retry/hint so the model can recover instead of
+          // blindly replaying a non-idempotent action.
+          if (!result.ok) return failureValue(opts.name, result.error ?? 'ego-browser call failed')
           recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
           if (typeof opts.afterExecute === 'function') opts.afterExecute(args, result.value)
           if (typeof opts.deliverFiles === 'function') {
@@ -1604,10 +1726,18 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     }
   }
   const reg = (tool: ToolHandle): void => {
-    // These standalone tools do not take the shared browser lock.
+    // One wrapper for every ego_* tool: record that this process/session has
+    // used the browser (the native rules prompt turns on after this), then add
+    // the observation wrapper for the standalone tools that skip the browser
+    // lock.
+    const execute = tool.execute
+    tool.execute = (args, exec) => {
+      noteEgoToolUse(callingSessionId(exec as ToolExec | undefined))
+      return execute(args, exec)
+    }
     if (['ego_cli', 'ego_script', 'ego_help', 'ego_doctor'].includes(tool.name)) {
-      const execute = tool.execute
-      tool.execute = (args, exec) => observeEgoTool(cfg, tool.name, args as Record<string, unknown>, () => execute(args, exec))
+      const noted = tool.execute
+      tool.execute = (args, exec) => observeEgoTool(cfg, tool.name, args as Record<string, unknown>, () => noted(args, exec))
     }
     const dispose = ctx.tools.register(tool) as unknown as () => void
     // Cordis lifecycle: unregister the tool when the plugin unmounts.
@@ -1618,6 +1748,10 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   registerLoginImport(ctx, cfg, reg)
   registerActionTools(ctx, cfg, reg)
   registerHelpAndDoctor(ctx, cfg, reg)
+  // Native operating rules (no skill): a system-prompt section that stays empty
+  // until this process has seen an ego_* call. Feature-detected, so a host
+  // without the systemPrompt service is unaffected.
+  registerEgoRulesSection(ctx)
   // Realtime watch-panel host routes (/api/ego/*). Guarded: only meaningful
   // when the host exposes an HTTP server (web surface); headless safe-no-op.
   // The host service is `webServer` on the web shell (current runner). We only
@@ -1791,6 +1925,8 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
             path: { type: 'string' },
             exitCode: { type: 'integer' },
             resident: { type: 'object', additionalProperties: true },
+            rulesSummary: { type: 'string' },
+            help: { type: 'string' },
           },
         },
         render: renderText,
@@ -1822,6 +1958,8 @@ function registerEgoStatus(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: T
               path: cfg.egoBin,
               exitCode: outcome.exitCode,
               resident: residentDiagnostics(cfg),
+              rulesSummary: STATUS_RULES_SUMMARY,
+              help: 'ego_help discipline / errors',
             }
           } catch (err) {
             return {
@@ -2174,7 +2312,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_snapshot',
       description:
-        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. This is the main observation tool for any browser task.',
+        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. This is the main observation tool for any browser task. refs are re-created by every snapshot — always act from the newest one.',
       parameters: {
         space: spaceParam,
         scope: {
@@ -2211,7 +2349,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_navigate',
       description:
-        'Open a URL in the task space, or switch to the existing tab for it. Always prefer reusing existing open tabs before opening duplicate URLs. Waits for document load. Returns resulting page info.',
+        'Open a URL in the task space. By default an open tab on the SAME HOST is reused and navigated in place (reuse="origin"); reuse="exact" only switches when that exact URL is open, reuse="none" always navigates the active tab. Waits for document load. Do not navigate again to a URL that is already open.',
       parameters: {
         url: {
           type: 'string',
@@ -2226,45 +2364,30 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           type: 'number',
           description: 'Load wait timeout in ms (default 20000).',
         },
+        reuse: {
+          type: 'string',
+          description:
+            'Tab reuse policy: "origin" (default) reuses a same-host tab and navigates it in place; "exact" only reuses the exact URL; "none" always navigates the active tab.',
+        },
         tab: tabParam,
         space: spaceParam,
       },
-      buildScript: (args) => {
-        const u = str(args.url, '')
-        // Schema marks url required, but never silently navigate to a
-        // hard-coded example page on a non-conforming empty value — report
-        // back an actionable failure instead.
-        if (u === '') {
-          return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, reused: false, page: null, reason: 'ego_navigate: url is required' }))\n`
-        }
-        // Reuse the current tab in this task space (select a real tab, then
-        // navigate IN PLACE via page.goto) instead of opening a new tab every
-        // time. This keeps the agent's tab count small across a task. If a
-        // tab already shows the exact URL, we switch to it; otherwise we
-        // navigate the active tab so we don't pile up tabs.
-        // NOTE: ensureRealTab() already declares `__tabs`, so reuse it.
-        return (
-          `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab(str(args.tab, ''))}` +
-          `const __existing = __tabs.find(t => t.url.split('#')[0] === ${j(
-            u.split('#')[0],
-          )})\n` +
-          `const tab = __existing ? await browser.switchTab(__existing.targetId) : await page.goto(${j(
-            u,
-          )}, { wait: ${bool(args.wait, true)}, timeout: ${num(
-            args.timeout,
-            20_000,
-          )} })\n` +
-          `const pginfo = await page.info()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, reused: !!__existing, page: pginfo }))\n`
-        )
-      },
+      buildScript: (args) =>
+        navigateScript({
+          url: str(args.url, ''),
+          reuse: str(args.reuse, 'origin'),
+          wait: bool(args.wait, true),
+          timeout: num(args.timeout, 20_000),
+          tab: str(args.tab, ''),
+          space: str(args.space, cfg.defaultSpace),
+        }),
     }),
   )
   reg(
     t({
       name: 'ego_click',
       description:
-        'Click an element in the current page. Target with a CSS selector, an xpath=.../loc=.../ref=N value from ego_snapshot, or viewport coordinates.',
+        'Click an element in the current page. Target with a CSS selector, an xpath=.../loc=.../ref=N value from the LATEST ego_snapshot, or viewport coordinates. On a timeout or missing target, re-snapshot and rebuild the locator; do not replay the same selector. See ego_help discipline.',
       parameters: {
         selector: {
           type: 'string',
@@ -2328,7 +2451,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_fill',
       description:
-        'Type text into an input field. Target with a CSS selector, xpath=..., loc=..., or ref=N from ego_snapshot.',
+        'Type text into an input field. Target with a CSS selector, xpath=..., loc=..., or ref=N from the LATEST ego_snapshot. On a timeout or missing target, re-snapshot instead of retrying the same selector.',
       parameters: {
         selector: {
           type: 'string',
@@ -2409,7 +2532,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_screenshot',
       description:
-        'Capture a screenshot of the current page (or of a single element if selector is given). Returns the file path of the saved PNG, which you can then read with a vision/image tool.',
+        'Capture a screenshot of the current page (or of a single element if selector is given). Returns the file path of the saved PNG, which you can then read with a vision/image tool. Take screenshots only when visual evidence is actually needed (layout/rendering, user asked for one, or the target is not in the semantic tree); do not snapshot and screenshot by default.',
       parameters: {
         selector: {
           type: 'string',
@@ -2476,7 +2599,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_tabs',
       description:
-        'List, switch, open, or close agent-browser tabs. Use it to keep tab hygiene: list the open pages, switch to one, open a new tab for a URL, or close scratch tabs. Tab ids are stable target ids (also returned by ego_space_open / ego_navigate).',
+        'List, switch, open, or close agent-browser tabs. Use it to keep tab hygiene: list the open pages, switch to one, open a new tab for a URL, or close scratch tabs. Tab ids are stable target ids (also returned by ego_space_open / ego_navigate). After an action that may open a popup/new tab, run action="list" before deciding; never act on a targetId from memory.',
       parameters: {
         action: {
           type: 'string',
@@ -3288,7 +3411,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
     defineTool({
       name: 'ego_help',
       description:
-        'Query the built-in ego-browser tool guide. `topic` may be a category (overview/tools/navigate/observe/input/keyboard-mouse/form/wait/network/login/script/doctor) or a specific tool name (e.g. ego_click). Returns the matching usage notes. Call this when unsure which eyebrow tool to use.',
+        'Query the built-in ego-browser guide. `topic` may be a category (overview/tools/navigate/tabs/observe/input/keyboard-mouse/form/wait/network/download/captcha/login/script/doctor/discipline/errors/screenshots) or a specific tool name (e.g. ego_click). `topic=list` lists every topic. Returns matching usage notes. Read `discipline` before a multi-step task and `errors` when a tool reports a failure code.',
       parameters: {
         topic: {
           type: 'string',
@@ -3311,6 +3434,14 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       timeoutMs: 10_000,
       execute: async (args: Record<string, unknown>) => {
         const q = str(args.topic, '').trim().toLowerCase()
+        if (q === 'list') {
+          const names = Object.keys(EGO_HELP_INDEX).filter((k) => k !== 'overview')
+          return {
+            ok: true,
+            topic: 'list',
+            text: `可用主题: ${names.join(', ')}\n\noverview: ${EGO_HELP_INDEX.overview}`,
+          }
+        }
         const key = Object.prototype.hasOwnProperty.call(EGO_HELP_INDEX, q) ? q : ''
         const text = key
           ? EGO_HELP_INDEX[key]!

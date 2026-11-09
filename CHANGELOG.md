@@ -2,6 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.9.13] - 2026-11-09 — 原生操作规则 / 结构化失败 / 同源导航复用（NEWTOOL1 分支开发中，未发布）
+
+### 新增
+- **原生操作规则提示（不引入 skill）**：注册 `plugin:ego-browser:rules` 系统提示段，文本按每个 step 重新求值——本进程第一次出现 `ego_*` 调用前为空（零 token），之后注入 8 条防错规则；装配上下文带 session id 时按会话门控，没有 `systemPrompt` 服务的主机静默跳过。
+- **结构化失败契约**：动作类工具失败不再抛异常，而是返回 `{ ok:false, code, actionSent, retry, hint }` 并渲染成一条可执行的恢复提示。覆盖 `TIMEOUT / LOCATOR_NOT_FOUND / NAVIGATION_FAILED / DIALOG_BLOCKING / CAPTCHA / USER_CONTROLLING / SPACE_STALE / BROWSER_DOWN / NO_PAYLOAD / INVALID_ARGS / UNKNOWN`；`actionSent=true` 表示动作可能已送达页面，应先观察而不是盲目重试。
+- **`ego_navigate` 新增 `reuse`**：`origin`（默认，同源已开标签页就地导航）/ `exact`（仅完全相同的 URL 切换、不重载）/ `none`（始终导航当前标签页，保持旧行为）。默认策略避免同站导航顶掉正在看的无关页面。
+- **`ego_help` 新增 `discipline` / `errors` / `screenshots` 主题与 `topic=list`**；`ego_status` 返回三行 `rulesSummary` 与 `help` 指针。
+- 关键工具描述补充失败/顺序规则：`ego_navigate`、`ego_snapshot`、`ego_click`、`ego_fill`、`ego_tabs`、`ego_screenshot`（其余工具描述不变，控制常驻 token）。
+
+### 测试
+- 新增 `tests/errors.test.ts`（10）、`tests/rules.test.ts`（6）、`tests/navigate-reuse.test.ts`（9）。
+- `tests/tui-tools.test.ts` 的冷启动用例改为断言结构化失败值（`ok:false, code:BROWSER_DOWN`）。
+- 全量：**396 passed / 7 skipped**；typecheck 通过。
+
 ## [0.9.12] - 2026-11-09 — macOS Cookie 落盘修复开关（#93 收尾）
 
 ### 新增

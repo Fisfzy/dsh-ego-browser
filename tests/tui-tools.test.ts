@@ -95,22 +95,28 @@ describe('registered browser tools with TUI observers', () => {
     expect(b.setField.mock.calls.some(call => (call[2] as { detail?: string }).detail === 'ego_click · #two')).toBe(true)
     b.dispose()
   })
-  it('only announces a cold-start failure after all retries, preserving the rejection', async () => {
+  it('only announces a cold-start failure after all retries and returns the structured failure', async () => {
     vi.useFakeTimers()
     const b = bench()
     b.spawn.mockImplementation(() => ({ done: Promise.resolve({ exitCode: 1, signal: null }),
       collected: { stdout: reader(''), stderr: reader('CDP channel is not open') } }))
-    const failed = b.call('ego_click', { selector: '#submit' }).catch(error => error)
+    const failed = b.call('ego_click', { selector: '#submit' })
     await vi.advanceTimersByTimeAsync(599)
     expect(b.show).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1800)
-    expect(await failed).toBeInstanceOf(Error)
+    // Domain failures are canonical values (code/retry/hint), not thrown errors.
+    expect(await failed).toMatchObject({ ok: false, code: 'BROWSER_DOWN', retry: 'retry' })
     expect(b.spawn).toHaveBeenCalledTimes(3)
     expect(b.show).toHaveBeenCalledTimes(1)
     expect(b.show.mock.lastCall?.[0]).toContain('could not start after retrying')
     b.spawn.mockImplementation(() => ({ done: Promise.resolve({ exitCode: 1, signal: null }),
       collected: { stdout: reader(''), stderr: reader('element not found') } }))
-    await expect(b.call('ego_click', { selector: '#missing' })).rejects.toThrow('element not found')
+    await expect(b.call('ego_click', { selector: '#missing' })).resolves.toMatchObject({
+      ok: false,
+      code: 'LOCATOR_NOT_FOUND',
+      actionSent: true,
+      retry: 'reobserve',
+    })
     expect(b.show).toHaveBeenCalledTimes(1)
     b.dispose()
   })
