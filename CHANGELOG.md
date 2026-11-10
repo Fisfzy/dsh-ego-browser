@@ -17,10 +17,12 @@
 - 首次实机测试发现直接访问 `ctx.attachments` 会被 Cordis 的 inject 保护拒绝（`cannot get property "attachments" without inject`）。改为 `ctx.inject(['attachments'], ...)` 捕获服务 + `ctx.get` 兜底；TUI/无头宿主仍自动退回“仅路径”。
 - **安全：snapshot 不再回显密码框明文**。`input[type=password]` 的 `value` 统一输出 `••••••`，避免浏览器自动填充把真实密码写进语义树、模型上下文和会话日志；文本/普通输入仍正常显示。已用本地页面实机验证（`pwMasked=true`，无明文）。
 - **人机协作规则**：规则段与 `ego_help discipline` 新增“登录/人机验证/支付/年龄确认 → 先告诉用户，用 `ego_wait_for_human` 等待；不要猜密码、不要绕过访问控制”。
+- **#98 Android proot 环境适配**：插件启动时自愈 `bin/ego-chrome-wrapper.sh` 的执行位（npm/tar 解压可能掉成 600）；wrapper 优先使用插件解析出的 `EGO_LINUX_CHROME_BIN`，并增加 PATH `command -v` 兜底，修复“`ego_doctor` 找到 `/usr/local/bin/chromium` 但 wrapper 找不到”的不一致；`ego_doctor` 输出 wrapper 路径、执行位与最终浏览器。
 
 ### 测试
-- 全量：**431 passed / 7 skipped**；typecheck 通过。
+- 全量：**433 passed / 8 skipped**；typecheck 通过。
 - 新增 `tests/click-script.test.ts`（9）：默认鼠标路径不变、`touch` 只发 touchStart/touchEnd、`holdMs` 同点按下/抬起、非法 `holdMs` 拒绝、全程无 move。
+- 新增 `tests/wrapper.test.ts`（3，Windows 跳过执行位用例）：wrapper 脚本契约、执行位自愈、缺失文件降级。
 - `scripts/smoke-0.9.13.mjs`：真实 vendored runtime + 本地页面，**31/31 通过**（截图内联在无附件服务的 fake ctx 下按预期退回路径）。
 
 ## [0.9.13] - 2026-11-09 — 浏览器操作能力增强 & 观察窗 UI 重做

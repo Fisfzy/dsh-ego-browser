@@ -35,7 +35,7 @@
  * 加工具：在 registerActionTools 里 reg(t({...}))，并同步 EGO_HELP_INDEX，跑 npm run build。
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { existsSync, readdirSync } from 'node:fs'
+import { chmodSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
@@ -333,6 +333,25 @@ function withEgoLock<T>(fn: () => Promise<T> | T): Promise<T> {
 const BUNDLED_WRAPPER = fileURLToPath(
   new URL('../bin/ego-chrome-wrapper.sh', import.meta.url),
 )
+/**
+ * Self-heal the bundled wrapper's executable bit.
+ *
+ * npm/tar extraction (and some proot/Android filesystems) can drop mode 755 to
+ * 600; spawning it then fails with EACCES before Chrome is ever reached
+ * (issue #98). Try to restore it eagerly and report through ego_doctor.
+ *
+ * @returns true when the wrapper exists and is executable after the attempt.
+ */
+export function ensureWrapperExecutable(path: string = BUNDLED_WRAPPER): boolean {
+  try {
+    const mode = statSync(path).mode
+    if ((mode & 0o111) !== 0) return true
+    chmodSync(path, 0o755)
+    return (statSync(path).mode & 0o111) !== 0
+  } catch {
+    return false
+  }
+}
 const IS_WIN = process.platform === 'win32'
 const IS_DARWIN = process.platform === 'darwin'
 const AUTO_ADAPT_OFF = /^(0|false|no)$/i.test(
@@ -534,7 +553,14 @@ export function resolveEgoEnv(cfg: Partial<ResolvedConfig>, { platform = process
   // wrapper execs the real binary with --no-sandbox (EGO_LINUX_CHROME takes a
   // bare path, so a wrapper is required). Never override a user-set value.
   if (env.EGO_LINUX_CHROME === undefined && isPosixRoot(platform) && chrome) {
+    ensureWrapperExecutable()
     env.EGO_LINUX_CHROME = BUNDLED_WRAPPER
+    // Keep the wrapper and ego_doctor on the same resolved binary (issue #98:
+    // the CLI found /usr/local/bin/chromium but the wrapper only scanned a
+    // fixed list).
+    if (env.EGO_LINUX_CHROME_BIN === undefined && chrome !== BUNDLED_WRAPPER) {
+      env.EGO_LINUX_CHROME_BIN = chrome
+    }
   }
   // Windows: no --no-sandbox needed (Windows Chrome has no sandbox gate), and
   // the bundled wrapper is a POSIX shell script that cannot run here. Pass the
@@ -1819,6 +1845,10 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
 
 // ── plugin entry ────────────────────────────────────────────────────────────
 export function apply(ctx: EgoContext, config: RawConfig = {}): void {
+  // Self-heal the bundled wrapper's exec bit before the first spawn: npm/tar
+  // extraction on some proot/Android hosts drops it to 600 and Chrome then
+  // fails with EACCES before any tool runs (issue #98).
+  if (!IS_WIN) ensureWrapperExecutable()
   // Install the settings bridge first: the live config source (composition
   // entry + user-layer overrides) feeds `chromePath` + cast settings into cfg
   // via getters so every spawn reads the latest value without re-registration.
@@ -3793,6 +3823,12 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
           lines.push(`browser binary: ${configured} (from settings)`)
         } else {
           lines.push(`browser binary: ${chrome || '(none found — set chromePath in settings, or set EGO_LINUX_CHROME, or install Chrome/Edge/Brave; on Termux/Android: pkg install chromium)'}`)
+        }
+        if (!IS_WIN) {
+          const wrapperExec = ensureWrapperExecutable()
+          lines.push(`wrapper: ${BUNDLED_WRAPPER}`)
+          lines.push(`wrapper executable: ${wrapperExec ? 'yes' : 'no (chmod 755 failed; set EGO_LINUX_CHROME_BIN)'}`)
+          if (chrome) lines.push(`wrapper chrome: ${process.env.EGO_LINUX_CHROME_BIN || chrome}`)
         }
         // User-configured extra CLI args (effective after filtering). ego-CLI
         // args take effect on the next ego_* call; Chrome args only on the next

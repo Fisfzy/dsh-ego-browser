@@ -31,8 +31,24 @@ fi
 # forever instead of ever reaching a real browser binary.
 SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
 
-# Candidate Chrome binaries, in preference order. The first that exists wins.
+# Resolve a real browser binary and exec it. Preference order:
+#   1. EGO_LINUX_CHROME_BIN — the plugin's own findChromeBinary() result, so the
+#      wrapper and `ego_doctor` can never disagree about which binary is used.
+#   2. Fixed common install paths.
+#   3. PATH lookup (`command -v`), which covers custom shims such as
+#      /usr/local/bin/chromium on rootless/Android proot hosts (issue #98).
+run_bin() {
+  bin="$1"
+  shift
+  if [ -n "${bin:-}" ] && [ -x "${bin}" ]; then
+    if [ "$(readlink -f "${bin}" 2>/dev/null || echo "${bin}")" != "${SELF}" ]; then
+      exec "${bin}" --no-sandbox ${EXTRA} "$@"
+    fi
+  fi
+}
+
 for bin in \
+  "${EGO_LINUX_CHROME_BIN:-}" \
   "${EGO_LINUX_CHROME:-}" \
   /usr/bin/google-chrome-stable \
   /usr/bin/google-chrome \
@@ -40,14 +56,19 @@ for bin in \
   /usr/bin/chromium-browser \
   /opt/google/chrome/google-chrome \
   /usr/local/bin/google-chrome-stable \
+  /usr/local/bin/chromium \
   /snap/bin/chromium
 do
-  if [ -n "${bin:-}" ] && [ -x "${bin}" ]; then
-    if [ "$(readlink -f "${bin}" 2>/dev/null || echo "${bin}")" != "${SELF}" ]; then
-      exec "${bin}" --no-sandbox ${EXTRA} "$@"
-    fi
-  fi
+  run_bin "${bin:-}" "$@"
 done
 
-echo "ego-browser wrapper: no Chrome/Chromium binary found (searched common paths). Set EGO_LINUX_CHROME to an absolute path." >&2
+# PATH fallback: custom installs (Playwright, Homebrew, proot shims) are often
+# only reachable through PATH, which the fixed list above cannot see.
+for name in google-chrome-stable google-chrome chromium chromium-browser chrome
+do
+  bin="$(command -v "${name}" 2>/dev/null || true)"
+  run_bin "${bin:-}" "$@"
+done
+
+echo "ego-browser wrapper: no Chrome/Chromium binary found (searched EGO_LINUX_CHROME_BIN, common paths and PATH). Set EGO_LINUX_CHROME_BIN or EGO_LINUX_CHROME to an absolute path." >&2
 exit 127
