@@ -339,7 +339,16 @@ function renderDocument(doc, documents, options, out, refs, depth, seenDocs) {
       if (includeActionMarks && interactive) {
         marks.push(role === "textbox" || role === "searchbox" ? "action=type" : "action=click");
       }
-      if (node.inputValue) marks.push(`value=${squash(node.inputValue, 40)}`);
+      if (node.inputValue) {
+        // Never echo a password field's value into the semantic tree: the
+        // snapshot text goes to the model and the session log, and browser
+        // autofill can put a real credential in it. Mask instead of omitting so
+        // the line still shows that the field has content.
+        const isPassword =
+          node.tag === "input" &&
+          String(node.attributes?.type || "").toLowerCase() === "password";
+        marks.push(`value=${isPassword ? "••••••" : squash(node.inputValue, 40)}`);
+      }
       if (node.inputChecked) marks.push("checked");
       if (node.attributes.disabled !== undefined) marks.push("disabled");
 
