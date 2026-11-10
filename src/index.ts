@@ -1491,6 +1491,100 @@ export const navigateScript = (opts: {
  * Try the value first (cheap, the common case), then the label, then — for a
  * numeric argument — the index.
  */
+/**
+ * ego_click script builder.
+ *
+ * Split out so the generated heredoc is unit-testable (same pattern as
+ * tabsScript/navigateScript). Three input modes, all at the SAME point:
+ *
+ * - default: the pre-existing mouse click/dblclick path (byte-for-byte).
+ * - `touch:true`: CDP touchStart/touchEnd (H5 games and mobile-first pages that
+ *   ignore mouse events). No touchmove is ever emitted, so a tap cannot drag or
+ *   scroll the page.
+ * - `holdMs>0`: press, wait, release at the same point (mouse down/up or touch
+ *   start/end). Still no movement; dragging remains ego_drag's job.
+ *
+ * Touch with a selector uses the element center and is meant for main-document
+ * elements; for iframe content pass viewport x/y coordinates.
+ */
+export const clickScript = (opts: {
+  selector?: string
+  label?: string
+  x?: number
+  y?: number
+  double?: boolean
+  touch?: boolean
+  holdMs?: number
+  space: string | number
+}): string => {
+  const sel = opts.selector ?? ''
+  const x = opts.x
+  const y = opts.y
+  if (sel === '' && !(typeof x === 'number' && typeof y === 'number')) {
+    throw new Error(
+      'ego_click: provide either `selector` (CSS/xpath/loc/ref from ego_snapshot) or both `x` and `y` viewport coordinates',
+    )
+  }
+  const dbl = opts.double === true
+  const touch = opts.touch === true
+  const holdMs = opts.holdMs ?? 0
+  if (typeof holdMs !== 'number' || !Number.isFinite(holdMs) || holdMs < 0 || holdMs > 5000) {
+    throw new Error('ego_click: holdMs must be a number between 0 and 5000')
+  }
+  const taps = dbl ? 2 : 1
+  const point =
+    sel !== ''
+      ? `await page.elementCenter(${j(sel)})`
+      : `{ x: ${x}, y: ${y} }`
+  const betweenTaps = taps > 1 ? `  await new Promise(r => setTimeout(r, 120))\n` : ''
+  const pageInfo =
+    `const pginfo = await page.info()\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${dbl}, touch: ${touch}, holdMs: ${holdMs}, page: pginfo }))\n`
+
+  if (touch) {
+    const hold = holdMs > 0 ? `  await new Promise(r => setTimeout(r, ${holdMs}))\n` : ''
+    return (
+      `${useSpace(opts.space)}${ensureRealTab()}` +
+      `const __p = ${point}\n` +
+      `for (let __i = 0; __i < ${taps}; __i++) {\n` +
+      `  await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: __p.x, y: __p.y }] })\n` +
+      hold +
+      `  await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })\n` +
+      betweenTaps +
+      `}\n` +
+      pageInfo
+    )
+  }
+
+  if (holdMs > 0) {
+    return (
+      `${useSpace(opts.space)}${ensureRealTab()}` +
+      `const __p = ${point}\n` +
+      `for (let __i = 0; __i < ${taps}; __i++) {\n` +
+      `  await page.mouse.move(__p.x, __p.y)\n` +
+      `  await page.mouse.down()\n` +
+      `  await new Promise(r => setTimeout(r, ${holdMs}))\n` +
+      `  await page.mouse.up()\n` +
+      betweenTaps +
+      `}\n` +
+      pageInfo
+    )
+  }
+
+  const labelOpt =
+    (opts.label ?? '') !== '' ? `{ label: ${j(opts.label ?? '')} }` : ''
+  const action =
+    sel !== ''
+      ? dbl
+        ? `await page.locator(${j(sel)}).dblclick(${labelOpt})`
+        : `await page.locator(${j(sel)}).click(${labelOpt})`
+      : dbl
+        ? `await page.mouse.dblclick(${x}, ${y})`
+        : `await page.mouse.click(${x}, ${y})`
+  return `${useSpace(opts.space)}${ensureRealTab()}${action}\n${pageInfo}`
+}
+
+
 export const selectOptionScript = (selector: string, value: unknown): string =>
   `const __sel = ${j(selector)}\n` +
   `const __v = ${j(value ?? '')}\n` +
@@ -2540,7 +2634,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       name: 'ego_click',
       successHint: () => ACTION_SUCCESS_HINT,
       description:
-        'Click an element in the current page. Target with a CSS selector, an xpath=.../loc=.../ref=N value from the LATEST ego_snapshot, or viewport coordinates. On a timeout or missing target, re-snapshot and rebuild the locator; do not replay the same selector. For elements inside a cross-origin iframe use the snapshot ref (CSS selectors only search the main document). See ego_help discipline.',
+        'Click an element in the current page. Target with a CSS selector, an xpath=.../loc=.../ref=N value from the LATEST ego_snapshot, or viewport coordinates. On a timeout or missing target, re-snapshot and rebuild the locator; do not replay the same selector. For elements inside a cross-origin iframe use the snapshot ref (CSS selectors only search the main document). Set touch=true for touch-first H5/mobile pages that ignore mouse clicks; holdMs presses and holds at the same point (no movement, so it never drags). See ego_help discipline.',
       parameters: {
         selector: {
           type: 'string',
@@ -2565,39 +2659,29 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           description:
             'Double-click instead of single-click. Useful for opening files/rows or triggering dblclick handlers.',
         },
+        touch: {
+          type: 'boolean',
+          description:
+            'Use touch input (touchStart/touchEnd) instead of mouse for this click. Needed by touch-first H5 games; no touchmove is emitted, so it cannot drag or scroll.',
+        },
+        holdMs: {
+          type: 'number',
+          description:
+            'Press and hold for this many milliseconds (0-5000, default 0) at the same point, then release. No pointer movement is emitted; use ego_drag for dragging.',
+        },
         space: spaceParam,
       },
-      buildScript: (args) => {
-        const sel = str(args.selector, '')
-        const x = args.x as number | undefined
-        const y = args.y as number | undefined
-        if (sel === '' && !(typeof x === 'number' && typeof y === 'number')) {
-          throw new Error(
-            'ego_click: provide either `selector` (CSS/xpath/loc/ref from ego_snapshot) or both `x` and `y` viewport coordinates',
-          )
-        }
-        const dbl = bool(args.double, false)
-        let action
-        if (sel !== '') {
-          const labelOpt =
-            str(args.label, '') !== ''
-              ? `{ label: ${j(str(args.label, ''))} }`
-              : ''
-          action = dbl
-            ? `await page.locator(${j(sel)}).dblclick(${labelOpt})`
-            : `await page.locator(${j(sel)}).click(${labelOpt})`
-        } else {
-          action = dbl
-            ? `await page.mouse.dblclick(${x}, ${y})`
-            : `await page.mouse.click(${x}, ${y})`
-        }
-        return (
-          `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
-          `${action}\n` +
-          `const pginfo = await page.info()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${dbl}, page: pginfo }))\n`
-        )
-      },
+      buildScript: (args) =>
+        clickScript({
+          selector: str(args.selector, ''),
+          label: str(args.label, ''),
+          x: args.x as number | undefined,
+          y: args.y as number | undefined,
+          double: bool(args.double, false),
+          touch: bool(args.touch, false),
+          holdMs: num(args.holdMs, 0),
+          space: str(args.space, cfg.defaultSpace),
+        }),
     }),
   )
   reg(
