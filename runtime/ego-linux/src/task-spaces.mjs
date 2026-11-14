@@ -555,8 +555,9 @@ export function createTaskSpacesApi(cdp) {
         if (browserContextId) await disposeContext(browserContextId);
         throw err;
       }
-      await cdp.call("Target.activateTarget", { targetId }).catch(() => {});
-
+      // The blank anchor exists so a first navigation can reuse it; activating
+      // it here is what makes a newly-created space steal the watch panel and
+      // the OS foreground before it has any content (#103).
       const space = {
         id: state.nextId,
         taskId: state.nextId,

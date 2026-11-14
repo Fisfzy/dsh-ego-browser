@@ -533,6 +533,9 @@ async function main() {
     return 0;
   }
   if (argv[0] === "--open") {
+    // A user explicitly asked for the window; allow the activation calls below
+    // even though model-initiated traffic is muted by default (#99).
+    process.env.EGO_LINUX_RAISE_WINDOW = "1";
     // Launched from a desktop icon there is no terminal to read an error in, so
     // this has to succeed rather than explain. A headless browser has no window
     // to show, so trade it for a visible one.

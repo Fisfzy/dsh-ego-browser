@@ -2831,7 +2831,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         deliver: {
           type: 'boolean',
           description:
-            'Surface the PNG as a deliverable card in the conversation (default true). Set false to keep it a bare path.',
+            'Surface the PNG as a deliverable card in the conversation (default false). Set true only when the host can render local files; mobile/headless hosts may show a blank card.',
         },
         inline: {
           type: 'boolean',
@@ -2894,7 +2894,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       render: renderScreenshot,
       deliverFiles: (args, value) => {
         const file = (value as { path?: unknown } | null)?.path
-        if (args.deliver === false || typeof file !== 'string' || file === '') return []
+        if (args.deliver !== true || typeof file !== 'string' || file === '') return []
         const selector = str(args.selector, '')
         return [{ path: file, description: selector === '' ? 'Screenshot' : `Screenshot of ${selector}` }]
       },

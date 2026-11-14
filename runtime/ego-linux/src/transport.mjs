@@ -22,6 +22,14 @@
 const OPEN_TIMEOUT_MS = 10000;
 const CALL_TIMEOUT_MS = 30000;
 const INTERNAL_ID_BASE = 1_000_000;
+const RAISE_METHODS = new Set(["Target.activateTarget", "Page.bringToFront"]);
+
+/** Model-initiated calls must not steal foreground focus (#99). Only an
+ * explicit user action (`--open`, panel raise) sets EGO_LINUX_RAISE_WINDOW. */
+function raisingAllowed() {
+  const raw = String(process.env.EGO_LINUX_RAISE_WINDOW ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
 
 export async function connectCdp(wsUrl) {
   const socket = new WebSocket(wsUrl);
@@ -42,6 +50,10 @@ export async function connectCdp(wsUrl) {
   let navWatcher = null;
   let viewportWatcher = null;
   let downloadContextResolver = null;
+  // Targets created in the background are not composited until Chrome is told
+  // to treat their session as focused. A page-level emulation is enough to get
+  // frames/screenshots without raising the OS window (#99).
+  const focusedSessions = new Set();
 
   /** Track which tab the harness last brought to the front, and which it drives. */
   function noteActivation(payload) {
@@ -206,6 +218,23 @@ export async function connectCdp(wsUrl) {
     }
   }
 
+  function armFocus(sessionId) {
+    if (!sessionId || focusedSessions.has(sessionId)) return;
+    focusedSessions.add(sessionId);
+    const id = ++nextInternalId;
+    const payload = JSON.stringify({
+      id,
+      method: "Emulation.setFocusEmulationEnabled",
+      params: { enabled: true },
+      sessionId,
+    });
+    try { socket.send(payload) } catch { /* the normal request will surface the error */ }
+  }
+
+  function needsFocus(method) {
+    return !method.startsWith("Target.") && method !== "Emulation.setFocusEmulationEnabled";
+  }
+
   return {
     /**
      * Is the CDP socket still usable?
@@ -223,7 +252,26 @@ export async function connectCdp(wsUrl) {
     sendRaw(payload) {
       assertOpen();
       noteActivation(payload);
-      socket.send(aimDownloadsAtCurrentSpace(payload));
+      let outbound = payload;
+      try {
+        const parsed = JSON.parse(payload);
+        if (parsed && typeof parsed.id === "number" && RAISE_METHODS.has(parsed.method) && !raisingAllowed()) {
+          // Swallow the activation but answer it: the harness is waiting on
+          // this id and would otherwise time out (#99). activeTargetId has
+          // already been updated by noteActivation, so currentTab() still
+          // follows switchTab().
+          runtime?.onCDPMessage?.(JSON.stringify({ id: parsed.id, result: {} }));
+          return;
+        }
+        if (parsed?.method === "Target.createTarget" && !raisingAllowed()) {
+          parsed.params = { ...(parsed.params || {}), background: true };
+          outbound = JSON.stringify(parsed);
+        }
+        if (parsed?.sessionId && needsFocus(parsed.method)) armFocus(parsed.sessionId);
+      } catch {
+        // Non-JSON or malformed payload: let the normal path handle it.
+      }
+      socket.send(aimDownloadsAtCurrentSpace(outbound));
     },
 
     /**
@@ -293,6 +341,13 @@ export async function connectCdp(wsUrl) {
       if (method === "Target.activateTarget" && params.targetId) {
         activeTargetId = params.targetId;
       }
+      // Model-initiated page switches should not raise the OS window (#99).
+      // Keep the active-target bookkeeping above; just don't send the command.
+      if (RAISE_METHODS.has(method) && !raisingAllowed()) return Promise.resolve({});
+      if (method === "Target.createTarget" && !raisingAllowed()) {
+        params = { ...params, background: true };
+      }
+      if (sessionId && needsFocus(method)) armFocus(sessionId);
       const id = ++nextInternalId;
       const payload = JSON.stringify({
         id,

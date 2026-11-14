@@ -1,6 +1,21 @@
 /** Injected by the DSH ModuleLoader factory wrapper (tsdown banner). */
 declare function require(id: string): any
 
+// DSH can be mounted under a reverse-proxy prefix (e.g. /app/dsh/).
+// Root-absolute /api/ego/* would then hit the proxy root (#100); resolve every
+// panel route against the deployment's <base href> instead.
+const egoRouteBase = (function () {
+	try {
+		const base = document.querySelector('base[href]')
+		if (!base) return ''
+		const url = new URL(base.getAttribute('href') || './', document.baseURI)
+		const path = url.pathname.replace(/\/+$/, '')
+		return path === '/' ? '' : path
+	} catch (e) { return '' }
+})()
+const egoRoute = function (path: string) { return egoRouteBase + path }
+const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoRoute(path), init) }
+
 		// #region ego-browser client: realtime browser watch tab
 		//
 		// The watch UI is a tab in DSH's native right sidebar (with an optional
@@ -431,7 +446,7 @@ declare function require(id: string): any
 				inFlight = true
 				lastAt = now
 				var sentBase = w
-				fetch('/api/ego/window-size', {
+				fetchEgo('/api/ego/window-size', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({ delta: delta }),
@@ -519,7 +534,7 @@ declare function require(id: string): any
 			var self = this
 			var gen = ++this.generation
 			this.store.update(function (s) { s.status = 'loading' })
-			fetch('/ego/api/get', {
+			fetchEgo('/ego/api/get', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: '{}',
@@ -602,7 +617,7 @@ declare function require(id: string): any
 		}
 		EgoBrowserSettingsController.prototype._ffmpegRequest = function (method, body) {
 			var self = this
-			return fetch('/ego/api/' + method, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })
+			return fetchEgo('/ego/api/' + method, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })
 				.then(function (res) { return res.json().catch(function () { return null }) })
 				.then(function (parsed) {
 					if (!parsed || parsed.ok !== true || !parsed.value) throw new Error(parsed && parsed.error ? parsed.error.message : 'FFmpeg request failed')
@@ -657,7 +672,7 @@ declare function require(id: string): any
 				return
 			}
 			this.store.update(function (s) { s.applyState = { kind: 'saving' } })
-			fetch('/ego/api/set', {
+			fetchEgo('/ego/api/set', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ patch: patch }),
@@ -811,7 +826,7 @@ declare function require(id: string): any
 			function run(dryRun) {
 				setRunning(true)
 				setResult(null)
-				fetch('/api/ego/login-import', {
+				fetchEgo('/api/ego/login-import', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
@@ -1098,7 +1113,7 @@ declare function require(id: string): any
 			var _reload = useState(0), reload = _reload[0], setReload = _reload[1]
 			useEffect(function () {
 				var alive = true
-				fetch('/ego/api/get', {
+				fetchEgo('/ego/api/get', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: '{}',
@@ -1221,13 +1236,13 @@ declare function require(id: string): any
 			return (value / (1024 * 1024)).toFixed(1) + ' MiB'
 		}
 
-		const SPACES_ROUTE = '/api/ego/spaces'
-		const EGO_CLOSE_ROUTE = '/api/ego/close'
-		const WATCH_START_ROUTE = '/api/ego/watch/start'
-		const WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
-		const WATCH_STOP_ROUTE = '/api/ego/watch/stop'
-		const WATCH_STATUS_ROUTE = '/api/ego/watch/status'
-		const VIDEO_ROUTE = '/api/ego/video'
+		const SPACES_ROUTE = egoRoute('/api/ego/spaces')
+		const EGO_CLOSE_ROUTE = egoRoute('/api/ego/close')
+		const WATCH_START_ROUTE = egoRoute('/api/ego/watch/start')
+		const WATCH_SWITCH_ROUTE = egoRoute('/api/ego/watch/switch')
+		const WATCH_STOP_ROUTE = egoRoute('/api/ego/watch/stop')
+		const WATCH_STATUS_ROUTE = egoRoute('/api/ego/watch/status')
+		const VIDEO_ROUTE = egoRoute('/api/ego/video')
 
 		function postJson(path, body) {
 			return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).then(function (res) { return res.json().catch(function () { return {} }) })
@@ -1538,8 +1553,8 @@ declare function require(id: string): any
 		// is available. The Tab reuses the same /api/ego/spaces + /api/ego/stream
 		// data sources as the native sidebar tab but renders through React into the
 		// sidebar's tab content area.
-		var INPUT_ROUTE = '/api/ego/input'
-		var FLUSH_ROUTE = '/api/ego/flush'
+		var INPUT_ROUTE = egoRoute('/api/ego/input')
+		var FLUSH_ROUTE = egoRoute('/api/ego/flush')
 		var FRAME_FOLLOW_MIN_MS = 350
 
 		// ── Tab CSS (scoped under .dsh-ego-side-root) ──────────────────────────
@@ -1708,7 +1723,7 @@ declare function require(id: string): any
 .dsh-ego-side-tabclose:hover { background: var(--ego-hover); color: var(--ego-danger); opacity: 1; }
 
 /* ---- main body ---- */
-.dsh-ego-side-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; background: var(--ego-surface); }
+.dsh-ego-side-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; background: var(--ego-surface); display: flex; flex-direction: column; }
 .dsh-ego-side-empty { padding: 32px 16px; text-align: center; font-size: var(--ego-fs-body); color: var(--ego-text-2); line-height: 1.7; }
 .dsh-ego-side-empty::before {
   content: ''; display: block; width: 36px; height: 36px; margin: 0 auto 10px;
@@ -1719,7 +1734,7 @@ declare function require(id: string): any
   mask: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20x='1.2'%20y='2.4'%20width='13.6'%20height='11.2'%20rx='2.4'%20fill='none'%20stroke='black'%20stroke-width='1.2'/%3E%3Cpath%20d='M1.4%205.9h13.2'%20stroke='black'%20stroke-width='1.2'%20stroke-linecap='round'/%3E%3Ccircle%20cx='3.7'%20cy='4.15'%20r='0.6'/%3E%3Ccircle%20cx='5.5'%20cy='4.15'%20r='0.6'/%3E%3Cpath%20d='M8.2%207.0L12.6%2010.6L10.6%2010.9L11.7%2013.2L10.6%2013.8L9.5%2011.5L8.0%2013.1Z'/%3E%3C/svg%3E") no-repeat center / contain;
 }
 
-.dsh-ego-side-liveview { display: flex; flex-direction: column; gap: 8px; min-height: 60px; overflow: hidden; position: relative; }
+.dsh-ego-side-liveview { display: flex; flex-direction: column; gap: 8px; min-height: 60px; overflow: hidden; position: relative; flex: 1; min-height: 0; }
 /* macOS-style toolbar: independent status chip + segmented action groups.
    No parent opacity — buttons stay crisp; only secondary text is dimmed. */
 .dsh-ego-side-livebadge {
@@ -1782,7 +1797,7 @@ declare function require(id: string): any
   font-size: var(--ego-fs-meta); padding: 4px 10px; border-radius: var(--ego-radius-s); cursor: pointer;
 }
 .dsh-ego-side-preset-item:hover { background: var(--ego-hover); }
-.dsh-ego-side-stage { position: relative; display: block; min-height: 0; }
+.dsh-ego-side-stage { position: relative; display: flex; align-items: center; justify-content: center; flex: 1; min-height: 0; overflow: hidden; }
 .dsh-ego-side-resize { position: absolute; z-index: 10; background: transparent; }
 .dsh-ego-side-resize-right { top: 0; bottom: 0; right: 0; width: 12px; cursor: col-resize; }
 .dsh-ego-side-resize-bottom { left: 0; right: 0; bottom: 0; height: 12px; cursor: row-resize; }
@@ -1876,8 +1891,9 @@ declare function require(id: string): any
   background: var(--ego-hover); color: var(--ego-text-2); border-radius: var(--ego-radius-s); padding: 4px 6px;
 }
 .dsh-ego-side-liveimg {
-  width: 100%; border-radius: var(--ego-radius-l); display: block;
-  max-height: 50vh; object-fit: contain;
+  width: 100%; height: 100%; max-width: 100%; max-height: 100%;
+  border-radius: var(--ego-radius-l); display: block;
+  object-fit: contain;
   border: 1px solid var(--ego-border-soft);
   box-shadow: var(--ego-stage-shadow);
   user-select: none; -webkit-user-select: none; touch-action: none;
@@ -1886,7 +1902,7 @@ declare function require(id: string): any
 /* #81: the semantic <img> keeps layout + pointer/zoom; the two overlay layers
    carry the visible pixels and only swap once the next frame has decoded. */
 .dsh-ego-side-livebox {
-  position: relative; width: 100%; min-height: 0; background: #000;
+  position: relative; width: 100%; height: 100%; min-height: 0; background: #000;
   border-radius: var(--ego-radius-l); overflow: hidden;
   border: 1px solid var(--ego-border-soft);
   box-shadow: var(--ego-stage-shadow);
@@ -2429,7 +2445,7 @@ declare function require(id: string): any
 			var self = this
 			this.closeStream()
 			try {
-				this.sse = new EventSource('/api/ego/stream')
+				this.sse = new EventSource(egoRoute('/api/ego/stream'))
 			} catch (e) { return }
 			this.sse.addEventListener('frame', function (ev) {
 				try {
@@ -2809,7 +2825,7 @@ declare function require(id: string): any
 			React.useEffect(function () {
 				var disposed = false
 				var load = function () {
-					fetch('/api/ego/executor', { cache: 'no-store' })
+					fetchEgo('/api/ego/executor', { cache: 'no-store' })
 						.then(function (r) { return r.ok ? r.json() : null })
 						.then(function (json) { if (!disposed && json && json.ok) setResidentInfo(json) })
 						.catch(function () {})
@@ -2830,7 +2846,7 @@ declare function require(id: string): any
 			React.useEffect(function () {
 				var disposed = false
 				var load = function () {
-					fetch('/api/ego/login-extension/health', { cache: 'no-store' })
+					fetchEgo('/api/ego/login-extension/health', { cache: 'no-store' })
 						.then(function (r) { return r.ok ? r.json() : null })
 						.then(function (json) {
 							if (disposed || !json) return
@@ -2863,7 +2879,7 @@ declare function require(id: string): any
 			var startChromeLogin = function () {
 				if (chromeLogin.busy) return
 				if (!chromeLogin.paired) {
-					fetch('/api/ego/login-extension/pair-code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+					fetchEgo('/api/ego/login-extension/pair-code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
 						.then(function (r) { return r.json() })
 						.then(function (json) {
 							if (json && json.ok) {
@@ -2883,14 +2899,14 @@ declare function require(id: string): any
 					return
 				}
 				setChromeLogin(function (prev) { return { ...prev, busy: true, message: wt('chromeLoginWaiting') } })
-				fetch('/api/ego/login-extension/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ domains: [domain] }) })
+				fetchEgo('/api/ego/login-extension/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ domains: [domain] }) })
 					.then(function (r) { return r.json() })
 					.then(function (json) {
 						if (!json || json.ok !== true || !json.jobId) throw new Error((json && json.error) || '无法启动导入')
 						var jobId = json.jobId
 						var started = Date.now()
 						var tick = function () {
-							fetch('/api/ego/login-extension/status?id=' + encodeURIComponent(jobId), { cache: 'no-store' })
+							fetchEgo('/api/ego/login-extension/status?id=' + encodeURIComponent(jobId), { cache: 'no-store' })
 								.then(function (r) { return r.json() })
 								.then(function (status) {
 									if (status && status.state === 'done' && status.report) {
@@ -2941,7 +2957,7 @@ declare function require(id: string): any
 			}
 			var applyPreset = function (ratio) {
 				setPresetOpen(false)
-				fetch('/api/ego/window-size', {
+				fetchEgo('/api/ego/window-size', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({ aspect: ratio }),
@@ -2960,7 +2976,7 @@ declare function require(id: string): any
 				if (!targetId) { setSizeNotice(wt('noActivePages')); return }
 				var body = reload ? { targetId: targetId, reload: true } : { targetId: targetId, url: url }
 				setSizeNotice('')
-				fetch('/api/ego/navigate', {
+				fetchEgo('/api/ego/navigate', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(body),
@@ -2984,7 +3000,7 @@ declare function require(id: string): any
 				var targetId = currentSpace && currentSpace.targetId
 				if (!targetId) { setSizeNotice(wt('noActivePages')); return }
 				setSizeNotice('')
-				fetch('/api/ego/window-size', {
+				fetchEgo('/api/ego/window-size', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({ targetId: targetId, maximize: true }),
@@ -3026,7 +3042,7 @@ declare function require(id: string): any
 						if (Math.abs(stepX) >= 1) payload.delta = Math.round(stepX)
 						if (Math.abs(stepY) >= 1) payload.dy = Math.round(stepY)
 						if (payload.delta === undefined && payload.dy === undefined) return
-						fetch('/api/ego/window-size', {
+						fetchEgo('/api/ego/window-size', {
 							method: 'POST',
 							headers: { 'content-type': 'application/json' },
 							body: JSON.stringify(payload),
@@ -3362,7 +3378,7 @@ declare function require(id: string): any
 							h('div', { className: 'dsh-ego-side-actionline' },
 								h('div', { className: 'dsh-ego-side-btngroup' },
 									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('openExternal'), onClick: function () { var url = currentSpace.url; if (url && !url.startsWith('about:') && !url.startsWith('chrome://')) window.open(url, '_blank', 'noopener') } }, icon(ICON_OPEN_EXTERNAL), wt('openExternal')),
-									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('raiseWindowHint'), onClick: function () { fetch('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function (r) { return r.json().catch(function () { return null }) }).catch(function () { return null }) } }, icon(ICON_POPOUT), wt('raiseWindow')),
+									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('raiseWindowHint'), onClick: function () { fetchEgo('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function (r) { return r.json().catch(function () { return null }) }).catch(function () { return null }) } }, icon(ICON_POPOUT), wt('raiseWindow')),
 									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('refreshHint'), disabled: !currentSpace, onClick: function () { panelNavigate('', true) } }, icon(ICON_REFRESH), wt('refreshPage')),
 									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('openUrlHint'), disabled: !currentSpace, onClick: openUrlInPanel }, icon(ICON_LINK), wt('openUrl'))
 								),
@@ -3489,7 +3505,7 @@ declare function require(id: string): any
 			var probeSse = null
 			var openProbeSse = function () {
 				if (probeDisposed || probeSse || frameRelayDisabled) return
-				try { probeSse = new EventSource('/api/ego/stream') } catch (e) { probeSse = null; return }
+				try { probeSse = new EventSource(egoRoute('/api/ego/stream')) } catch (e) { probeSse = null; return }
 				probeSse.addEventListener('tool-call', onProbeToolCall)
 			}
 			var closeProbeSse = function () {

@@ -54,7 +54,10 @@ export function createTabsApi(cdp, { port, getScope }) {
         const scoped = pages.filter((target) =>
           scope.browserContextId
             ? target.browserContextId === scope.browserContextId
-            : scope.targetIds.has(target.targetId),
+            : scope.targetIds.has(target.targetId) ||
+              // A page opened by target=_blank / window.open() never goes
+              // through createTab(), but its opener is already tracked (#104).
+              (target.openerId && scope.targetIds.has(target.openerId)),
         );
         // Never hand back an empty list: a space mid-navigation, or one whose
         // only tab the user just closed, must not look like a browser with no
