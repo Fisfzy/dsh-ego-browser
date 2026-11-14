@@ -28,7 +28,7 @@ export function createTabsApi(cdp, { port, getScope }) {
   }
 
   return {
-    async listTabs() {
+    async listTabs(options = {}) {
       const { targetInfos = [] } = await cdp.call("Target.getTargets");
       let pages = targetInfos.filter(
         (target) => target.type === "page" && !target.url.startsWith("devtools://"),
@@ -49,7 +49,7 @@ export function createTabsApi(cdp, { port, getScope }) {
       // Spaces without a context — the fallback path, and spaces re-adopted
       // after a restart — fall back to the tracked target ids, which are exact
       // for tabs the shim opened.
-      const scope = getScope ? await getScope() : null;
+      const scope = !options.all && getScope ? await getScope() : null;
       if (scope) {
         const scoped = pages.filter((target) =>
           scope.browserContextId

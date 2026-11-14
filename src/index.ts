@@ -1294,8 +1294,9 @@ export const ensureRealTab = (preferred?: string, viewport?: ViewportSpec, opts?
     // tools deliberately do not pass this option, so they still use the anchor.
     (keepCurrent
       ? `if (!__want && __tabs.length > 0 && __tabs.every(t => __blank(t.url))) {\n` +
-        `  const __cur = await browser.currentTab().catch(() => null)\n` +
-        `  if (__cur && !__blank(__cur.url)) __real = __cur\n` +
+        `  const __global = await browser.listTabs({ all: true }).catch(() => [])\n` +
+        `  const __cur = __global.find(t => t.active === true && !__blank(t.url)) || __global.find(t => !__blank(t.url))\n` +
+        `  if (__cur) __real = __cur\n` +
         `}\n`
       : '') +
     // Do not re-activate a tab that is already active: Target.activateTarget

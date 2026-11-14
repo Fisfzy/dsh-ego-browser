@@ -39,6 +39,11 @@ describe("issue #99-#104 regressions", () => {
     const worker = await read("src/worker/ego-cast-worker.ts");
     expect(worker).toContain("const real = pages.find((entry) => entry.url !== 'about:blank'");
     expect(worker).toContain("return real?.id || pages[0]?.id || remembered || null");
+    const tabs = await read("runtime/ego-linux/src/tabs.mjs");
+    expect(tabs).toContain("listTabs(options = {})");
+    expect(tabs).toContain("!options.all");
+    const index = await read("src/index.ts");
+    expect(index).toContain("browser.listTabs({ all: true })");
   });
 
   it("#104 dismisses native dialogs and lists opener tabs", async () => {
