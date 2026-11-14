@@ -1273,20 +1273,35 @@ export function deliverToSession(
  * is nothing to attach to — running it first failed every tool with
  * "no active tab to attach session".
  */
-export const ensureRealTab = (preferred?: string, viewport?: ViewportSpec): string => {
+export const ensureRealTab = (preferred?: string, viewport?: ViewportSpec, opts?: { keepCurrentIfBlank?: boolean }): string => {
   const explicit = preferred !== undefined && preferred !== '' ? preferred : undefined
   const pin = explicit ?? pendingTargetPin
   const spec = viewport ?? pendingViewport
+  const keepCurrent = opts?.keepCurrentIfBlank === true
   return (
     `const __tabs = await browser.listTabs()\n` +
     `const __want = ${pin !== undefined ? j(pin) : 'null'}\n` +
     `const __blank = (u) => /^(about:|chrome:|chrome-extension:|edge:|devtools:|data:)/.test(String(u || ''))\n` +
     `const __pinned = __want ? __tabs.find(t => t.targetId === __want) : null\n` +
-    `const __real = __pinned\n` +
+    `let __real = __pinned\n` +
     `  ?? __tabs.find(t => t.active === true && !__blank(t.url))\n` +
     `  ?? __tabs.find(t => !__blank(t.url))\n` +
     `  ?? __tabs.find(t => t.active === true)\n` +
     `  ?? __tabs[0]\n` +
+    // A newly-created space has only its blank anchor. Observation tools can
+    // keep pointing at the page the agent was already on, instead of
+    // reporting about:blank until the first navigation (#103). Navigation
+    // tools deliberately do not pass this option, so they still use the anchor.
+    (keepCurrent
+      ? `if (!__want && __tabs.length > 0 && __tabs.every(t => __blank(t.url))) {\n` +
+        `  const __gt = await cdp('Target.getTargets')\n` +
+        `  const __cur = (__gt.targetInfos || []).find(t => t.type === 'page' && !__blank(t.url))\n` +
+        `  if (__cur) {\n` +
+        `    await cdp('Target.activateTarget', { targetId: __cur.targetId }).catch(() => {})\n` +
+        `    __real = { targetId: __cur.targetId, url: __cur.url, active: true }\n` +
+        `  }\n` +
+        `}\n`
+      : '') +
     // Do not re-activate a tab that is already active: Target.activateTarget
     // restores a minimized Chrome window on Windows, which made every tool
     // call pop the browser back up (#96). A pinned/background target still
@@ -2831,7 +2846,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         deliver: {
           type: 'boolean',
           description:
-            'Surface the PNG as a deliverable card in the conversation (default true). Set false to keep it a bare path.',
+            'Surface the PNG as a deliverable card in the conversation (default false). Set true only when the host can render local files; mobile/headless hosts may show a blank card.',
         },
         inline: {
           type: 'boolean',
@@ -2894,7 +2909,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
       render: renderScreenshot,
       deliverFiles: (args, value) => {
         const file = (value as { path?: unknown } | null)?.path
-        if (args.deliver === false || typeof file !== 'string' || file === '') return []
+        if (args.deliver !== true || typeof file !== 'string' || file === '') return []
         const selector = str(args.selector, '')
         return [{ path: file, description: selector === '' ? 'Screenshot' : `Screenshot of ${selector}` }]
       },
@@ -2909,7 +2924,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         space: spaceParam,
       },
       buildScript: (args) =>
-        `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
+        `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab(undefined, undefined, { keepCurrentIfBlank: true })}` +
         `const pginfo = await page.info()\n` +
         `let __hc = null\n` +
         `try { __hc = await page.evaluate(${j(HUMAN_CHECK_PROBE)}).catch(() => null); } catch { __hc = null }\n` +

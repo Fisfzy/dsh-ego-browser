@@ -221,6 +221,8 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.12
 
 **验证时注意：落盘是延迟的，不是立即的。** 实测在设置探针 cookie 并 `ego_auth_flush` 后立刻查 `Default/Cookies` 仍可能是 0 行，**约 60 秒后**才出现该行；所以判断是否生效要等一分钟再看（并核对 mtime 与行数），不要用 flush 后的瞬时结果下结论。
 
+> ⚠️ **开关开启后，只通过插件/DSH 启动浏览器。** 手工直接跑 `node runtime/ego-linux/bin/ego-browser.mjs` 或官方 CLI 会**绕过**插件的环境变量注入：Chrome 会以普通登录 Keychain 启动，无法解密此前用 mock Keychain 加密的 cookie，**已落盘的 cookie 会被清空**（#93 社区实测：1 行 → 0 行）。需要手工启动时，先关掉该开关并冷启动一次，再改用 `EGO_LINUX_USE_MOCK_KEYCHAIN=1` 自行注入。
+
 **代价**：mock Keychain 会降低 cookie 的静态加密强度，因此该开关是 opt-in、默认关闭；只在确实遇到登录态丢失时开启。若不想改设置，等价的诊断/临时做法是在 `cordis.patch.yml` 里写：
 
 ```yaml

@@ -33,6 +33,10 @@
 | `runtime/ego-linux/src/shim.mjs` | `ego` 门面新增 `hideCursor()` / `showCursor()`，供截图临时隐藏 DOM 光标覆盖层 | issue #96：用户希望浏览器窗口中保留 agent 光标，但截图 PNG 不出现鼠标光标；截图工具默认 `hideCursor:true`，捕获后恢复 |
 | `runtime/ego-linux/src/chrome.mjs` | `resolveBinary()` 在 PATH/`which` 失败后增加 `installPathCandidates()` 平台兜底：macOS 扫描 `/Applications` 与 `~/Applications` 的 Chrome/Chromium/Edge/Brave/Tungsten Edge `.app`，Windows 扫描 Program Files/LocalAppData；`__test` 暴露该 helper | issue #95：#68 只修了插件层，运行时层仍只认 Linux PATH 名称；macOS 没装 Chrome 或显式关闭 auto-adapt 时仍会报 “no Chrome/Chromium binary found”。`.app` 内二进制不在 PATH，必须在运行时层再查安装位置 |
 | `runtime/ego-linux/src/chrome.mjs` | macOS 上 `EGO_LINUX_USE_MOCK_KEYCHAIN=1` 时给 Chrome 追加 `--use-mock-keychain` | issue #93：macOS 27 + Chrome 156 出现 `Storage.getCookies` 非零但 `Default/Cookies` 不落盘，需用 mock keychain 做对照实验（会降低静态加密强度，默认关闭） |
+| `runtime/ego-linux/src/transport.mjs` | 新增 `RAISE_METHODS` / `raisingAllowed()`：模型侧 `Target.activateTarget` / `Page.bringToFront` 不再发往 Chrome，只更新 active 记账并合成应答；`Target.createTarget` 加 `background:true`；页面命令前按 session 补 `Emulation.setFocusEmulationEnabled`。`--open` 设置 `EGO_LINUX_RAISE_WINDOW=1` 保留用户主动抬窗 | issue #99：Windows 有头模式下每次 `ego_*` 都会把窗口置顶；仅靠 `ensureRealTab` 的 active 检查覆盖不了 runtime 的 4 处激活与 `createTarget` 的隐式前台。拦截在 transport 层统一覆盖，focus emulation 让后台页仍能渲染/截图 |
+| `runtime/ego-linux/src/task-spaces.mjs` | `createTaskSpace()` 不再对空白 anchor 调 `Target.activateTarget`；持久 Profile 下若已有真实页面，用该页面 URL 作为新 space 自己 tab 的初始 URL（没有真实页时才用 `about:blank`） | issue #103：新 space 的 blank tab 被激活后会成为观察窗 `/json/list[0]` 的“当前页”，导致面板/`page_info` 显示 `about:blank`；新 tab 仍独立，但创建后立即有内容，首次导航也仍落在新 space |
+| `runtime/ego-linux/src/tabs.mjs` | `listTabs()` 的无 browserContextId 分支同时接受 `openerId` 在 `scope.targetIds` 中的页面 | issue #104：`target=_blank` / `window.open()` 打开的标签不经过 `createTab()`，原逻辑永远列不出、也切不过去 |
+| `runtime/ego-browser/dist/out/index.js` | `Page.javascriptDialogOpening` 事件立即 `Page.handleJavaScriptDialog({accept:false})` 兜底 | issue #104：原生 alert/confirm 只记账不作答会阻塞 renderer，后续 `Runtime.evaluate` / `Input.dispatchMouseEvent` 全部超时；默认 dismiss 是安全行为，调用方仍可自行替换 `window.confirm` |
 | （其余 runtime 文件）| 与 vendoring 时一致 | 无后续本地改动 |
 
 ## 说明

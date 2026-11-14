@@ -569,6 +569,10 @@ function handleMessage(message) {
         const sessionId = data.sessionId || state.sessionId;
         if (sessionId) {
             pendingDialogs.set(sessionId, data.params || {});
+            // A native dialog blocks the renderer; when the agent does not
+            // explicitly handle it, dismiss it immediately so subsequent
+            // Runtime.evaluate / Input commands do not time out (#104).
+            rawCdp("Page.handleJavaScriptDialog", { accept: false }, sessionId).catch(() => {});
         }
     }
     else if (data.method === "Page.javascriptDialogClosed") {

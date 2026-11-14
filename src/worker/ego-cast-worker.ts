@@ -262,8 +262,17 @@ async function activeTargetId(): Promise<string | null> {
   if (!active?.port) return (currentStatus.targetId as string | null) || null
   try {
     const response = await fetch(`http://127.0.0.1:${active.port}/json/list`, { signal: AbortSignal.timeout(1500) })
-    const list = response.ok ? await response.json() as Array<{ id?: string; type?: string }> : []
-    return list.find((entry) => entry.type === 'page')?.id || (currentStatus.targetId as string | null) || null
+    const list = response.ok ? await response.json() as Array<{ id?: string; type?: string; url?: string }> : []
+    const pages = list.filter((entry) => entry.type === 'page' && typeof entry.id === 'string')
+    const remembered = currentStatus.targetId as string | null
+    // /json/list order is creation order, not "the tab the agent is on": a
+    // freshly created about:blank space anchor can sit at [0] and make the
+    // watch panel look like the agent is on a blank page (#103). Prefer the
+    // remembered target, then a real (non-blank) page.
+    const rememberedPage = remembered ? pages.find((entry) => entry.id === remembered) : undefined
+    if (rememberedPage && rememberedPage.url !== 'about:blank' && rememberedPage.url !== '') return remembered
+    const real = pages.find((entry) => entry.url !== 'about:blank' && entry.url !== '')
+    return real?.id || pages[0]?.id || remembered || null
   } catch { return (currentStatus.targetId as string | null) || null }
 }
 

@@ -28,7 +28,7 @@ export function createTabsApi(cdp, { port, getScope }) {
   }
 
   return {
-    async listTabs() {
+    async listTabs(options = {}) {
       const { targetInfos = [] } = await cdp.call("Target.getTargets");
       let pages = targetInfos.filter(
         (target) => target.type === "page" && !target.url.startsWith("devtools://"),
@@ -49,12 +49,15 @@ export function createTabsApi(cdp, { port, getScope }) {
       // Spaces without a context — the fallback path, and spaces re-adopted
       // after a restart — fall back to the tracked target ids, which are exact
       // for tabs the shim opened.
-      const scope = getScope ? await getScope() : null;
+      const scope = !options.all && getScope ? await getScope() : null;
       if (scope) {
         const scoped = pages.filter((target) =>
           scope.browserContextId
             ? target.browserContextId === scope.browserContextId
-            : scope.targetIds.has(target.targetId),
+            : scope.targetIds.has(target.targetId) ||
+              // A page opened by target=_blank / window.open() never goes
+              // through createTab(), but its opener is already tracked (#104).
+              (target.openerId && scope.targetIds.has(target.openerId)),
         );
         // Never hand back an empty list: a space mid-navigation, or one whose
         // only tab the user just closed, must not look like a browser with no

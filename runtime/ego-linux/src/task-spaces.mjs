@@ -544,10 +544,27 @@ export function createTaskSpacesApi(cdp) {
     async createTaskSpace(name) {
       const state = await readState();
       const browserContextId = await createSeededContext();
+      // A brand-new space used to open about:blank and leave the watch panel /
+      // page_info pointing at it until the first navigation (#103). When the
+      // persistent profile already has a real page, seed the new space's tab
+      // with the same URL instead; it is still an independent tab, but it has
+      // content immediately.
+      let initialUrl = "about:blank";
+      try {
+        const { targetInfos = [] } = await cdp.call("Target.getTargets");
+        const liveReal = targetInfos.find(
+          (target) =>
+            target.type === "page" &&
+            /^https?:\/\//.test(String(target.url || "")),
+        );
+        if (liveReal?.url) initialUrl = liveReal.url;
+      } catch {
+        // Fall back to about:blank; the next navigation still works.
+      }
       let targetId;
       try {
         ({ targetId } = await cdp.call("Target.createTarget", {
-          url: "about:blank",
+          url: initialUrl,
           ...(browserContextId ? { browserContextId } : {}),
         }));
       } catch (err) {
@@ -555,8 +572,9 @@ export function createTaskSpacesApi(cdp) {
         if (browserContextId) await disposeContext(browserContextId);
         throw err;
       }
-      await cdp.call("Target.activateTarget", { targetId }).catch(() => {});
-
+      // The blank anchor exists so a first navigation can reuse it; activating
+      // it here is what makes a newly-created space steal the watch panel and
+      // the OS foreground before it has any content (#103).
       const space = {
         id: state.nextId,
         taskId: state.nextId,

@@ -5402,7 +5402,11 @@ async function activeTargetId() {
 	if (!active?.port) return currentStatus.targetId || null;
 	try {
 		const response = await fetch(`http://127.0.0.1:${active.port}/json/list`, { signal: AbortSignal.timeout(1500) });
-		return (response.ok ? await response.json() : []).find((entry) => entry.type === "page")?.id || currentStatus.targetId || null;
+		const pages = (response.ok ? await response.json() : []).filter((entry) => entry.type === "page" && typeof entry.id === "string");
+		const remembered = currentStatus.targetId;
+		const rememberedPage = remembered ? pages.find((entry) => entry.id === remembered) : void 0;
+		if (rememberedPage && rememberedPage.url !== "about:blank" && rememberedPage.url !== "") return remembered;
+		return pages.find((entry) => entry.url !== "about:blank" && entry.url !== "")?.id || pages[0]?.id || remembered || null;
 	} catch {
 		return currentStatus.targetId || null;
 	}

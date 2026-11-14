@@ -2,6 +2,17 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [Unreleased] — #99–#104 修复
+
+### 修复
+- **#99 Windows 有头模式不再隐式置顶**：transport 拦截模型侧 `Target.activateTarget` / `Page.bringToFront`，保留 active 记账；`Target.createTarget` 使用 `background:true`，并按 session 补 `Emulation.setFocusEmulationEnabled` 保证后台页仍能渲染/截图。`ego-browser --open` 仍保留用户主动抬窗。
+- **#100 反向代理子路径**：观察窗的 `/api/ego/*`、`/ego/api/*` 与 SSE 全部按 `<base href>` 计算部署前缀，不再请求代理根路径。
+- **#101 移动端实时画面比例**：去掉 `max-height:50vh`，body/liveview/stage 改为 flex 填满，图片 `object-fit:contain` 等比铺满可用区域。
+- **#102 截图交付卡**：`ego_screenshot` 的 `deliver` 改为显式 opt-in（默认 `false`），避免手机/无桌面宿主生成空白交付卡。
+- **#103 观察窗 about:blank**：新建 space 不再激活空白 anchor；持久 Profile 下若已有真实页面，新 space 的 tab 以该 URL 起步（仍独立），worker 的 `activeTargetId()` 也优先真实页而不是 `/json/list[0]`。
+- **#104 原生弹窗与 target=_blank**：`Page.javascriptDialogOpening` 立即默认 dismiss，避免 renderer 卡死；`listTabs()` 的 fallback 接受 opener 所属页面。
+
+
 ## [0.9.14] - 2026-11-10 — 视觉观测与触摸操作增强（DEV1 开发中，未发布）
 
 ### 新增
