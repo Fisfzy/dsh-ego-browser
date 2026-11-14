@@ -43,7 +43,10 @@ describe("issue #99-#104 regressions", () => {
     expect(tabs).toContain("listTabs(options = {})");
     expect(tabs).toContain("!options.all");
     const index = await read("src/index.ts");
-    expect(index).toContain("browser.listTabs({ all: true })");
+    expect(index).toContain("await cdp('Target.getTargets')");
+    const spaces = await read("runtime/ego-linux/src/task-spaces.mjs");
+    expect(spaces).toContain("let initialUrl = \"about:blank\"");
+    expect(spaces).toContain("if (liveReal?.url) initialUrl = liveReal.url");
   });
 
   it("#104 dismisses native dialogs and lists opener tabs", async () => {
