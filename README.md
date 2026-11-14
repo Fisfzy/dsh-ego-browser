@@ -14,7 +14,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license MIT"></a>
 </p>
 
-> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.12**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
+> **仓库**：`github.com/Fisfzy/dsh-ego-browser`｜当前版本 **v0.9.15**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Fisfzy/dsh-ego-browser/master/docs/assets/panel-live-view.png"
@@ -33,7 +33,7 @@
 | **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、纯文字侧栏面板；缺席时静默跳过，无额外 I/O |
 | **Node.js** | `22` | — | harness 环境自带 |
 
-**DSH 全版本适配说明**：v0.9.12 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
+**DSH 全版本适配说明**：v0.9.15 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
 
 **dsh-better-sidebar 适配说明**：ego-browser 通过 `ctx.betterSidebar` 服务（try-catch 防御性获取）注册侧边栏 Tab 并监听外部链接。关键 API 引入版本：
 
@@ -72,7 +72,7 @@ cookie 值不出现在任何日志与输出中；导入是单次快照。配合�
 
 ```sh
 # 安装（任选一种；桌面端也可以走 插件 → 添加插件）
-dsh plugin --profile desktop add dsh-ego-browser@0.9.12
+dsh plugin --profile desktop add dsh-ego-browser@0.9.15
 ```
 
 1. 在 DSH 会话里说一句让 agent 用浏览器的话，例如：
@@ -137,6 +137,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.9.12
 
 ## ✨ 近期亮点
 
+- **v0.9.15**：**#99–#104 集中修复**——Windows 有头模式不再隐式抬窗（#99）；反向代理子路径下的观察窗 API/SSE 跟随 `<base href>`（#100）；手机/窄面板实时画面等比填满（#101）；`ego_screenshot` 默认不再生成空白交付卡（#102）；新建 space 不再显示 `about:blank`（#103）；原生弹窗默认 dismiss、`target=_blank` 新标签可列出/切换（#104）。`ego_screenshot` 的 `deliver` 现为显式 opt-in。
 - **v0.9.12**：**macOS Cookie 落盘修复开关**（#93 收尾）——社区实测确认 macOS 26/27 + Chrome 156 的 cookie 不落盘是登录 Keychain 层问题，`--use-mock-keychain` 可恢复；现把诊断开关升级为设置页正式选项 **「macOS Cookie 落盘修复」**（`useMockKeychain`，默认关闭，仅 macOS 生效，需浏览器冷启动）。同时写清**落盘是延迟的（约 60 秒后才出现在 `Default/Cookies`）**——此前"flush 后立刻查仍 0 行"的记录正是查得太早。安全权衡与排查步骤见下方「[macOS Cookie 落盘](#macos-cookie-落盘排查)」。
 - **v0.9.11**：**cast worker 无限重启修复**（#97）——自定义 `EGO_LINUX_STATE_DIR` 时 worker 与插件对 `ego-cast.json` 路径解析不一致，导致每 8 秒重复 spawn；现在统一为 `<ENV>/ego-cast.json`，并加 in-flight 保护与指数退避。**macOS Cookie 落盘诊断**（#93 后续）——新增 `EGO_LINUX_USE_MOCK_KEYCHAIN=1` / `chromeArgs: "--use-mock-keychain"` 对照开关，默认关闭，仅诊断用。
 - **v0.9.10**：**标签页选择修复**（#92）——不再把 `chrome://newtab` 当真实页；`ego_script`/`ego_cli` 支持 `space` 并同步 targetId pin。**Windows 焦点修复**（#96）——已 active 的标签不再重复 `switchTab`，最小化窗口不会被每次调用弹出。**截图更干净**（#96）——`ego_screenshot({ hideCursor })` 默认隐藏 agent 光标，浏览器窗口仍可见。**面板增强**（#94）——新增刷新、手动网址和尺寸预设右侧的「最大化」按钮。
@@ -254,7 +255,7 @@ Chrome came up on port 6668 but exposed no WebSocket URL within 20000ms
 **方式 B：命令行（npm，推荐）**：
 
 ```sh
-dsh plugin --profile <profile> add dsh-ego-browser@0.9.12
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.15
 dsh plugin --profile <profile> list                 # 应看到 dsh-ego-browser
 # 升级
 dsh plugin --profile <profile> add dsh-ego-browser@latest
@@ -264,7 +265,7 @@ dsh plugin --profile <profile> add dsh-ego-browser@latest
 
 ```sh
 dsh plugin --profile <profile> add https://github.com/Fisfzy/dsh-ego-browser.git
-dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.12.tgz
+dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.15.tgz
 ```
 
 > **从旧版本升级（DSH Desktop 2.0.5+）**：本插件包名是 **`dsh-ego-browser`**（非 `@dsh-external/ego-browser`）。DSH Desktop 2.0.5 起增加了「profile 依赖名 == 包实际 name」的一致性校验，若 profile 仍用旧名 `@dsh-external/ego-browser` 引用，启动会挂进恢复模式（`profile package identity is invalid for @dsh-external/ego-browser`）。升级到 2.0.5 后请把 profile 的 `package.json` 依赖键 **和** `dsh.profile.bundles` 条目**两处**都改为 `dsh-ego-browser`：
@@ -293,7 +294,7 @@ dsh plugin --profile <profile> add ./dsh-ego-browser-0.9.12.tgz
 
 ```sh
 pkg install chromium            # Termux x11 仓库；约 159 MB deb / 644 MB 安装后
-dsh plugin --profile <profile> add dsh-ego-browser@0.9.12
+dsh plugin --profile <profile> add dsh-ego-browser@0.9.15
 ```
 
 - `chromium-browser` 已在 `COMMON_CHROME_BINS` 中，`ego_doctor` 会自动探测 `/data/data/com.termux/files/usr/bin/chromium-browser`，**无需**设置 `chromePath`

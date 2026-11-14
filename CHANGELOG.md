@@ -2,7 +2,7 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [Unreleased] — #99–#104 修复
+## [0.9.15] - 2026-11-14 — Windows 焦点 / 观察窗 / 弹窗与标签修复（#99–#104）
 
 ### 修复
 - **#99 Windows 有头模式不再隐式置顶**：transport 拦截模型侧 `Target.activateTarget` / `Page.bringToFront`，保留 active 记账；`Target.createTarget` 使用 `background:true`，并按 session 补 `Emulation.setFocusEmulationEnabled` 保证后台页仍能渲染/截图。`ego-browser --open` 仍保留用户主动抬窗。
@@ -12,6 +12,9 @@
 - **#103 观察窗 about:blank**：新建 space 不再激活空白 anchor；持久 Profile 下若已有真实页面，新 space 的 tab 以该 URL 起步（仍独立），worker 的 `activeTargetId()` 也优先真实页而不是 `/json/list[0]`。
 - **#104 原生弹窗与 target=_blank**：`Page.javascriptDialogOpening` 立即默认 dismiss，避免 renderer 卡死；`listTabs()` 的 fallback 接受 opener 所属页面。
 
+### 测试
+- 新增 `tests/issue-99-104-regressions.test.ts`，覆盖这 6 个修复的关键路径。
+- 全量：**439 passed / 8 skipped**；typecheck/build 通过。
 
 ## [0.9.14] - 2026-11-10 — 视觉观测与触摸操作增强（DEV1 开发中，未发布）
 
