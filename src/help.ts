@@ -11,8 +11,8 @@
  */
 
 export type EgoHelpMode = 'inline' | 'lookup'
-/** Platform gates for topics that only make sense on some hosts. */
-export type EgoHelpWhen = 'windows-macos'
+/** Platform/capability gates for topics that only make sense on some hosts. */
+export type EgoHelpWhen = 'windows-macos' | 'native'
 
 export interface EgoHelpEntry {
   mode: EgoHelpMode
@@ -22,6 +22,7 @@ export interface EgoHelpEntry {
 
 export interface EgoHelpEnv {
   platform: NodeJS.Platform
+  native?: boolean
 }
 
 export const EGO_HELP_DOCS: Record<string, EgoHelpEntry> = {
@@ -120,6 +121,12 @@ export const EGO_HELP_DOCS: Record<string, EgoHelpEntry> = {
     text:
       'ego_screenshot: 只在视觉证据必要时用（布局/渲染/用户要求/canvas 或自定义绘制/目标不在语义树里）；支持 selector 元素截图、fullPage 整页、clip={x,y,width,height} 区域；默认把 PNG 作为图片返回（inline=false 只留路径），同时落盘。不与 ego_snapshot 同发；超时不要立刻重截。Canvas/WebGL 内容只能这样看。',
   },
+  native: {
+    mode: 'lookup',
+    when: 'native',
+    text:
+      '原生对话框（文件选择/另存为/打印/证书/系统权限弹窗）不在页面 DOM 里，ego_* 无法操作。本机检测到 cua_driver_native__* 工具时，改用 cua_driver_native__list_windows → get_window_state → click/set_value 处理；不要把 ego_key 盲敲到系统弹窗上。',
+  },
   'gui-test': {
     mode: 'lookup',
     text:
@@ -137,6 +144,7 @@ export function isEgoHelpVisible(name: string, env: EgoHelpEnv): boolean {
   const entry = EGO_HELP_DOCS[name]
   if (entry === undefined) return false
   if (entry.when === 'windows-macos') return env.platform === 'win32' || env.platform === 'darwin'
+  if (entry.when === 'native') return env.native === true
   return true
 }
 

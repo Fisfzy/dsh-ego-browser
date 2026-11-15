@@ -2,16 +2,18 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [0.12.0] - 2026-11-15 — 轨迹记录（P1-4）
+## [0.12.0] - 2026-11-15 — 轨迹记录 + 原生能力兜底
 
 ### 新增
 - **`trajectory` / `recordText` 设置**：开启后每个会话写一份 JSONL 轨迹到 `~/.dsh/plugin-data/ego-browser/trajectories/<session>.jsonl`，记录 tool / args / ok / code / actionSent / durationMs / url / space / snapshotId；默认关闭。
 - **默认脱敏**：`ego_fill` / `ego_key` 的 `text` / `value` 默认写 `<redacted>`，只有 `recordText:true` 才记录原文。
-- 单文件超过 2MB 时滚动为 `.jsonl.1`；写入失败不会影响工具调用。
+- **`scripts/replay.mjs`**：读取轨迹 JSONL，校验完整性并输出有序回放计划（`--json` 可交给能执行工具调用的宿主）；失败步骤、非法行会返回非零。真实自动重发仍需宿主工具执行入口。
+- **原生对话框兜底**：检测到 `cua_driver_native__*` 时，`ego_help` 增加 `native` 主题，系统规则提示文件选择/打印/证书/权限弹窗改用桌面工具；不封装、不耦合 CUA 工具。
 
 ### 测试
 - 新增 `tests/trajectory.test.ts`：JSONL 字段、脱敏、关闭时不落盘。
-- 全量：**452 passed / 8 skipped**；typecheck/build 通过。
+- 新增 `tests/help-topics.test.ts` native 可见性用例。
+- 全量：**453 passed / 8 skipped**；typecheck/build 通过。
 
 ## [0.11.0] - 2026-11-15 — 观察成本分级：子树 / 截断 / 续读
 

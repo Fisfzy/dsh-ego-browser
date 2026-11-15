@@ -137,7 +137,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.12.0
 
 ## ✨ 近期亮点
 
-- **v0.12.0**：**轨迹记录（P1-4）**——新增 `trajectory` / `recordText` 设置，按会话写 JSONL 到 `~/.dsh/plugin-data/ego-browser/trajectories`；默认脱敏 `ego_fill` / `ego_key` 文本，单文件 2MB 滚动。
+- **v0.12.0**：**轨迹记录 + 原生能力兜底**——新增 `trajectory` / `recordText` 设置，按会话写 JSONL 到 `~/.dsh/plugin-data/ego-browser/trajectories`；默认脱敏 `ego_fill` / `ego_key` 文本。新增 `scripts/replay.mjs` 离线校验/回放计划；检测到 `cua_driver_native__*` 时 `ego_help` 增加 `native` 主题，系统弹窗改用桌面工具。
 - **v0.11.0**：**观察成本分级**——`ego_snapshot` 新增 `subtreeRef` 子树裁剪、`maxChars` 默认 24000 截断、`continuation` 绑定 snapshotId 续读；大页面不再一次把整棵语义树塞进上下文。
 - **v0.10.0**：**CUA 启发 P0 能力**——新增 `ego_verify` 动作后置断言（satisfied / unsatisfied / unknown，unknown 永不等于成功）；`ego_snapshot` 返回 `snapshotId`，ref 动作可传 `snapshotId`，旧代次直接返回 `STALE_REF`（actionSent:false）。
 - **v0.9.15**：**#99–#104 集中修复**——Windows 有头模式不再隐式抬窗（#99）；反向代理子路径下的观察窗 API/SSE 跟随 `<base href>`（#100）；手机/窄面板实时画面等比填满（#101）；`ego_screenshot` 默认不再生成空白交付卡（#102）；新建 space 不再显示 `about:blank`（#103）；原生弹窗默认 dismiss、`target=_blank` 新标签可列出/切换（#104）。`ego_screenshot` 的 `deliver` 现为显式 opt-in。

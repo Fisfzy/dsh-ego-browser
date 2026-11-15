@@ -23,6 +23,7 @@ export const EGO_RULES_TEXT = [
   '7. 等条件（ego_wait_for_url / ego_wait_for_selector / ego_wait_for_response），不要用固定 sleep 代替。',
   '8. 以“看到目标状态”为完成标准；失败按返回的 retry / hint 处理。',
   '9. 登录/人机验证/支付/年龄确认：先明确告诉用户要做什么，用 ego_wait_for_human 等待用户完成；不要猜密码、不要绕过访问控制。',
+  '10. 页面之外的原生弹窗（文件选择/打印/证书/权限）ego_* 无法处理；本机有 cua_driver_native__* 时改用桌面工具，不要用 ego_key 盲敲。',
   '更多：ego_help discipline / errors。',
 ].join('\n')
 

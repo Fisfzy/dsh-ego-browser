@@ -4106,7 +4106,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
     defineTool({
       name: 'ego_help',
       description:
-        'Query the built-in ego-browser guide. `topic` may be a category (overview/tools/navigate/tabs/observe/input/keyboard-mouse/form/wait/network/download/captcha/login/login-import/script/doctor/discipline/errors/screenshots/gui-test) or a specific tool name (e.g. ego_click). `topic=list` lists what this host offers. Read `discipline` before a multi-step task, `errors` when a tool reports a failure code, and `gui-test` for black-box UI testing.',
+        'Query the built-in ego-browser guide. `topic` may be a category (overview/tools/navigate/tabs/observe/input/keyboard-mouse/form/wait/network/download/captcha/login/login-import/script/doctor/discipline/errors/screenshots/gui-test/native) or a specific tool name (e.g. ego_click). `topic=list` lists what this host offers. Read `discipline` before a multi-step task, `errors` when a tool reports a failure code, and `gui-test` for black-box UI testing.',
       parameters: {
         topic: {
           type: 'string',
@@ -4129,7 +4129,15 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       timeoutMs: 10_000,
       execute: async (args: Record<string, unknown>) => {
         const q = str(args.topic, '').trim().toLowerCase()
-        const env = { platform: process.platform }
+        let native = false
+        try {
+          const registry = ctx.tools as unknown as { definitions?: () => Array<{ name?: string }> }
+          const defs = typeof registry.definitions === 'function' ? registry.definitions() : []
+          native = Array.isArray(defs) && defs.some((tool) => /^cua_driver_native__/.test(String(tool?.name || '')))
+        } catch {
+          native = false
+        }
+        const env = { platform: process.platform, native }
         if (q === 'list') {
           return { ok: true, topic: 'list', text: renderEgoHelpList(env) }
         }
