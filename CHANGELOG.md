@@ -2,6 +2,15 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.11.0] - 2026-11-15 — 观察成本分级：子树 / 截断 / 续读
+
+### 新增
+- **`ego_snapshot` 作用域裁剪（P1-3）**：`subtreeRef` 只返回指定 ref 的子树；`maxChars` 默认 24000，超出时返回 `truncated:true` + `continuation`；`continuation` 绑定 `snapshotId`，旧代次重新快照会返回 `STALE_REF`。所有裁剪在插件侧完成，不依赖 runtime 扩展。
+
+### 测试
+- 新增 `tests/snapshot-slice.test.ts`：子树缩进裁剪、maxChars 截断、续读游标、非法 ref/越界/格式校验。
+- 全量：**449 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.10.0] - 2026-11-15 — CUA 启发 P0：动作后置断言 + 快照代次
 
 ### 新增

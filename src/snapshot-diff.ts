@@ -229,3 +229,62 @@ export class SnapshotCache {
 function diffNote(): string {
   return 'diff 只说明页面变化；要点击/输入，先重新 ego_snapshot 取完整树（ref/loc 才是可操作依据）。'
 }
+
+export interface SnapshotContinuation {
+  snapshotId: string
+  offset: number
+}
+
+export interface SnapshotSlice {
+  text: string
+  truncated: boolean
+  nextOffset?: number
+  error?: string
+}
+
+/** Parse the `<snapshotId>:<offset>` token returned as `continuation`. */
+export function parseSnapshotContinuation(value: string): SnapshotContinuation | null {
+  const match = /^(s[0-9a-f]{8}):(\d+)$/.exec(value.trim())
+  if (!match) return null
+  return { snapshotId: match[1]!, offset: Number(match[2]) }
+}
+
+/**
+ * Crop one snapshot response: optionally to a ref subtree, then to a character
+ * budget. The continuation offset always refers to the text after the optional
+ * subtree crop, so callers can resume without skipping or duplicating lines.
+ */
+export function sliceSnapshotText(
+  text: string,
+  opts: { subtreeRef?: number; maxChars?: number; offset?: number } = {},
+): SnapshotSlice {
+  let base = text
+  if (opts.subtreeRef !== undefined) {
+    const wanted = opts.subtreeRef
+    const lines = base.split('\n')
+    const index = lines.findIndex((line) => new RegExp(`\\[ref=${wanted}(?:,|\\])`).test(line))
+    if (index < 0) return { text: '', truncated: false, error: `subtree ref=${wanted} not found` }
+    const baseIndent = (lines[index]!.match(/^\s*/) ?? [''])[0].length
+    let end = index + 1
+    while (end < lines.length) {
+      const line = lines[end]!
+      if (line.trim() === '') {
+        end++
+        continue
+      }
+      const indent = (line.match(/^\s*/) ?? [''])[0].length
+      if (indent <= baseIndent) break
+      end++
+    }
+    base = lines.slice(index, end).join('\n')
+  }
+  const maxChars = opts.maxChars === undefined ? 24_000 : Math.max(1, Math.floor(opts.maxChars))
+  const offset = opts.offset === undefined ? 0 : Math.max(0, Math.floor(opts.offset))
+  if (offset > base.length) return { text: '', truncated: false, error: 'continuation is past the end of the snapshot' }
+  const end = Math.min(base.length, offset + maxChars)
+  return {
+    text: base.slice(offset, end),
+    truncated: end < base.length,
+    ...(end < base.length ? { nextOffset: end } : {}),
+  }
+}

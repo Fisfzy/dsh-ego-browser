@@ -52,7 +52,7 @@ import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-serv
 import { EGO_HELP_DOCS, isEgoHelpVisible, renderEgoHelpList } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
-import { SnapshotCache } from './snapshot-diff.ts'
+import { SnapshotCache, parseSnapshotContinuation, sliceSnapshotText } from './snapshot-diff.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs, validateEgoBinPath } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
@@ -2798,6 +2798,21 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           description:
             'Compare with the previous snapshot in this session/space/scope and return added/removed/changed lines instead of the full tree. The first diff call returns the full tree as the baseline.',
         },
+        subtreeRef: {
+          type: 'number',
+          description:
+            'Optional ref=N from the latest snapshot. Returns only that element subtree (plugin-side text crop).',
+        },
+        maxChars: {
+          type: 'number',
+          description:
+            'Maximum characters in this response, default 24000. When truncated, continuation carries the resume cursor.',
+        },
+        continuation: {
+          type: 'string',
+          description:
+            'Resume cursor from a previous truncated ego_snapshot. Bound to that snapshotId; a newer full snapshot invalidates it.',
+        },
       },
       buildScript: (args) => {
         const scope = str(args.scope, '')
@@ -2828,10 +2843,58 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           args.space ?? cfg.defaultSpace,
         )}:${str(args.scope, 'full_page')}`
         const tries = typeof payload.tries === 'number' ? payload.tries : undefined
-        return snapshotCache.observe(key, payload.text, {
+        const maxChars = num(args.maxChars, 24_000)
+        const subtreeRef = typeof args.subtreeRef === 'number' && Number.isFinite(args.subtreeRef)
+          ? Math.floor(args.subtreeRef)
+          : undefined
+        const continuation = str(args.continuation, '')
+        if (continuation !== '') {
+          if (bool(args.diff, false)) {
+            return failureValue('ego_snapshot', 'ego_snapshot: continuation cannot be combined with diff')
+          }
+          const parsed = parseSnapshotContinuation(continuation)
+          const current = snapshotCache.currentId(key)
+          if (!parsed || current === undefined || parsed.snapshotId !== current) {
+            return failureValue(
+              'ego_snapshot',
+              `stale snapshot: continuation expected ${parsed?.snapshotId ?? 'invalid'}, current ${current ?? 'none'} — call ego_snapshot again`,
+            )
+          }
+          const full = snapshotCache.get(key)
+          if (full === undefined) {
+            return failureValue('ego_snapshot', 'stale snapshot: snapshot text is no longer cached — call ego_snapshot again')
+          }
+          const slice = sliceSnapshotText(full, { maxChars, offset: parsed.offset })
+          if (slice.error !== undefined) {
+            return failureValue('ego_snapshot', `ego_snapshot: ${slice.error}`)
+          }
+          return {
+            ok: true,
+            text: slice.text,
+            snapshotId: parsed.snapshotId,
+            truncated: slice.truncated,
+            ...(slice.nextOffset === undefined
+              ? {}
+              : { continuation: `${parsed.snapshotId}:${slice.nextOffset}` }),
+          }
+        }
+        const observed = snapshotCache.observe(key, payload.text, {
           diff: bool(args.diff, false),
           tries,
         })
+        if (observed.text === undefined) return observed
+        const slice = sliceSnapshotText(observed.text, { subtreeRef, maxChars })
+        if (slice.error !== undefined) {
+          return failureValue('ego_snapshot', `ego_snapshot: ${slice.error}`)
+        }
+        return {
+          ...observed,
+          text: slice.text,
+          truncated: slice.truncated,
+          ...(slice.nextOffset === undefined
+            ? {}
+            : { continuation: `${observed.snapshotId}:${slice.nextOffset}` }),
+        }
       },
     }),
   )
