@@ -1861,7 +1861,18 @@ function renderEgoToolText(args: unknown, value: unknown): unknown[] {
       },
     ]
   }
-  return renderText(args, value)
+  return (() => {
+    const blocks = renderText(args, value)
+    if (v !== null && typeof v === 'object' && typeof v.snapshotId === 'string') {
+      const suffix = [
+        `snapshotId: ${v.snapshotId}`,
+        ...(v.truncated === true ? ['truncated: true'] : []),
+        ...(typeof v.continuation === 'string' ? [`continuation: ${v.continuation}`] : []),
+      ].join(' | ')
+      return [...blocks, { type: 'text', text: suffix }]
+    }
+    return blocks
+  })()
 }
 /**
  * Model-visible renderer for `ego_screenshot`: an inline image block when the
