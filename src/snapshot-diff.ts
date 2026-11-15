@@ -137,6 +137,8 @@ export interface SnapshotObserveResult {
   /** Full text on a non-diff call or the first (baseline) diff call. */
   text?: string
   ok: true
+  /** Generation the refs in this result belong to (also set on diffs). */
+  snapshotId?: string
   baseline?: boolean
   tries?: number
   changed?: boolean
@@ -150,18 +152,34 @@ export interface SnapshotObserveResult {
   note?: string
 }
 
+interface SnapshotEntry {
+  text: string
+  id: string
+}
+
 /** A bounded per-key cache of the last snapshot text. */
 export class SnapshotCache {
-  private readonly entries = new Map<string, string>()
+  private readonly entries = new Map<string, SnapshotEntry>()
+  private seq = 0
   constructor(private readonly maxEntries = 32) {}
 
-  get(key: string): string | undefined {
-    return this.entries.get(key)
+  private nextId(): string {
+    this.seq = (this.seq + 1) >>> 0
+    return `s${this.seq.toString(16).padStart(8, '0').slice(-8)}`
   }
 
-  set(key: string, text: string): void {
+  get(key: string): string | undefined {
+    return this.entries.get(key)?.text
+  }
+
+  /** Current ref generation for a key; undefined when no snapshot exists. */
+  currentId(key: string): string | undefined {
+    return this.entries.get(key)?.id
+  }
+
+  set(key: string, text: string, id?: string): void {
     this.entries.delete(key)
-    this.entries.set(key, text)
+    this.entries.set(key, { text, id: id ?? this.nextId() })
     while (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next()
       if (oldest.done === true) break
@@ -180,29 +198,93 @@ export class SnapshotCache {
    * `baseline: true` (mirroring ZCode's "first observation is always complete").
    */
   observe(key: string, text: string, opts: { diff: boolean; tries?: number }): SnapshotObserveResult {
-    const previous = this.entries.get(key)
     if (!opts.diff) {
-      this.set(key, text)
-      return { ok: true, text, tries: opts.tries }
+      const snapshotId = this.nextId()
+      this.set(key, text, snapshotId)
+      return { ok: true, text, tries: opts.tries, snapshotId }
     }
+    const previous = this.entries.get(key)
     if (previous === undefined) {
-      this.set(key, text)
+      const snapshotId = this.nextId()
+      this.set(key, text, snapshotId)
       return {
         ok: true,
         baseline: true,
         changed: true,
         text,
         tries: opts.tries,
+        snapshotId,
         summary: '首次快照（无上一份基线），返回完整树；下一次 diff 才能比较',
         note: diffNote(),
       }
     }
-    const diff = diffSnapshots(previous, text)
-    this.set(key, text)
-    return { ok: true, baseline: false, tries: opts.tries, ...diff, note: diffNote() }
+    const diff = diffSnapshots(previous.text, text)
+    // A diff describes the same ref generation as its baseline. Do not advance
+    // the generation here: only a full snapshot can make old refs stale.
+    this.set(key, text, previous.id)
+    return { ok: true, baseline: false, tries: opts.tries, snapshotId: previous.id, ...diff, note: diffNote() }
   }
 }
 
 function diffNote(): string {
   return 'diff 只说明页面变化；要点击/输入，先重新 ego_snapshot 取完整树（ref/loc 才是可操作依据）。'
+}
+
+export interface SnapshotContinuation {
+  snapshotId: string
+  offset: number
+}
+
+export interface SnapshotSlice {
+  text: string
+  truncated: boolean
+  nextOffset?: number
+  error?: string
+}
+
+/** Parse the `<snapshotId>:<offset>` token returned as `continuation`. */
+export function parseSnapshotContinuation(value: string): SnapshotContinuation | null {
+  const match = /^(s[0-9a-f]{8}):(\d+)$/.exec(value.trim())
+  if (!match) return null
+  return { snapshotId: match[1]!, offset: Number(match[2]) }
+}
+
+/**
+ * Crop one snapshot response: optionally to a ref subtree, then to a character
+ * budget. The continuation offset always refers to the text after the optional
+ * subtree crop, so callers can resume without skipping or duplicating lines.
+ */
+export function sliceSnapshotText(
+  text: string,
+  opts: { subtreeRef?: number; maxChars?: number; offset?: number } = {},
+): SnapshotSlice {
+  let base = text
+  if (opts.subtreeRef !== undefined) {
+    const wanted = opts.subtreeRef
+    const lines = base.split('\n')
+    const index = lines.findIndex((line) => new RegExp(`\\[ref=${wanted}(?:,|\\])`).test(line))
+    if (index < 0) return { text: '', truncated: false, error: `subtree ref=${wanted} not found` }
+    const baseIndent = (lines[index]!.match(/^\s*/) ?? [''])[0].length
+    let end = index + 1
+    while (end < lines.length) {
+      const line = lines[end]!
+      if (line.trim() === '') {
+        end++
+        continue
+      }
+      const indent = (line.match(/^\s*/) ?? [''])[0].length
+      if (indent <= baseIndent) break
+      end++
+    }
+    base = lines.slice(index, end).join('\n')
+  }
+  const maxChars = opts.maxChars === undefined ? 24_000 : Math.max(1, Math.floor(opts.maxChars))
+  const offset = opts.offset === undefined ? 0 : Math.max(0, Math.floor(opts.offset))
+  if (offset > base.length) return { text: '', truncated: false, error: 'continuation is past the end of the snapshot' }
+  const end = Math.min(base.length, offset + maxChars)
+  return {
+    text: base.slice(offset, end),
+    truncated: end < base.length,
+    ...(end < base.length ? { nextOffset: end } : {}),
+  }
 }

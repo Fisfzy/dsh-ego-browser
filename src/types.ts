@@ -155,6 +155,10 @@ export interface ResolvedConfig {
   residentIdleMin: number
   /** Inject the compact browser rules section into the system prompt after the first ego_* call. */
   rulesPrompt: boolean
+  /** Write per-session JSONL tool-call trajectories; default off. */
+  trajectory: boolean
+  /** Include raw ego_fill/ego_key text in trajectories; default off. */
+  recordText: boolean
   chromePath: string
   /** macOS only: pass `--use-mock-keychain` to Chrome so cookies flush to disk (issue #93). */
   useMockKeychain: boolean

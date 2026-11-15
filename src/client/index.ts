@@ -1908,6 +1908,21 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
   box-shadow: var(--ego-stage-shadow);
 }
 .dsh-ego-side-livebox .dsh-ego-side-liveimg { border: 0; box-shadow: none; border-radius: 0; }
+.dsh-ego-side-ghost {
+  position: absolute; z-index: 5; width: 18px; height: 18px; margin: -9px 0 0 -9px;
+  border-radius: 50%; border: 2px solid #4da3ff; pointer-events: none;
+  box-shadow: 0 0 0 4px rgba(77, 163, 255, .14);
+  background: rgba(77, 163, 255, .18);
+  will-change: transform, opacity;
+  contain: layout paint;
+  animation: dsh-ego-ghost-pulse 1.6s ease-out forwards;
+}
+.dsh-ego-side-ghost.hover { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-color: #8fb9ff; }
+@keyframes dsh-ego-ghost-pulse {
+  0% { transform: scale(.55); opacity: .95; }
+  22% { transform: scale(1); opacity: .9; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
 .dsh-ego-side-liveimg-semantic { opacity: 0; }
 .dsh-ego-side-livebuf {
   position: absolute; inset: 0; width: 100%; height: 100%;
@@ -2038,6 +2053,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				historyOpen: false,
 				zoomHint: null,
 				wiringStale: false,
+				ghost: null,
 				backend: 'cdp', streamState: 'idle', streamMessage: '', streamGeneration: 0, streamMime: 'video/mp4; codecs="avc1.42E01E"',
 				// Mirrors the settings switch: the Tab shows the disabled state
 				// (and opens no stream) while the frame relay is off.
@@ -2392,6 +2408,43 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 		LivePreviewController.prototype._renderEmpty = function () {
 			if (this.lastList.length === 0) this._processSpaces([])
 		}
+		LivePreviewController.prototype._showGhost = function (payload) {
+			if (!payload || !Number.isFinite(payload.x) || !Number.isFinite(payload.y)) return
+			var self = this
+			this.ghostSeq = (this.ghostSeq || 0) + 1
+			var seq = this.ghostSeq
+			var vw = Number.isFinite(payload.w) && payload.w > 0 ? payload.w : null
+			var vh = Number.isFinite(payload.h) && payload.h > 0 ? payload.h : null
+			var left = null
+			var top = null
+			// The live image uses object-fit: contain, so viewport coordinates
+			// are not percentages of the box: a letterboxed frame would shift
+			// every point. Measure the displayed content rect instead.
+			try {
+				var box = this.liveImg && this.liveImg.parentElement
+				var rect = box ? box.getBoundingClientRect() : null
+				if (rect && rect.width > 0 && rect.height > 0 && vw && vh) {
+					var scale = Math.min(rect.width / vw, rect.height / vh)
+					var contentW = vw * scale
+					var contentH = vh * scale
+					left = ((rect.width - contentW) / 2 + payload.x * scale) / rect.width * 100
+					top = ((rect.height - contentH) / 2 + payload.y * scale) / rect.height * 100
+				}
+			} catch (e) { /* fall back to raw viewport percentage */ }
+			var ghost = {
+				x: payload.x,
+				y: payload.y,
+				left: left === null ? (vw ? Math.max(0, Math.min(1, payload.x / vw)) * 100 : 50) : left,
+				top: top === null ? (vh ? Math.max(0, Math.min(1, payload.y / vh)) * 100 : 50) : top,
+				kind: payload.kind === 'click' ? 'click' : 'hover',
+				seq: seq,
+			}
+			this.store.update(function (s) { s.ghost = ghost })
+			window.setTimeout(function () {
+				if (seq !== self.ghostSeq) return
+				self.store.update(function (s) { s.ghost = null })
+			}, 1600)
+		}
 		LivePreviewController.prototype._processSpaces = function (spaces) {
 			if (this.disposed) return
 			this.lastList = Array.isArray(spaces) ? spaces : []
@@ -2476,6 +2529,9 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				try {
 					self._applyCaptureStatus(JSON.parse(ev.data))
 				} catch (e) {}
+			})
+			this.sse.addEventListener('cursor', function (ev) {
+				try { self._showGhost(JSON.parse(ev.data)) } catch (e) {}
 			})
 			// Debounced reconnect fallback: EventSource auto-reconnects on
 			// error; we also kick off a one-shot /api/ego/spaces fetch so the
@@ -3360,6 +3416,16 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 						}),
 						h('img', { ref: bindLiveBufA.current, key: 'livebuf-a', className: 'dsh-ego-side-liveimg dsh-ego-side-livebuf', alt: '', draggable: false, decoding: 'async' }),
 						h('img', { ref: bindLiveBufB.current, key: 'livebuf-b', className: 'dsh-ego-side-liveimg dsh-ego-side-livebuf', alt: '', draggable: false, decoding: 'async' }),
+						state.ghost
+							? h('div', {
+								key: 'ghost-' + state.ghost.seq,
+								className: 'dsh-ego-side-ghost' + (state.ghost.kind === 'hover' ? ' hover' : ''),
+								style: {
+									left: state.ghost.left + '%',
+									top: state.ghost.top + '%',
+								},
+							})
+							: null,
 					)
 					: h('div', { className: 'dsh-ego-side-liveurl' }, state.streamMessage || wt('noScreenshot'))
 

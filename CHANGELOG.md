@@ -2,6 +2,49 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.13.0] - 2026-11-15 — 回放与观察窗幽灵光标
+
+### 新增
+- **`ego_replay`**：读取 `trajectory` JSONL，按顺序通过同一套 ego_* 脚本构建器重新执行；返回逐步骤 ok/error，失败即停（可配置 `stopOnError:false`）。脱敏的 `ego_fill` / `ego_key` 文本跳过，不把 `<redacted>` 当真实输入；回放时忽略旧的 `snapshotId`，由回放过程重新观察。
+- **观察窗幽灵光标（P2-6）**：host 在 `ego_click` / `ego_hover` 后广播 SSE `cursor` 事件，前端在实时画面上叠加带渐隐动画的光标/点击波纹；不改变页面 DOM，也不影响截图。
+
+### 测试
+- 全量：**453 passed / 8 skipped**；typecheck/build 通过。
+- `ego_replay` 与幽灵光标需重启 DSH 后真实浏览器验证。
+
+## [0.12.0] - 2026-11-15 — 轨迹记录 + 原生能力兜底
+
+### 新增
+- **`trajectory` / `recordText` 设置**：开启后每个会话写一份 JSONL 轨迹到 `~/.dsh/plugin-data/ego-browser/trajectories/<session>.jsonl`，记录 tool / args / ok / code / actionSent / durationMs / url / space / snapshotId；默认关闭。
+- **默认脱敏**：`ego_fill` / `ego_key` 的 `text` / `value` 默认写 `<redacted>`，只有 `recordText:true` 才记录原文。
+- **`scripts/replay.mjs`**：读取轨迹 JSONL，校验完整性并输出有序回放计划（`--json` 可交给能执行工具调用的宿主）；失败步骤、非法行会返回非零。真实自动重发仍需宿主工具执行入口。
+- **原生对话框兜底**：检测到 `cua_driver_native__*` 时，`ego_help` 增加 `native` 主题，系统规则提示文件选择/打印/证书/权限弹窗改用桌面工具；不封装、不耦合 CUA 工具。
+
+### 测试
+- 新增 `tests/trajectory.test.ts`：JSONL 字段、脱敏、关闭时不落盘。
+- 新增 `tests/help-topics.test.ts` native 可见性用例。
+- 全量：**453 passed / 8 skipped**；typecheck/build 通过。
+
+## [0.11.0] - 2026-11-15 — 观察成本分级：子树 / 截断 / 续读
+
+### 新增
+- **`ego_snapshot` 作用域裁剪（P1-3）**：`subtreeRef` 只返回指定 ref 的子树；`maxChars` 默认 24000，超出时返回 `truncated:true` + `continuation`；`continuation` 绑定 `snapshotId`，旧代次重新快照会返回 `STALE_REF`。所有裁剪在插件侧完成，不依赖 runtime 扩展。
+
+### 测试
+- 新增 `tests/snapshot-slice.test.ts`：子树缩进裁剪、maxChars 截断、续读游标、非法 ref/越界/格式校验。
+- 全量：**449 passed / 8 skipped**；typecheck/build 通过。
+
+## [0.10.0] - 2026-11-15 — CUA 启发 P0：动作后置断言 + 快照代次
+
+### 新增
+- **`ego_verify`**：1–8 个 `selector` / `text` / `value` / `url` / `count` 谓词 AND 组合，支持 `timeoutMs`、`stableSamples`、`pollMs`。返回 `verdict: satisfied | unsatisfied | unknown`；`unknown`（例如页面被对话框阻塞）永不等于成功。一次 `page.evaluate` 评估全部谓词，页面内轮询，不反复 spawn。
+- **`snapshotId` + `STALE_REF`**：`ego_snapshot` 返回快照代次；`ego_click` / `ego_fill` / `ego_check` / `ego_select` / `ego_hover` / `ego_drag` 可传 `snapshotId`。旧代次在动作发送前 fail-closed：`code:STALE_REF`、`actionSent:false`、`retry:reobserve`。不传 `snapshotId` 时行为不变。
+- `ego_help` 的 tools/errors/observe/discipline 与系统规则同步更新。
+
+### 测试
+- 新增 `tests/verify-snapshot.test.ts`：谓词匹配、URL glob、非法谓词、快照代次推进/diff 保持、STALE_REF 分类。
+- 全量：**445 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.9.15] - 2026-11-14 — Windows 焦点 / 观察窗 / 弹窗与标签修复（#99–#104）
 
 ### 修复

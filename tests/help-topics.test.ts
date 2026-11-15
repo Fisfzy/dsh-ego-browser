@@ -7,9 +7,10 @@ import {
   renderEgoHelpList,
 } from '../src/help.ts'
 
-const WIN = { platform: 'win32' as NodeJS.Platform }
-const MAC = { platform: 'darwin' as NodeJS.Platform }
-const LINUX = { platform: 'linux' as NodeJS.Platform }
+const WIN = { platform: 'win32' as NodeJS.Platform, native: true }
+const MAC = { platform: 'darwin' as NodeJS.Platform, native: true }
+const LINUX = { platform: 'linux' as NodeJS.Platform, native: true }
+const NO_NATIVE = { platform: 'linux' as NodeJS.Platform, native: false }
 
 describe('ego_help documentation registry', () => {
   it('groups topics by mode', () => {
@@ -27,6 +28,12 @@ describe('ego_help documentation registry', () => {
     expect(isEgoHelpVisible('login-import', LINUX)).toBe(false)
     expect(listEgoHelpTopics(LINUX).hidden).toContain('login-import')
     expect(listEgoHelpTopics(WIN).hidden).not.toContain('login-import')
+  })
+
+  it('hides the native topic unless a desktop CUA provider is present', () => {
+    expect(isEgoHelpVisible('native', NO_NATIVE)).toBe(false)
+    expect(isEgoHelpVisible('native', WIN)).toBe(true)
+    expect(listEgoHelpTopics(NO_NATIVE).hidden).toContain('native')
   })
 
   it('renders a grouped list, including the platform note only when something is hidden', () => {

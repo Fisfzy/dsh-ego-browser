@@ -85,6 +85,19 @@ export function markEgoToolCall(sessionId?: string): void {
   }
 }
 
+/** Broadcast one agent pointer position to every live watch-panel client. */
+export function publishCursor(payload: { x: number; y: number; w?: number; h?: number; kind?: string }): void {
+  if (!Number.isFinite(payload.x) || !Number.isFinite(payload.y)) return
+  const frame = `event: cursor\ndata: ${JSON.stringify(payload)}\n\n`
+  for (const res of sseClients) {
+    try {
+      res.write(frame)
+    } catch {
+      sseClients.delete(res)
+    }
+  }
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
   res.writeHead(status, {

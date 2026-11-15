@@ -39,7 +39,7 @@ import { chmodSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { importLoginCookies } from './login-import.ts'
 import { importLoginCookiesFromExtension } from './login-extension.ts'
@@ -48,11 +48,12 @@ import { installTui } from './tui/integration.ts'
 import { installBrowserPanel } from './tui/panel.ts'
 import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpaceGroups } from './worker-client.ts'
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
-import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
+import { initCastServer, markEgoToolCall, getLastEgoActivity, publishCursor } from './cast-server.ts'
 import { EGO_HELP_DOCS, isEgoHelpVisible, renderEgoHelpList } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
-import { SnapshotCache } from './snapshot-diff.ts'
+import { SnapshotCache, parseSnapshotContinuation, sliceSnapshotText } from './snapshot-diff.ts'
+import { recordTrajectory, trajectoryDir } from './trajectory.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs, validateEgoBinPath } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
@@ -97,7 +98,7 @@ const TOOL_TIMEOUT_MS = 120_000
 /** Three-line onboarding shown by ego_status; the full text lives in ego_help. */
 const STATUS_RULES_SUMMARY = [
   '先观察再动作：ego_snapshot（ref 只对本次快照有效）/ ego_tabs list。',
-  '每次只做一个会改变页面的动作，之后用 ego_page_info / ego_read_element 确认效果。',
+  '每次只做一个会改变页面的动作，之后用 ego_verify 断言预期，或 ego_page_info / ego_read_element 确认效果。',
   '超时或找不到目标时重新快照，不要原样重试；失败按返回的 retry / hint 处理。',
 ].join('\n')
 /**
@@ -107,6 +108,23 @@ const STATUS_RULES_SUMMARY = [
  * corresponds to a fresh runtime anyway).
  */
 const snapshotCache = new SnapshotCache(32)
+/**
+ * Tool-building specs registered by `registerActionTools`, used by ego_replay to
+ * re-execute a recorded call through the same script builder.
+ */
+const replayToolSpecs = new Map<string, EgoToolOptions>()
+/**
+ * Ref-based actions that may opt into the snapshot generation guard. Passing
+ * no snapshotId preserves the historical behavior for old callers.
+ */
+const SNAPSHOT_GUARDED_ACTIONS = new Set([
+  'ego_click',
+  'ego_fill',
+  'ego_check',
+  'ego_select',
+  'ego_hover',
+  'ego_drag',
+])
 /** Whether the host accepted the native rules prompt section. */
 let rulesSectionRegistered = false
 /**
@@ -121,7 +139,7 @@ let attachmentsStore: AttachmentStoreLike | undefined
  * exactly when a repeated action would otherwise be tempting.
  */
 const ACTION_SUCCESS_HINT =
-  '动作已执行。确认效果优先用 ego_page_info / ego_read_element；需要新定位再 ego_snapshot；若预期变化未出现，不要重复同一动作。'
+  '动作已执行。预期变化优先用 ego_verify 断言；否则用 ego_page_info / ego_read_element 确认。需要新定位再 ego_snapshot；若预期变化未出现，不要重复同一动作。'
 
 export interface ActiveSpaceTracker {
   current(): string | number
@@ -823,6 +841,10 @@ interface EgoRuntimeConfig {
   readonly residentIdleMin: number
   /** Render the compact browser rules section in the system prompt after first use. */
   readonly rulesPrompt: boolean
+  /** Write per-session JSONL tool-call trajectories; default off. */
+  readonly trajectory: boolean
+  /** Include raw ego_fill/ego_key text in trajectories; default off. */
+  readonly recordText: boolean
 }
 
 interface ExecLike {
@@ -1143,6 +1165,17 @@ export const spaceParam = {
 }
 
 /**
+ * Optional generation guard for ref-based actions. Passing the snapshotId from
+ * ego_snapshot makes a stale ref fail closed instead of clicking whatever now
+ * occupies the same ref number. Omit it for backward compatibility.
+ */
+export const snapshotIdParam = {
+  type: 'string',
+  description:
+    'Optional snapshotId returned by ego_snapshot. When provided, the action is rejected with STALE_REF if a newer full snapshot has since replaced that generation. Omit to keep the old behavior.',
+}
+
+/**
  * Side-channel line the prelude prints with the target it actually chose.
  * The host records it per space so the NEXT call — a brand-new process — can
  * re-pin the same tab. Chrome's own `active` flag is not enough: it resets to
@@ -1459,6 +1492,165 @@ export function normalizeNavigateReuse(value: unknown): NavigateReuse {
  * helper switches to the same-origin tab but does NOT navigate it, so a
  * same-site different path would silently stay on the old page.
  */
+export type VerifyPredicateKind = 'selector' | 'text' | 'value' | 'url' | 'count'
+
+export interface VerifyPredicate {
+  kind: VerifyPredicateKind
+  selector?: string
+  state?: 'attached' | 'visible' | 'hidden' | 'detached'
+  equals?: string
+  contains?: string
+  pattern?: string
+  min?: number
+  max?: number
+  url?: string
+}
+
+export interface VerifyScriptOptions {
+  predicates: VerifyPredicate[]
+  timeoutMs: number
+  stableSamples: number
+  pollMs: number
+  space: string | number
+}
+
+/**
+ * Runs entirely inside the page: evaluate every predicate in one round-trip.
+ * Kept as source text (not a TS function) because function.toString() would
+ * carry TypeScript annotations into the page.
+ */
+export const VERIFY_EVAL_SOURCE = `(function (predicates) {
+  function trunc(value) { return String(value == null ? '' : value).replace(/\\s+/g, ' ').trim().slice(0, 200) }
+  function visible(el) {
+    if (!el || !el.isConnected) return false
+    var style = window.getComputedStyle(el)
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+    var rect = el.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
+  function match(value, p) {
+    var text = String(value == null ? '' : value)
+    if (p.equals !== undefined && text !== String(p.equals)) return false
+    if (p.contains !== undefined && text.indexOf(String(p.contains)) < 0) return false
+    if (p.pattern !== undefined) {
+      try { if (!new RegExp(String(p.pattern)).test(text)) return false }
+      catch (e) { throw new Error('invalid pattern: ' + String(e && e.message ? e.message : e)) }
+    }
+    return true
+  }
+  function urlMatch(href, wanted) {
+    var value = String(wanted || '')
+    if (value.indexOf('*') < 0) return href.indexOf(value) >= 0
+    var pattern = value.split('*').map(function (part) {
+      var out = ''
+      var specials = String.fromCharCode(92) + '^$+?.()|[]{}'
+      for (var i = 0; i < part.length; i++) {
+        var c = part.charAt(i)
+        if (specials.indexOf(c) >= 0) out += String.fromCharCode(92)
+        out += c
+      }
+      return out
+    }).join('.*')
+    try { return new RegExp('^' + pattern + '$').test(href) } catch (e) { return href.indexOf(value) >= 0 }
+  }
+  return predicates.map(function (p, index) {
+    try {
+      if (p.kind === 'url') {
+        var href = String(location.href)
+        if (!p.url) return { index: index, ok: false, reason: 'url is required' }
+        return { index: index, ok: urlMatch(href, p.url), observed: trunc(href) }
+      }
+      var selector = String(p.selector || '')
+      if (!selector) return { index: index, ok: false, reason: 'selector is required' }
+      var elements = Array.prototype.slice.call(document.querySelectorAll(selector))
+      if (p.kind === 'count') {
+        var count = elements.length
+        var min = p.min === undefined ? 0 : Number(p.min)
+        var max = p.max === undefined ? Number.MAX_SAFE_INTEGER : Number(p.max)
+        return { index: index, ok: count >= min && count <= max, observed: String(count) }
+      }
+      var el = elements[0]
+      var state = p.state || 'visible'
+      if (state === 'detached') return { index: index, ok: !el, observed: el ? trunc(el.textContent) : '' }
+      if (!el) return { index: index, ok: false, observed: '', reason: 'no matching element' }
+      if (state === 'attached') return { index: index, ok: true, observed: trunc(el.textContent) }
+      if (state === 'hidden') return { index: index, ok: !visible(el), observed: trunc(el.textContent) }
+      if (!visible(el)) return { index: index, ok: false, observed: trunc(el.textContent), reason: 'element not visible' }
+      if (p.kind === 'value') {
+        var value = el.value !== undefined ? el.value : el.getAttribute('value')
+        return { index: index, ok: match(value, p), observed: trunc(value) }
+      }
+      if (p.kind === 'text') {
+        var text = el.innerText !== undefined ? el.innerText : el.textContent
+        return { index: index, ok: match(text, p), observed: trunc(text) }
+      }
+      return { index: index, ok: true, observed: trunc(el.textContent) }
+    } catch (e) {
+      return { index: index, ok: false, reason: String(e && e.message ? e.message : e) }
+    }
+  })
+})`;
+
+/**
+ * Build the in-runtime polling script for `ego_verify`.
+ *
+ * Any malformed predicate becomes an INVALID_ARGS result before the page is
+ * touched. Evaluate errors (including dialog-blocked pages) become
+ * verdict:'unknown'; unknown never means success.
+ */
+export function verifyScript(opts: VerifyScriptOptions): string {
+  const raw = Array.isArray(opts.predicates) ? opts.predicates : []
+  if (raw.length === 0 || raw.length > 8) {
+    return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: provide 1 to 8 predicates' }))\n`
+  }
+  const validKinds = new Set<VerifyPredicateKind>(['selector', 'text', 'value', 'url', 'count'])
+  for (const p of raw) {
+    if (!p || typeof p !== 'object' || !validKinds.has(p.kind)) {
+      return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: invalid predicate kind' }))\n`
+    }
+    if (p.kind === 'url') {
+      if (typeof p.url !== 'string' || p.url === '') {
+        return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: url predicate requires url' }))\n`
+      }
+    } else if (typeof p.selector !== 'string' || p.selector === '') {
+      return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: predicate requires selector' }))\n`
+    }
+  }
+  const timeoutMs = typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs)
+    ? Math.max(100, Math.min(60_000, Math.round(opts.timeoutMs)))
+    : 5_000
+  const stableSamples = typeof opts.stableSamples === 'number' && Number.isFinite(opts.stableSamples)
+    ? Math.max(1, Math.min(5, Math.round(opts.stableSamples)))
+    : 2
+  const pollMs = typeof opts.pollMs === 'number' && Number.isFinite(opts.pollMs)
+    ? Math.max(50, Math.min(2_000, Math.round(opts.pollMs)))
+    : 200
+  const evalExpr = `(${VERIFY_EVAL_SOURCE})(${JSON.stringify(raw)})`
+  return (
+    `${useSpace(opts.space)}${ensureRealTab()}` +
+    `const __start = Date.now()\n` +
+    `const __deadline = __start + ${timeoutMs}\n` +
+    `let __polls = 0, __streak = 0, __last = null, __err = null\n` +
+    `for (;;) {\n` +
+    `  __polls++\n` +
+    `  try { __last = await page.evaluate(${j(evalExpr)}); __err = null }\n` +
+    `  catch (e) { __err = String(e && e.message ? e.message : e); __last = null; break }\n` +
+    `  const __all = Array.isArray(__last) && __last.length === ${raw.length} && __last.every(x => x.ok)\n` +
+    `  __streak = __all ? __streak + 1 : 0\n` +
+    `  if (__streak >= ${stableSamples}) break\n` +
+    `  if (Date.now() >= __deadline) break\n` +
+    `  await page.waitForTimeout(${pollMs})\n` +
+    `}\n` +
+    `const __ok = Array.isArray(__last) && __last.length === ${raw.length} && __last.every(x => x.ok)\n` +
+    `const __verdict = __err ? 'unknown' : (__ok && __streak >= ${stableSamples} ? 'satisfied' : 'unsatisfied')\n` +
+    `const __reason = __err\n` +
+    `  ? (/dialog|blocking/i.test(__err) ? 'DIALOG_BLOCKING' : __err)\n` +
+    `  : (__verdict === 'unsatisfied' ? 'predicates not satisfied within timeout' : undefined)\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, verdict: __verdict, satisfied: __verdict === 'satisfied', results: __last || [], polls: __polls, elapsedMs: Date.now() - __start, reason: __reason }))\n`
+  )
+}
+
+
 export const navigateScript = (opts: {
   url: string
   reuse?: string
@@ -1580,7 +1772,7 @@ export const clickScript = (opts: {
   const betweenTaps = taps > 1 ? `  await new Promise(r => setTimeout(r, 120))\n` : ''
   const pageInfo =
     `const pginfo = await page.info()\n` +
-    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${dbl}, touch: ${touch}, holdMs: ${holdMs}, page: pginfo }))\n`
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${dbl}, touch: ${touch}, holdMs: ${holdMs}, page: pginfo, cursor: __p }))\n`
 
   if (touch) {
     const hold = holdMs > 0 ? `  await new Promise(r => setTimeout(r, ${holdMs}))\n` : ''
@@ -1622,7 +1814,7 @@ export const clickScript = (opts: {
       : dbl
         ? `await page.mouse.dblclick(${x}, ${y})`
         : `await page.mouse.click(${x}, ${y})`
-  return `${useSpace(opts.space)}${ensureRealTab()}${action}\n${pageInfo}`
+  return `${useSpace(opts.space)}${ensureRealTab()}const __p = ${point}\n${action}\n${pageInfo}`
 }
 
 
@@ -1674,7 +1866,18 @@ function renderEgoToolText(args: unknown, value: unknown): unknown[] {
       },
     ]
   }
-  return renderText(args, value)
+  return (() => {
+    const blocks = renderText(args, value)
+    if (v !== null && typeof v === 'object' && typeof v.snapshotId === 'string') {
+      const suffix = [
+        `snapshotId: ${v.snapshotId}`,
+        ...(v.truncated === true ? ['truncated: true'] : []),
+        ...(typeof v.continuation === 'string' ? [`continuation: ${v.continuation}`] : []),
+      ].join(' | ')
+      return [...blocks, { type: 'text', text: suffix }]
+    }
+    return blocks
+  })()
 }
 /**
  * Model-visible renderer for `ego_screenshot`: an inline image block when the
@@ -1782,10 +1985,16 @@ function observeEgoTool<T>(cfg: EgoRuntimeConfig, name: string, args: Record<str
 }
 
 function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOptions): ToolHandle {
+  const parameters = opts.parameters && typeof opts.parameters === 'object'
+    ? {
+        ...(opts.parameters as Record<string, unknown>),
+        ...(SNAPSHOT_GUARDED_ACTIONS.has(opts.name) ? { snapshotId: snapshotIdParam } : {}),
+      }
+    : opts.parameters
   return defineTool({
     name: opts.name,
     description: opts.description,
-    parameters: opts.parameters,
+    parameters,
     output: {
       schema: commonOutputSchema,
       render: opts.render ?? renderEgoToolText,
@@ -1797,6 +2006,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
         // cursor and afterExecute hooks all read pendingSessionId.
         const sessionId = callingSessionId(exec)
         pendingSessionId = sessionId
+        const startedAt = Date.now()
         try {
           // Signal the client to auto-open the sidebar Tab on the first ego_*
           // tool call. markEgoToolCall() bumps a host-side counter surfaced via
@@ -1804,6 +2014,17 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
           // calls betterSidebar.openTab(). Idempotent: the client's transition
           // guard means only the first call per session opens the Tab.
           markEgoToolCall(sessionId)
+          const requestedSnapshotId = typeof args.snapshotId === 'string' ? args.snapshotId.trim() : ''
+          if (requestedSnapshotId !== '' && SNAPSHOT_GUARDED_ACTIONS.has(opts.name)) {
+            const guardKey = `${sessionId ?? '-'}:${str(args.space, cfg.defaultSpace)}:${str(args.scope, 'full_page')}`
+            const currentSnapshotId = snapshotCache.currentId(guardKey)
+            if (currentSnapshotId !== requestedSnapshotId) {
+              return failureValue(
+                opts.name,
+                `stale snapshot: expected ${requestedSnapshotId}, current ${currentSnapshotId ?? 'none'} — call ego_snapshot again`,
+              )
+            }
+          }
           // Stale-space recovery (browser restart wiped the space table) is
           // handled inside runWithStaleSpaceRetry; the cold-start retry is one
           // level deeper.
@@ -1827,7 +2048,17 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
           // Domain failure is a canonical value, not an exception: the renderer
           // shows code/actionSent/retry/hint so the model can recover instead of
           // blindly replaying a non-idempotent action.
-          if (!result.ok) return failureValue(opts.name, result.error ?? 'ego-browser call failed')
+          if (!result.ok) {
+            const failure = failureValue(opts.name, result.error ?? 'ego-browser call failed')
+            recordTrajectory(cfg.trajectory, cfg.recordText, sessionId, {
+              tool: opts.name,
+              args,
+              value: failure,
+              durationMs: Date.now() - startedAt,
+              space: str(args.space, cfg.defaultSpace),
+            })
+            return failure
+          }
           recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
           const value =
             typeof opts.transformValue === 'function'
@@ -1839,6 +2070,13 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
               ? { ...(value as Record<string, unknown>), hint }
               : value
           if (typeof opts.afterExecute === 'function') opts.afterExecute(args, finalValue)
+          recordTrajectory(cfg.trajectory, cfg.recordText, sessionId, {
+            tool: opts.name,
+            args,
+            value: finalValue,
+            durationMs: Date.now() - startedAt,
+            space: str(args.space, cfg.defaultSpace),
+          })
           if (typeof opts.deliverFiles === 'function') {
             deliverToSession(ctx, exec, opts.deliverFiles(args, finalValue))
           }
@@ -1878,6 +2116,8 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'residentExecutor',
     'residentIdleMin',
     'rulesPrompt',
+    'trajectory',
+    'recordText',
   ]
   const entry = Object.fromEntries(settingKeys.filter((key) => config[key] !== undefined).map((key) => [key, config[key]]))
   // DSH 0.1.7：可注册的 settings 命名空间被换成了 loader 条目上的配置文档，用户
@@ -1959,6 +2199,10 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // every call, so toggling the setting takes effect on the next ego_* call.
     get residentExecutor() { return resolveConfig(bridge.source() as RawConfig).residentExecutor },
     get residentIdleMin() { return resolveConfig(bridge.source() as RawConfig).residentIdleMin },
+    // Live getters: trajectory recording reads them on every tool result, so a
+    // settings toggle takes effect without a host restart.
+    get trajectory() { return resolveConfig(bridge.source() as RawConfig).trajectory },
+    get recordText() { return resolveConfig(bridge.source() as RawConfig).recordText },
     // Live getter: the rules section reads it on every assembly pass, so toggling
     // the setting takes effect without re-registering the section.
     get rulesPrompt() { return resolveConfig(bridge.source() as RawConfig).rulesPrompt },
@@ -2013,6 +2257,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   registerAuthFlush(ctx, cfg, reg)
   registerLoginImport(ctx, cfg, reg)
   registerActionTools(ctx, cfg, reg)
+  registerReplayTool(ctx, cfg, reg)
   registerHelpAndDoctor(ctx, cfg, reg)
   // Native operating rules (no skill): a system-prompt section that stays empty
   // until this process has seen an ego_* call. Feature-detected, so a host
@@ -2514,8 +2759,10 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
 }
 /** The structured action tools that drive `ego-browser nodejs`. */
 function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
-  const t = (opts: EgoToolOptions): ToolHandle => defineEgoTool(ctx, cfg, {
-    ...opts,
+  const t = (opts: EgoToolOptions): ToolHandle => {
+    replayToolSpecs.set(opts.name, opts)
+    return defineEgoTool(ctx, cfg, {
+      ...opts,
     afterExecute: (args, result) => {
       if (!result || (result as Record<string, unknown>).ok === false) return
       if (opts.name === 'ego_space_open') {
@@ -2526,8 +2773,22 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         cfg.spaceTracker.selected(args.space as string | number)
       }
       opts.afterExecute?.(args, result)
+      if (opts.name === 'ego_click') {
+        const value = result as { cursor?: { x?: unknown; y?: unknown }; page?: { w?: unknown; h?: unknown } } | null
+        const cursor = value?.cursor
+        if (cursor && typeof cursor.x === 'number' && typeof cursor.y === 'number') {
+          publishCursor({
+            x: cursor.x,
+            y: cursor.y,
+            ...(typeof value?.page?.w === 'number' ? { w: value.page.w } : {}),
+            ...(typeof value?.page?.h === 'number' ? { h: value.page.h } : {}),
+            kind: 'click',
+          })
+        }
+      }
     },
-  })
+    })
+  }
   reg(
     t({
       name: 'ego_space_open',
@@ -2586,7 +2847,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     t({
       name: 'ego_snapshot',
       description:
-        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. This is the main observation tool for any browser task. refs are re-created by every snapshot — always act from the newest one. Set diff=true to get only what changed since the previous snapshot in this task space (cheaper after the first observation); diff mode never returns actionable refs, so take a full snapshot before acting. Canvas/WebGL/custom-drawn content has no semantic nodes: use ego_screenshot for it. Elements inside a cross-origin iframe do appear with a ref — click/fill them by ref, because CSS selectors only search the main document.',
+        'Read the current page as text: the full-page semantic tree annotated with [ref=N, loc=...] selectors that ego_click / ego_fill can target. Returns snapshotId; refs are only valid for that generation, and ref-based actions may pass it to fail closed with STALE_REF if a newer snapshot replaced them. This is the main observation tool for any browser task. Set diff=true to get only what changed since the previous snapshot in this task space (cheaper after the first observation); diff mode never returns actionable refs, so take a full snapshot before acting. Canvas/WebGL/custom-drawn content has no semantic nodes: use ego_screenshot for it. Elements inside a cross-origin iframe do appear with a ref — click/fill them by ref, because CSS selectors only search the main document.',
       parameters: {
         space: spaceParam,
         scope: {
@@ -2598,6 +2859,21 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           type: 'boolean',
           description:
             'Compare with the previous snapshot in this session/space/scope and return added/removed/changed lines instead of the full tree. The first diff call returns the full tree as the baseline.',
+        },
+        subtreeRef: {
+          type: 'number',
+          description:
+            'Optional ref=N from the latest snapshot. Returns only that element subtree (plugin-side text crop).',
+        },
+        maxChars: {
+          type: 'number',
+          description:
+            'Maximum characters in this response, default 24000. When truncated, continuation carries the resume cursor.',
+        },
+        continuation: {
+          type: 'string',
+          description:
+            'Resume cursor from a previous truncated ego_snapshot. Bound to that snapshotId; a newer full snapshot invalidates it.',
         },
       },
       buildScript: (args) => {
@@ -2629,11 +2905,100 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           args.space ?? cfg.defaultSpace,
         )}:${str(args.scope, 'full_page')}`
         const tries = typeof payload.tries === 'number' ? payload.tries : undefined
-        return snapshotCache.observe(key, payload.text, {
+        const maxChars = num(args.maxChars, 24_000)
+        const subtreeRef = typeof args.subtreeRef === 'number' && Number.isFinite(args.subtreeRef)
+          ? Math.floor(args.subtreeRef)
+          : undefined
+        const continuation = str(args.continuation, '')
+        if (continuation !== '') {
+          if (bool(args.diff, false)) {
+            return failureValue('ego_snapshot', 'ego_snapshot: continuation cannot be combined with diff')
+          }
+          const parsed = parseSnapshotContinuation(continuation)
+          const current = snapshotCache.currentId(key)
+          if (!parsed || current === undefined || parsed.snapshotId !== current) {
+            return failureValue(
+              'ego_snapshot',
+              `stale snapshot: continuation expected ${parsed?.snapshotId ?? 'invalid'}, current ${current ?? 'none'} — call ego_snapshot again`,
+            )
+          }
+          const full = snapshotCache.get(key)
+          if (full === undefined) {
+            return failureValue('ego_snapshot', 'stale snapshot: snapshot text is no longer cached — call ego_snapshot again')
+          }
+          const slice = sliceSnapshotText(full, { maxChars, offset: parsed.offset })
+          if (slice.error !== undefined) {
+            return failureValue('ego_snapshot', `ego_snapshot: ${slice.error}`)
+          }
+          return {
+            ok: true,
+            text: slice.text,
+            snapshotId: parsed.snapshotId,
+            truncated: slice.truncated,
+            ...(slice.nextOffset === undefined
+              ? {}
+              : { continuation: `${parsed.snapshotId}:${slice.nextOffset}` }),
+          }
+        }
+        const observed = snapshotCache.observe(key, payload.text, {
           diff: bool(args.diff, false),
           tries,
         })
+        if (observed.text === undefined) return observed
+        const slice = sliceSnapshotText(observed.text, { subtreeRef, maxChars })
+        if (slice.error !== undefined) {
+          return failureValue('ego_snapshot', `ego_snapshot: ${slice.error}`)
+        }
+        return {
+          ...observed,
+          text: slice.text,
+          truncated: slice.truncated,
+          ...(slice.nextOffset === undefined
+            ? {}
+            : { continuation: `${observed.snapshotId}:${slice.nextOffset}` }),
+        }
       },
+    }),
+  )
+  reg(
+    t({
+      name: 'ego_verify',
+      description:
+        'Assert the page reached the expected state after an action: selector/text/value/url/count predicates combined with AND. Polls until satisfied, returns verdict satisfied/unsatisfied/unknown. unknown (e.g. page blocked by a dialog) NEVER means success. Use this instead of repeating a click and hoping.',
+      parameters: {
+        space: spaceParam,
+        predicates: {
+          type: 'array',
+          required: true,
+          description: '1-8 predicates, all must pass (AND).',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { type: 'string', description: "'selector' | 'text' | 'value' | 'url' | 'count'" },
+              selector: { type: 'string', description: 'CSS selector for selector/text/value/count.' },
+              state: { type: 'string', description: "'attached' | 'visible' (default) | 'hidden' | 'detached'" },
+              equals: { type: 'string', description: 'Exact text/value match.' },
+              contains: { type: 'string', description: 'Substring match.' },
+              pattern: { type: 'string', description: 'Regular expression source.' },
+              min: { type: 'number', description: 'Minimum count (kind=count).' },
+              max: { type: 'number', description: 'Maximum count (kind=count).' },
+              url: { type: 'string', description: 'URL substring or * glob (kind=url).' },
+            },
+          },
+        },
+        timeoutMs: { type: 'number', description: 'Total timeout in ms, default 5000, max 60000.' },
+        stableSamples: { type: 'number', description: 'Consecutive satisfied samples required, 1-5, default 2.' },
+        pollMs: { type: 'number', description: 'Poll interval in ms, default 200.' },
+      },
+      buildScript: (args) =>
+        verifyScript({
+          predicates: Array.isArray(args.predicates) ? args.predicates as VerifyPredicate[] : [],
+          timeoutMs: num(args.timeoutMs, 5_000),
+          stableSamples: num(args.stableSamples, 2),
+          pollMs: num(args.pollMs, 200),
+          space: str(args.space, cfg.defaultSpace),
+        }),
     }),
   )
   reg(
@@ -3187,10 +3552,12 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, reason: 'ego_hover: provide selector or both x and y' }))\n`
         return (
           `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
+          `const __p = ${sel !== '' ? `await page.elementCenter(${j(sel)})` : `{ x: ${args.x}, y: ${args.y} }`}\n` +
           (sel !== ''
-            ? `await page.locator(${j(sel)}).hover()\n`
-            : `await page.mouse.move(${args.x}, ${args.y})\n`) +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true }))\n`
+            ? `await page.mouse.move(__p.x, __p.y)\n`
+            : `await page.mouse.move(__p.x, __p.y)\n`) +
+          `const pginfo = await page.info()\n` +
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, cursor: __p, page: pginfo }))\n`
         )
       },
     }),
@@ -3617,6 +3984,114 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
   )
 }
 
+// ── ego_replay: re-execute a recorded trajectory ───────────────────────────
+/**
+ * Re-execute a JSONL trajectory through the same script builders that produced
+ * it. This is deliberately a host-side tool rather than a shell script: only
+ * the running plugin has access to the registered builders and the current
+ * browser session. Redacted form/key text is skipped, never replayed literally.
+ */
+function registerReplayTool(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
+  reg(
+    defineTool({
+      name: 'ego_replay',
+      description:
+        'Replay a recorded trajectory JSONL through the current browser session. Requires trajectory recording to have been enabled. Steps are re-executed in order through the same ego_* builders; redacted ego_fill/ego_key steps are skipped. Returns per-step ok/error and a failure count.',
+      parameters: {
+        file: {
+          type: 'string',
+          description: 'Absolute JSONL path. Omit to use the current session trajectory.',
+        },
+        stopOnError: {
+          type: 'boolean',
+          description: 'Stop at the first failed step (default true).',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: { ok: { type: 'boolean', required: true } },
+        },
+        render: renderText,
+      },
+      timeoutMs: TOOL_TIMEOUT_MS,
+      execute: async (args: Record<string, unknown>, exec: ToolExec) =>
+        withEgoLock(() => observeEgoTool(cfg, 'ego_replay', args, async () => {
+          const sessionId = callingSessionId(exec)
+          pendingSessionId = sessionId
+          try {
+            const requested = str(args.file, '')
+            const safeSession = String(sessionId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'default'
+            const file = requested !== '' ? requested : join(trajectoryDir(), `${safeSession}.jsonl`)
+            let text = ''
+            try {
+              text = await readFile(file, 'utf8')
+            } catch {
+              return { ok: false, error: `ego_replay: cannot read ${file}` }
+            }
+            const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '')
+            const stopOnError = bool(args.stopOnError, true)
+            const steps: Array<Record<string, unknown>> = []
+            let failed = 0
+            let skipped = 0
+            for (const [index, line] of lines.entries()) {
+              let row: Record<string, unknown>
+              try {
+                row = JSON.parse(line) as Record<string, unknown>
+              } catch {
+                failed++
+                steps.push({ index: index + 1, ok: false, error: 'invalid JSON' })
+                if (stopOnError) break
+                continue
+              }
+              const tool = typeof row.tool === 'string' ? row.tool : ''
+              const rawArgs = row.args
+              const stepArgs = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
+                ? rawArgs as Record<string, unknown>
+                : {}
+              const hasRedacted = Object.values(stepArgs).some((value) => value === '<redacted>')
+              if ((tool === 'ego_fill' || tool === 'ego_key') && hasRedacted) {
+                skipped++
+                steps.push({ index: index + 1, tool, ok: null, skipped: 'redacted text' })
+                continue
+              }
+              const spec = replayToolSpecs.get(tool)
+              if (!spec) {
+                failed++
+                steps.push({ index: index + 1, tool, ok: false, error: 'tool is not replayable' })
+                if (stopOnError) break
+                continue
+              }
+              const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => {
+                // The recorded snapshotId belongs to the original run. Replay
+                // itself takes new snapshots, so forward the action without the
+                // old generation guard (the tool still re-observes normally).
+                const replayArgs = { ...stepArgs }
+                delete replayArgs.snapshotId
+                return spec.buildScript(replayArgs)
+              })
+              const ok = result.ok
+              if (!ok) failed++
+              steps.push({
+                index: index + 1,
+                tool,
+                ok,
+                ...(ok ? {} : { error: result.error ?? 'failed' }),
+              })
+              if (!ok && stopOnError) break
+            }
+            return { ok: true, file, replayed: steps.length, failed, skipped, steps }
+          } finally {
+            pendingSessionId = undefined
+          }
+        })),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_replay', args), kind: 'other', rawInput: null }),
+    } as unknown as DefineToolOpts),
+  )
+}
+
+
 // ── ego_help: built-in tool / category index ───────────────────────────────
 /** Register ego_help / ego_doctor / ego_script. */
 function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
@@ -3763,7 +4238,7 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
     defineTool({
       name: 'ego_help',
       description:
-        'Query the built-in ego-browser guide. `topic` may be a category (overview/tools/navigate/tabs/observe/input/keyboard-mouse/form/wait/network/download/captcha/login/login-import/script/doctor/discipline/errors/screenshots/gui-test) or a specific tool name (e.g. ego_click). `topic=list` lists what this host offers. Read `discipline` before a multi-step task, `errors` when a tool reports a failure code, and `gui-test` for black-box UI testing.',
+        'Query the built-in ego-browser guide. `topic` may be a category (overview/tools/navigate/tabs/observe/input/keyboard-mouse/form/wait/network/download/captcha/login/login-import/script/doctor/discipline/errors/screenshots/gui-test/native) or a specific tool name (e.g. ego_click). `topic=list` lists what this host offers. Read `discipline` before a multi-step task, `errors` when a tool reports a failure code, and `gui-test` for black-box UI testing.',
       parameters: {
         topic: {
           type: 'string',
@@ -3786,7 +4261,15 @@ function registerHelpAndDoctor(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (too
       timeoutMs: 10_000,
       execute: async (args: Record<string, unknown>) => {
         const q = str(args.topic, '').trim().toLowerCase()
-        const env = { platform: process.platform }
+        let native = false
+        try {
+          const registry = ctx.tools as unknown as { definitions?: () => Array<{ name?: string }> }
+          const defs = typeof registry.definitions === 'function' ? registry.definitions() : []
+          native = Array.isArray(defs) && defs.some((tool) => /^cua_driver_native__/.test(String(tool?.name || '')))
+        } catch {
+          native = false
+        }
+        const env = { platform: process.platform, native }
         if (q === 'list') {
           return { ok: true, topic: 'list', text: renderEgoHelpList(env) }
         }
