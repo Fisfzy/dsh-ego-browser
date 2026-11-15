@@ -53,6 +53,7 @@ import { EGO_HELP_DOCS, isEgoHelpVisible, renderEgoHelpList } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
 import { SnapshotCache, parseSnapshotContinuation, sliceSnapshotText } from './snapshot-diff.ts'
+import { recordTrajectory } from './trajectory.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs, validateEgoBinPath } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
@@ -835,6 +836,10 @@ interface EgoRuntimeConfig {
   readonly residentIdleMin: number
   /** Render the compact browser rules section in the system prompt after first use. */
   readonly rulesPrompt: boolean
+  /** Write per-session JSONL tool-call trajectories; default off. */
+  readonly trajectory: boolean
+  /** Include raw ego_fill/ego_key text in trajectories; default off. */
+  readonly recordText: boolean
 }
 
 interface ExecLike {
@@ -1985,6 +1990,7 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
         // cursor and afterExecute hooks all read pendingSessionId.
         const sessionId = callingSessionId(exec)
         pendingSessionId = sessionId
+        const startedAt = Date.now()
         try {
           // Signal the client to auto-open the sidebar Tab on the first ego_*
           // tool call. markEgoToolCall() bumps a host-side counter surfaced via
@@ -2026,7 +2032,17 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
           // Domain failure is a canonical value, not an exception: the renderer
           // shows code/actionSent/retry/hint so the model can recover instead of
           // blindly replaying a non-idempotent action.
-          if (!result.ok) return failureValue(opts.name, result.error ?? 'ego-browser call failed')
+          if (!result.ok) {
+            const failure = failureValue(opts.name, result.error ?? 'ego-browser call failed')
+            recordTrajectory(cfg.trajectory, cfg.recordText, sessionId, {
+              tool: opts.name,
+              args,
+              value: failure,
+              durationMs: Date.now() - startedAt,
+              space: str(args.space, cfg.defaultSpace),
+            })
+            return failure
+          }
           recordPinnedTarget(cfg.targetTracker, spaceKey, result.stdout)
           const value =
             typeof opts.transformValue === 'function'
@@ -2038,6 +2054,13 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
               ? { ...(value as Record<string, unknown>), hint }
               : value
           if (typeof opts.afterExecute === 'function') opts.afterExecute(args, finalValue)
+          recordTrajectory(cfg.trajectory, cfg.recordText, sessionId, {
+            tool: opts.name,
+            args,
+            value: finalValue,
+            durationMs: Date.now() - startedAt,
+            space: str(args.space, cfg.defaultSpace),
+          })
           if (typeof opts.deliverFiles === 'function') {
             deliverToSession(ctx, exec, opts.deliverFiles(args, finalValue))
           }
@@ -2077,6 +2100,8 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'residentExecutor',
     'residentIdleMin',
     'rulesPrompt',
+    'trajectory',
+    'recordText',
   ]
   const entry = Object.fromEntries(settingKeys.filter((key) => config[key] !== undefined).map((key) => [key, config[key]]))
   // DSH 0.1.7：可注册的 settings 命名空间被换成了 loader 条目上的配置文档，用户
@@ -2158,6 +2183,10 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     // every call, so toggling the setting takes effect on the next ego_* call.
     get residentExecutor() { return resolveConfig(bridge.source() as RawConfig).residentExecutor },
     get residentIdleMin() { return resolveConfig(bridge.source() as RawConfig).residentIdleMin },
+    // Live getters: trajectory recording reads them on every tool result, so a
+    // settings toggle takes effect without a host restart.
+    get trajectory() { return resolveConfig(bridge.source() as RawConfig).trajectory },
+    get recordText() { return resolveConfig(bridge.source() as RawConfig).recordText },
     // Live getter: the rules section reads it on every assembly pass, so toggling
     // the setting takes effect without re-registering the section.
     get rulesPrompt() { return resolveConfig(bridge.source() as RawConfig).rulesPrompt },

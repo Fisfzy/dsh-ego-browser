@@ -2,7 +2,7 @@
   "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "id": "dsh-ego-browser",
   "name": "ego-browser",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "manifestVersion": "0.15",
   "facets": {
     "host": {
@@ -169,6 +169,38 @@
               "hintTitles": {
                 "en": "macOS only. Chrome 156+ can stop persisting cookies to disk; this makes Chrome use its mock Keychain so the jar flushes again. Weakens at-rest cookie encryption; requires a browser cold start.",
                 "zh": "仅 macOS。Chrome 156+ 可能不再把 cookie 写入磁盘；开启后改用 mock Keychain 恢复落盘。会降低静态加密强度；需浏览器冷启动。"
+              }
+            },
+            {
+              "path": [
+                "trajectory"
+              ],
+              "label": "Record tool trajectories",
+              "kind": "boolean",
+              "hint": "Write per-session JSONL tool-call records under ~/.dsh/plugin-data/ego-browser/trajectories. Default off.",
+              "titles": {
+                "en": "Record tool trajectories",
+                "zh": "记录工具轨迹"
+              },
+              "hintTitles": {
+                "en": "Write per-session JSONL tool-call records under ~/.dsh/plugin-data/ego-browser/trajectories. Default off.",
+                "zh": "把每个会话的工具调用写入 ~/.dsh/plugin-data/ego-browser/trajectories 的 JSONL；默认关闭。"
+              }
+            },
+            {
+              "path": [
+                "recordText"
+              ],
+              "label": "Record raw form text",
+              "kind": "boolean",
+              "hint": "Include raw ego_fill/ego_key text in trajectories. Default off; such text is recorded as <redacted>.",
+              "titles": {
+                "en": "Record raw form text",
+                "zh": "记录表单原文"
+              },
+              "hintTitles": {
+                "en": "Include raw ego_fill/ego_key text in trajectories. Default off; such text is recorded as <redacted>.",
+                "zh": "轨迹中记录 ego_fill/ego_key 的原始文本；默认关闭，此时记为 <redacted>。"
               }
             },
             {

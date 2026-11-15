@@ -2,6 +2,17 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.12.0] - 2026-11-15 — 轨迹记录（P1-4）
+
+### 新增
+- **`trajectory` / `recordText` 设置**：开启后每个会话写一份 JSONL 轨迹到 `~/.dsh/plugin-data/ego-browser/trajectories/<session>.jsonl`，记录 tool / args / ok / code / actionSent / durationMs / url / space / snapshotId；默认关闭。
+- **默认脱敏**：`ego_fill` / `ego_key` 的 `text` / `value` 默认写 `<redacted>`，只有 `recordText:true` 才记录原文。
+- 单文件超过 2MB 时滚动为 `.jsonl.1`；写入失败不会影响工具调用。
+
+### 测试
+- 新增 `tests/trajectory.test.ts`：JSONL 字段、脱敏、关闭时不落盘。
+- 全量：**452 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.11.0] - 2026-11-15 — 观察成本分级：子树 / 截断 / 续读
 
 ### 新增
