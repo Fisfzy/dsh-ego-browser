@@ -1913,6 +1913,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
   border-radius: 50%; border: 2px solid #4da3ff; pointer-events: none;
   box-shadow: 0 0 0 4px rgba(77, 163, 255, .14);
   background: rgba(77, 163, 255, .18);
+  transition: left .12s linear, top .12s linear;
   animation: dsh-ego-ghost-pulse .55s ease-out;
 }
 .dsh-ego-side-ghost.hover { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-color: #8fb9ff; }
@@ -2410,18 +2411,36 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			var self = this
 			this.ghostSeq = (this.ghostSeq || 0) + 1
 			var seq = this.ghostSeq
+			var vw = Number.isFinite(payload.w) && payload.w > 0 ? payload.w : null
+			var vh = Number.isFinite(payload.h) && payload.h > 0 ? payload.h : null
+			var left = null
+			var top = null
+			// The live image uses object-fit: contain, so viewport coordinates
+			// are not percentages of the box: a letterboxed frame would shift
+			// every point. Measure the displayed content rect instead.
+			try {
+				var box = this.liveImg && this.liveImg.parentElement
+				var rect = box ? box.getBoundingClientRect() : null
+				if (rect && rect.width > 0 && rect.height > 0 && vw && vh) {
+					var scale = Math.min(rect.width / vw, rect.height / vh)
+					var contentW = vw * scale
+					var contentH = vh * scale
+					left = ((rect.width - contentW) / 2 + payload.x * scale) / rect.width * 100
+					top = ((rect.height - contentH) / 2 + payload.y * scale) / rect.height * 100
+				}
+			} catch (e) { /* fall back to raw viewport percentage */ }
 			var ghost = {
 				x: payload.x,
 				y: payload.y,
-				w: Number.isFinite(payload.w) && payload.w > 0 ? payload.w : null,
-				h: Number.isFinite(payload.h) && payload.h > 0 ? payload.h : null,
+				left: left === null ? (vw ? Math.max(0, Math.min(1, payload.x / vw)) * 100 : 50) : left,
+				top: top === null ? (vh ? Math.max(0, Math.min(1, payload.y / vh)) * 100 : 50) : top,
 				kind: payload.kind === 'click' ? 'click' : 'hover',
 			}
 			this.store.update(function (s) { s.ghost = ghost })
 			window.setTimeout(function () {
 				if (seq !== self.ghostSeq) return
 				self.store.update(function (s) { s.ghost = null })
-			}, 1100)
+			}, 1600)
 		}
 		LivePreviewController.prototype._processSpaces = function (spaces) {
 			if (this.disposed) return
@@ -3399,8 +3418,8 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 								key: 'ghost',
 								className: 'dsh-ego-side-ghost' + (state.ghost.kind === 'hover' ? ' hover' : ''),
 								style: {
-									left: (state.ghost.w ? Math.max(0, Math.min(1, state.ghost.x / state.ghost.w)) * 100 : 50) + '%',
-									top: (state.ghost.h ? Math.max(0, Math.min(1, state.ghost.y / state.ghost.h)) * 100 : 50) + '%',
+									left: state.ghost.left + '%',
+									top: state.ghost.top + '%',
 								},
 							})
 							: null,

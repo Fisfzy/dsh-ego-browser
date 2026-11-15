@@ -3556,7 +3556,8 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           (sel !== ''
             ? `await page.mouse.move(__p.x, __p.y)\n`
             : `await page.mouse.move(__p.x, __p.y)\n`) +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, cursor: __p }))\n`
+          `const pginfo = await page.info()\n` +
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, cursor: __p, page: pginfo }))\n`
         )
       },
     }),
