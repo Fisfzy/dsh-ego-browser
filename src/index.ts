@@ -617,6 +617,13 @@ export function resolveEgoEnv(cfg: Partial<ResolvedConfig>, { platform = process
   if (env.EGO_ISOLATE_SPACES === undefined && cfg?.isolateSpaces !== undefined) {
     env.EGO_ISOLATE_SPACES = cfg.isolateSpaces ? '1' : '0'
   }
+  // The agent profile is not the user's daily browser: Chrome's native save-
+  // password bubble is outside CDP and can pause the page/screencast. Disable
+  // the password manager by default; a user-set env var (for example "0") keeps
+  // the previous behavior for power users.
+  if (env.EGO_LINUX_DISABLE_PASSWORD_MANAGER === undefined) {
+    env.EGO_LINUX_DISABLE_PASSWORD_MANAGER = '1'
+  }
   return env
 }
 function describeStderr(stderr: string): string {

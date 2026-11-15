@@ -591,6 +591,15 @@ describe("runtime chrome.mjs (macOS X display)", () => {
 
 // ─── runtime/ego-linux/src/chrome.mjs (headless UA version) ────────────────
 
+describe("agent password-manager policy", () => {
+  it("disables Chrome's save-password UI by default, but a user env wins", () => {
+    const injected = resolveEgoEnv({}, { platform: "win32", baseEnv: {} });
+    expect(injected.EGO_LINUX_DISABLE_PASSWORD_MANAGER).toBe("1");
+    const overridden = resolveEgoEnv({}, { platform: "win32", baseEnv: { EGO_LINUX_DISABLE_PASSWORD_MANAGER: "0" } });
+    expect(overridden.EGO_LINUX_DISABLE_PASSWORD_MANAGER).toBe("0");
+  });
+});
+
 describe("runtime chrome.mjs (headless UA version, #79)", () => {
   it("parses the major version from chrome/chromium --version output", async () => {
     // @ts-ignore — runtime .mjs is excluded from tsconfig

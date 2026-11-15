@@ -3757,7 +3757,14 @@ var TargetSessions = class {
 	}
 	async call(targetId, method, params = {}, timeoutMs = 6e3) {
 		const session = await this.ensure(targetId);
-		return this.cdp.call(method, params, session.sessionId, timeoutMs);
+		try {
+			return await this.cdp.call(method, params, session.sessionId, timeoutMs);
+		} catch (error) {
+			if (!/session with given id not found/i.test(error.message || "")) throw error;
+			this.sessions.delete(targetId);
+			const fresh = await this.ensure(targetId);
+			return this.cdp.call(method, params, fresh.sessionId, timeoutMs);
+		}
 	}
 	async sendInput(targetId, payload) {
 		const { type, x, y, button = "left", buttons = 0, deltaX = 0, deltaY = 0, clickCount = 0, modifiers = 0 } = payload || {};
@@ -3883,9 +3890,13 @@ var CdpCaptureBackend = class {
 	}
 	async start({ targetId, maxWidth }) {
 		await this.stop("restart");
-		const session = await this.sessions.ensure(targetId);
+		let session = await this.sessions.ensure(targetId);
 		const config = this.getConfig();
 		const effectiveMaxWidth = Math.max(320, Math.min(config.cdpMaxWidth, maxWidth && maxWidth > 0 ? Math.round(maxWidth) : config.cdpMaxWidth));
+		const enableFocusEmulation = async () => {
+			await this.cdp.call("Emulation.setFocusEmulationEnabled", { enabled: true }, session.sessionId).catch(() => {});
+		};
+		await enableFocusEmulation();
 		this.current = {
 			targetId,
 			sessionId: session.sessionId,
@@ -3899,12 +3910,22 @@ var CdpCaptureBackend = class {
 			targetId
 		});
 		try {
-			await this.cdp.call("Page.startScreencast", {
+			const startScreencast = () => this.cdp.call("Page.startScreencast", {
 				format: "jpeg",
 				quality: config.cdpQuality,
 				maxWidth: effectiveMaxWidth,
 				everyNthFrame: Math.max(1, Math.min(8, Math.round(60 / Math.max(1, config.cdpFps))))
 			}, session.sessionId);
+			try {
+				await startScreencast();
+			} catch (error) {
+				if (!/session with given id not found/i.test(error.message || "")) throw error;
+				this.sessions.sessions.delete(targetId);
+				session = await this.sessions.ensure(targetId);
+				await enableFocusEmulation();
+				this.current.sessionId = session.sessionId;
+				await startScreencast();
+			}
 			this.onStatus({
 				backend: "cdp",
 				state: "streaming",
@@ -5398,6 +5419,16 @@ async function listTargets() {
 	if (!active) return [];
 	return ((await active.cdp.call("Target.getTargets")).targetInfos || []).filter((target) => target.type === "page");
 }
+/**
+* A user explicitly picked a tab in the watch panel. Unlike model-initiated
+* activation (muted by the runtime transport for #99), this should move the
+* real Chrome tab/window to the target.
+*/
+async function activateWatchedTarget(targetId) {
+	if (!active) return;
+	await active.cdp.call("Target.activateTarget", { targetId }).catch(() => {});
+	await active.sessions.call(targetId, "Page.bringToFront").catch(() => {});
+}
 async function activeTargetId() {
 	if (!active?.port) return currentStatus.targetId || null;
 	try {
@@ -5792,15 +5823,21 @@ async function main() {
 					ok: false,
 					error: "no live browser"
 				});
+				const body = await readJson(req);
+				if (body.activate === true) await activateWatchedTarget(body.targetId);
 				return sendJson(res, 200, {
 					ok: true,
-					...await manager.startWatch(await readJson(req))
+					...await manager.startWatch(body)
 				});
 			}
-			if (req.method === "POST" && url.pathname === "/api/watch/switch") return sendJson(res, 200, {
-				ok: true,
-				...await manager.switchWatch(await readJson(req))
-			});
+			if (req.method === "POST" && url.pathname === "/api/watch/switch") {
+				const body = await readJson(req);
+				if (body.activate === true) await activateWatchedTarget(body.targetId);
+				return sendJson(res, 200, {
+					ok: true,
+					...await manager.switchWatch(body)
+				});
+			}
 			if (req.method === "POST" && url.pathname === "/api/watch/stop") return sendJson(res, 200, {
 				ok: true,
 				...await manager.stopWatch(await readJson(req))

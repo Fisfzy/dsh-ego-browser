@@ -37,6 +37,7 @@
 | `runtime/ego-linux/src/task-spaces.mjs` | `createTaskSpace()` 不再对空白 anchor 调 `Target.activateTarget`；持久 Profile 下若已有真实页面，用该页面 URL 作为新 space 自己 tab 的初始 URL（没有真实页时才用 `about:blank`） | issue #103：新 space 的 blank tab 被激活后会成为观察窗 `/json/list[0]` 的“当前页”，导致面板/`page_info` 显示 `about:blank`；新 tab 仍独立，但创建后立即有内容，首次导航也仍落在新 space |
 | `runtime/ego-linux/src/tabs.mjs` | `listTabs()` 的无 browserContextId 分支同时接受 `openerId` 在 `scope.targetIds` 中的页面 | issue #104：`target=_blank` / `window.open()` 打开的标签不经过 `createTab()`，原逻辑永远列不出、也切不过去 |
 | `runtime/ego-browser/dist/out/index.js` | `Page.javascriptDialogOpening` 事件立即 `Page.handleJavaScriptDialog({accept:false})` 兜底 | issue #104：原生 alert/confirm 只记账不作答会阻塞 renderer，后续 `Runtime.evaluate` / `Input.dispatchMouseEvent` 全部超时；默认 dismiss 是安全行为，调用方仍可自行替换 `window.confirm` |
+| `runtime/ego-linux/src/chrome.mjs` | `neutralizeZoom()` 冷启动前同时写 `credentials_enable_service=false` / `profile.password_manager_enabled=false`；`EGO_LINUX_DISABLE_PASSWORD_MANAGER=0` 可恢复 | 保存密码气泡是 Chrome 原生 UI，CDP/ego_dialog 无法关闭，弹出期间页面/screencast 可能冻结；agent 专用 profile 默认关闭密码管理器，cookie/登录态不受影响 |
 | （其余 runtime 文件）| 与 vendoring 时一致 | 无后续本地改动 |
 
 ## 说明

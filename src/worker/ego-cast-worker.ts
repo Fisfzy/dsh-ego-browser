@@ -258,6 +258,17 @@ async function listTargets(): Promise<Array<{ targetId: string; url: string; tit
   return (result.targetInfos || []).filter((target) => target.type === 'page')
 }
 
+/**
+ * A user explicitly picked a tab in the watch panel. Unlike model-initiated
+ * activation (muted by the runtime transport for #99), this should move the
+ * real Chrome tab/window to the target.
+ */
+async function activateWatchedTarget(targetId: string): Promise<void> {
+  if (!active) return
+  await active.cdp.call('Target.activateTarget', { targetId }).catch(() => {})
+  await active.sessions.call(targetId, 'Page.bringToFront').catch(() => {})
+}
+
 async function activeTargetId(): Promise<string | null> {
   if (!active?.port) return (currentStatus.targetId as string | null) || null
   try {
@@ -569,8 +580,17 @@ async function main(): Promise<void> {
       if (req.method === 'GET' && url.pathname === '/api/watch/status') return sendJson(res, 200, { ok: true, ...manager.status() })
       if (req.method === 'GET' && url.pathname === '/api/video/status') return sendJson(res, 200, { ok: true, ...manager.status(), mime: videoInit?.mime || null })
       if (req.method === 'POST' && url.pathname === '/api/config') { castConfig = normalizeConfig(await readJson(req)); await manager.updateConfig(); return sendJson(res, 200, { ok: true, config: castConfig }) }
-      if (req.method === 'POST' && url.pathname === '/api/watch/start') { if (!active) return sendJson(res, 409, { ok: false, error: 'no live browser' }); return sendJson(res, 200, { ok: true, ...await manager.startWatch(await readJson(req) as { clientId: string; targetId: string; backend?: string; maxWidth?: number }) }) }
-      if (req.method === 'POST' && url.pathname === '/api/watch/switch') return sendJson(res, 200, { ok: true, ...await manager.switchWatch(await readJson(req) as { clientId: string; targetId: string; maxWidth?: number }) })
+      if (req.method === 'POST' && url.pathname === '/api/watch/start') {
+        if (!active) return sendJson(res, 409, { ok: false, error: 'no live browser' })
+        const body = await readJson(req) as { clientId: string; targetId: string; backend?: string; maxWidth?: number; activate?: boolean }
+        if (body.activate === true) await activateWatchedTarget(body.targetId)
+        return sendJson(res, 200, { ok: true, ...await manager.startWatch(body) })
+      }
+      if (req.method === 'POST' && url.pathname === '/api/watch/switch') {
+        const body = await readJson(req) as { clientId: string; targetId: string; maxWidth?: number; activate?: boolean }
+        if (body.activate === true) await activateWatchedTarget(body.targetId)
+        return sendJson(res, 200, { ok: true, ...await manager.switchWatch(body) })
+      }
       if (req.method === 'POST' && url.pathname === '/api/watch/stop') return sendJson(res, 200, { ok: true, ...await manager.stopWatch(await readJson(req) as { clientId: string }) })
       if (req.method === 'POST' && url.pathname === '/api/input') {
         const body = await readJson(req)

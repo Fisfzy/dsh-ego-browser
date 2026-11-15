@@ -2232,14 +2232,27 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			this.backend = nextBackend; this.streamState = nextState; this.streamMessage = status.message || status.code || ''; this.streamGeneration = nextGeneration; this.streamMime = status.mime || this.streamMime
 			if (generationChanged || this.backend !== 'ffmpeg') this._destroyVideo()
 			this._recompute()
+			if (nextState === 'failed' && !this.captureRetryTimer && this.visible && !this.disposed) {
+				var self = this
+				this.captureRetryTimer = window.setTimeout(function () {
+					self.captureRetryTimer = null
+					if (self.disposed || !self.visible) return
+					// A failed target does not recover by itself. Drop the watch
+					// marker so the next spaces refresh starts a fresh capture on
+					// the current active target instead of keeping a frozen frame.
+					self.watchStarted = false
+					self.watchTargetId = null
+					self.refresh()
+				}, 1200)
+			}
 		}
-		LivePreviewController.prototype._syncWatch = function (targetId) {
+		LivePreviewController.prototype._syncWatch = function (targetId, activate) {
 			if (this.disposed || !this.visible || !targetId) return
 			var self = this
 			if (this.watchStopTimer) { window.clearTimeout(this.watchStopTimer); this.watchStopTimer = null }
 			var route = this.watchStarted ? WATCH_SWITCH_ROUTE : WATCH_START_ROUTE
-			if (this.watchStarted && this.watchTargetId === targetId) return
-			var body = { clientId: this.clientId, targetId: targetId, maxWidth: this.maxWidthHint }
+			if (this.watchStarted && this.watchTargetId === targetId && activate !== true) return
+			var body = { clientId: this.clientId, targetId: targetId, maxWidth: this.maxWidthHint, ...(activate === true ? { activate: true } : {}) }
 			var request = this._requestWatch(route, body)
 			if (!request) { this.watchRequest.finally(function () { self._syncWatch(targetId) }); return }
 			request.then(function (status) {
@@ -2663,7 +2676,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				this.pinned = null
 			}
 			this._recompute()
-			this._syncWatch(this.selectedTabId || this.currentActiveId)
+			this._syncWatch(this.selectedTabId || this.currentActiveId, true)
 		}
 		LivePreviewController.prototype.closeTab = function (targetId) {
 			var self = this

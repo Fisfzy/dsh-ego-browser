@@ -72,7 +72,18 @@ export class TargetSessions {
 
   async call(targetId: string, method: string, params: unknown = {}, timeoutMs = 6000): Promise<unknown> {
     const session = await this.ensure(targetId)
-    return this.cdp.call(method, params, session.sessionId, timeoutMs)
+    try {
+      return await this.cdp.call(method, params, session.sessionId, timeoutMs)
+    } catch (error) {
+      // Chrome destroys the old target/session when a page opens a new window or
+      // a watched tab closes. The cached session id then answers
+      // "Session with given id not found" forever. Drop it and retry once with a
+      // fresh attach instead of leaving the capture permanently failed.
+      if (!/session with given id not found/i.test((error as Error).message || '')) throw error
+      this.sessions.delete(targetId)
+      const fresh = await this.ensure(targetId)
+      return this.cdp.call(method, params, fresh.sessionId, timeoutMs)
+    }
   }
 
   async sendInput(targetId: string, payload: Record<string, unknown> | null): Promise<{ ok: boolean; error?: string }> {
@@ -197,15 +208,23 @@ export class CdpCaptureBackend {
 
   async start({ targetId, maxWidth }: { targetId: string; maxWidth?: number }): Promise<void> {
     await this.stop('restart')
-    const session = await this.sessions.ensure(targetId)
+    let session = await this.sessions.ensure(targetId)
     const config = this.getConfig()
     // The panel asks for roughly its own display width; never exceed the
     // configured ceiling (users who want full 1280 keep it via settings).
     const effectiveMaxWidth = Math.max(320, Math.min(config.cdpMaxWidth, maxWidth && maxWidth > 0 ? Math.round(maxWidth) : config.cdpMaxWidth))
+    const enableFocusEmulation = async () => {
+      // A background target that the user selected is not composited, so
+      // Page.startScreencast can emit zero frames even though the page is
+      // alive. Focus emulation makes it render without raising the OS window;
+      // the explicit panel switch separately activates the real tab.
+      await this.cdp.call('Emulation.setFocusEmulationEnabled', { enabled: true }, session.sessionId).catch(() => {})
+    }
+    await enableFocusEmulation()
     this.current = { targetId, sessionId: session.sessionId, lastFrameAt: 0, startedAt: this.now(), maxWidth: effectiveMaxWidth }
     this.onStatus({ backend: 'cdp', state: 'starting', targetId })
     try {
-      await this.cdp.call('Page.startScreencast', {
+      const startScreencast = () => this.cdp.call('Page.startScreencast', {
         format: 'jpeg',
         quality: config.cdpQuality,
         maxWidth: effectiveMaxWidth,
@@ -216,6 +235,16 @@ export class CdpCaptureBackend {
         // the work.
         everyNthFrame: Math.max(1, Math.min(8, Math.round(60 / Math.max(1, config.cdpFps)))),
       }, session.sessionId)
+      try {
+        await startScreencast()
+      } catch (error) {
+        if (!/session with given id not found/i.test((error as Error).message || '')) throw error
+        this.sessions.sessions.delete(targetId)
+        session = await this.sessions.ensure(targetId)
+        await enableFocusEmulation()
+        this.current.sessionId = session.sessionId
+        await startScreencast()
+      }
       this.onStatus({ backend: 'cdp', state: 'streaming', targetId, metrics: this.metrics })
       this.#scheduleBackstop()
       this.#scheduleViewportSync()

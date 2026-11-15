@@ -317,31 +317,55 @@ export async function waitForEndpoint(profileDir, { timeoutMs = 20000 } = {}) {
  */
 async function neutralizeZoom(profileDir) {
   const path = join(profileDir, "Default", "Preferences");
+  const disablePasswordManager = !/^(0|false|no|off)$/i.test(
+    String(process.env.EGO_LINUX_DISABLE_PASSWORD_MANAGER ?? "1").trim(),
+  );
+  let prefs = {};
+  let existed = false;
   try {
-    const prefs = JSON.parse(await readFile(path, "utf8"));
-    let changed = false;
-    for (const scope of ["partition", "profile"]) {
-      for (const key of ["default_zoom_level", "per_host_zoom_levels"]) {
-        if (prefs[scope]?.[key] && Object.keys(prefs[scope][key]).length > 0) {
-          prefs[scope][key] = {};
-          changed = true;
-        }
+    prefs = JSON.parse(await readFile(path, "utf8"));
+    existed = true;
+  } catch {
+    // A fresh profile has no Preferences file yet; create one when we need to
+    // write the password-manager policy.
+    prefs = {};
+  }
+  let changed = false;
+  for (const scope of ["partition", "profile"]) {
+    for (const key of ["default_zoom_level", "per_host_zoom_levels"]) {
+      if (prefs[scope]?.[key] && Object.keys(prefs[scope][key]).length > 0) {
+        prefs[scope][key] = {};
+        changed = true;
       }
     }
-    // --import-chrome-profile clones the user's real profile, so the agent
-    // browser ends up looking exactly like their everyday Chrome — same
-    // bookmarks, same theme, no way to tell which window an agent is driving.
-    // Naming the profile puts a label in Chrome's own toolbar chip.
-    if (prefs.profile?.name !== PROFILE_LABEL) {
-      prefs.profile = { ...prefs.profile, name: PROFILE_LABEL };
+  }
+  // --import-chrome-profile clones the user's real profile, so the agent
+  // browser ends up looking exactly like their everyday Chrome — same
+  // bookmarks, same theme, no way to tell which window an agent is driving.
+  // Naming the profile puts a label in Chrome's own toolbar chip.
+  if (prefs.profile?.name !== PROFILE_LABEL) {
+    prefs.profile = { ...prefs.profile, name: PROFILE_LABEL };
+    changed = true;
+  }
+  if (disablePasswordManager) {
+    // Save-password is a browser native bubble outside CDP; while it is up the
+    // page/screencast can stall and ego_* cannot dismiss it. The agent profile
+    // is dedicated, so disable the password manager there by default.
+    if (prefs.credentials_enable_service !== false) {
+      prefs.credentials_enable_service = false;
       changed = true;
     }
-    if (changed) await writeFile(path, JSON.stringify(prefs));
-    return changed;
-  } catch {
-    // A fresh profile has no Preferences file yet; nothing to reset.
-    return false;
+    if (prefs.profile?.password_manager_enabled !== false) {
+      prefs.profile = { ...prefs.profile, password_manager_enabled: false };
+      changed = true;
+    }
   }
+  if (changed || (!existed && disablePasswordManager)) {
+    await mkdir(join(profileDir, "Default"), { recursive: true });
+    await writeFile(path, JSON.stringify(prefs), { mode: 0o600 });
+    return true;
+  }
+  return false;
 }
 
 /**
