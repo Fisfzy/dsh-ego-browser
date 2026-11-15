@@ -2,6 +2,16 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.13.0] - 2026-11-15 — 回放与观察窗幽灵光标
+
+### 新增
+- **`ego_replay`**：读取 `trajectory` JSONL，按顺序通过同一套 ego_* 脚本构建器重新执行；返回逐步骤 ok/error，失败即停（可配置 `stopOnError:false`）。脱敏的 `ego_fill` / `ego_key` 文本跳过，不把 `<redacted>` 当真实输入；回放时忽略旧的 `snapshotId`，由回放过程重新观察。
+- **观察窗幽灵光标（P2-6）**：host 在 `ego_click` / `ego_hover` 后广播 SSE `cursor` 事件，前端在实时画面上叠加带渐隐动画的光标/点击波纹；不改变页面 DOM，也不影响截图。
+
+### 测试
+- 全量：**453 passed / 8 skipped**；typecheck/build 通过。
+- `ego_replay` 与幽灵光标需重启 DSH 后真实浏览器验证。
+
 ## [0.12.0] - 2026-11-15 — 轨迹记录 + 原生能力兜底
 
 ### 新增

@@ -39,7 +39,7 @@ import { chmodSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { importLoginCookies } from './login-import.ts'
 import { importLoginCookiesFromExtension } from './login-extension.ts'
@@ -48,12 +48,12 @@ import { installTui } from './tui/integration.ts'
 import { installBrowserPanel } from './tui/panel.ts'
 import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpaceGroups } from './worker-client.ts'
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
-import { initCastServer, markEgoToolCall, getLastEgoActivity } from './cast-server.ts'
+import { initCastServer, markEgoToolCall, getLastEgoActivity, publishCursor } from './cast-server.ts'
 import { EGO_HELP_DOCS, isEgoHelpVisible, renderEgoHelpList } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
 import { SnapshotCache, parseSnapshotContinuation, sliceSnapshotText } from './snapshot-diff.ts'
-import { recordTrajectory } from './trajectory.ts'
+import { recordTrajectory, trajectoryDir } from './trajectory.ts'
 import { HUMAN_CHECK_PROBE } from './captcha.ts'
 import { Config as ConfigSchema, resolveConfig, EGO_CLI_BLOCKED, CHROME_BLOCKED, filterArgs, validateEgoBinPath } from './config.ts'
 import { installEgoBrowserSettings } from './settings.ts'
@@ -108,6 +108,11 @@ const STATUS_RULES_SUMMARY = [
  * corresponds to a fresh runtime anyway).
  */
 const snapshotCache = new SnapshotCache(32)
+/**
+ * Tool-building specs registered by `registerActionTools`, used by ego_replay to
+ * re-execute a recorded call through the same script builder.
+ */
+const replayToolSpecs = new Map<string, EgoToolOptions>()
 /**
  * Ref-based actions that may opt into the snapshot generation guard. Passing
  * no snapshotId preserves the historical behavior for old callers.
@@ -1767,7 +1772,7 @@ export const clickScript = (opts: {
   const betweenTaps = taps > 1 ? `  await new Promise(r => setTimeout(r, 120))\n` : ''
   const pageInfo =
     `const pginfo = await page.info()\n` +
-    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${dbl}, touch: ${touch}, holdMs: ${holdMs}, page: pginfo }))\n`
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, double: ${dbl}, touch: ${touch}, holdMs: ${holdMs}, page: pginfo, cursor: __p }))\n`
 
   if (touch) {
     const hold = holdMs > 0 ? `  await new Promise(r => setTimeout(r, ${holdMs}))\n` : ''
@@ -1809,7 +1814,7 @@ export const clickScript = (opts: {
       : dbl
         ? `await page.mouse.dblclick(${x}, ${y})`
         : `await page.mouse.click(${x}, ${y})`
-  return `${useSpace(opts.space)}${ensureRealTab()}${action}\n${pageInfo}`
+  return `${useSpace(opts.space)}${ensureRealTab()}const __p = ${point}\n${action}\n${pageInfo}`
 }
 
 
@@ -2252,6 +2257,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   registerAuthFlush(ctx, cfg, reg)
   registerLoginImport(ctx, cfg, reg)
   registerActionTools(ctx, cfg, reg)
+  registerReplayTool(ctx, cfg, reg)
   registerHelpAndDoctor(ctx, cfg, reg)
   // Native operating rules (no skill): a system-prompt section that stays empty
   // until this process has seen an ego_* call. Feature-detected, so a host
@@ -2753,8 +2759,10 @@ function registerLoginImport(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
 }
 /** The structured action tools that drive `ego-browser nodejs`. */
 function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
-  const t = (opts: EgoToolOptions): ToolHandle => defineEgoTool(ctx, cfg, {
-    ...opts,
+  const t = (opts: EgoToolOptions): ToolHandle => {
+    replayToolSpecs.set(opts.name, opts)
+    return defineEgoTool(ctx, cfg, {
+      ...opts,
     afterExecute: (args, result) => {
       if (!result || (result as Record<string, unknown>).ok === false) return
       if (opts.name === 'ego_space_open') {
@@ -2765,8 +2773,22 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         cfg.spaceTracker.selected(args.space as string | number)
       }
       opts.afterExecute?.(args, result)
+      if (opts.name === 'ego_click' || opts.name === 'ego_hover') {
+        const value = result as { cursor?: { x?: unknown; y?: unknown }; page?: { w?: unknown; h?: unknown } } | null
+        const cursor = value?.cursor
+        if (cursor && typeof cursor.x === 'number' && typeof cursor.y === 'number') {
+          publishCursor({
+            x: cursor.x,
+            y: cursor.y,
+            ...(typeof value?.page?.w === 'number' ? { w: value.page.w } : {}),
+            ...(typeof value?.page?.h === 'number' ? { h: value.page.h } : {}),
+            kind: opts.name === 'ego_click' ? 'click' : 'hover',
+          })
+        }
+      }
     },
-  })
+    })
+  }
   reg(
     t({
       name: 'ego_space_open',
@@ -3530,10 +3552,11 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, reason: 'ego_hover: provide selector or both x and y' }))\n`
         return (
           `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
+          `const __p = ${sel !== '' ? `await page.elementCenter(${j(sel)})` : `{ x: ${args.x}, y: ${args.y} }`}\n` +
           (sel !== ''
-            ? `await page.locator(${j(sel)}).hover()\n`
-            : `await page.mouse.move(${args.x}, ${args.y})\n`) +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true }))\n`
+            ? `await page.mouse.move(__p.x, __p.y)\n`
+            : `await page.mouse.move(__p.x, __p.y)\n`) +
+          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, cursor: __p }))\n`
         )
       },
     }),
@@ -3959,6 +3982,114 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
     })(),
   )
 }
+
+// ── ego_replay: re-execute a recorded trajectory ───────────────────────────
+/**
+ * Re-execute a JSONL trajectory through the same script builders that produced
+ * it. This is deliberately a host-side tool rather than a shell script: only
+ * the running plugin has access to the registered builders and the current
+ * browser session. Redacted form/key text is skipped, never replayed literally.
+ */
+function registerReplayTool(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool: ToolHandle) => void): void {
+  reg(
+    defineTool({
+      name: 'ego_replay',
+      description:
+        'Replay a recorded trajectory JSONL through the current browser session. Requires trajectory recording to have been enabled. Steps are re-executed in order through the same ego_* builders; redacted ego_fill/ego_key steps are skipped. Returns per-step ok/error and a failure count.',
+      parameters: {
+        file: {
+          type: 'string',
+          description: 'Absolute JSONL path. Omit to use the current session trajectory.',
+        },
+        stopOnError: {
+          type: 'boolean',
+          description: 'Stop at the first failed step (default true).',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: true,
+          properties: { ok: { type: 'boolean', required: true } },
+        },
+        render: renderText,
+      },
+      timeoutMs: TOOL_TIMEOUT_MS,
+      execute: async (args: Record<string, unknown>, exec: ToolExec) =>
+        withEgoLock(() => observeEgoTool(cfg, 'ego_replay', args, async () => {
+          const sessionId = callingSessionId(exec)
+          pendingSessionId = sessionId
+          try {
+            const requested = str(args.file, '')
+            const safeSession = String(sessionId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'default'
+            const file = requested !== '' ? requested : join(trajectoryDir(), `${safeSession}.jsonl`)
+            let text = ''
+            try {
+              text = await readFile(file, 'utf8')
+            } catch {
+              return { ok: false, error: `ego_replay: cannot read ${file}` }
+            }
+            const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '')
+            const stopOnError = bool(args.stopOnError, true)
+            const steps: Array<Record<string, unknown>> = []
+            let failed = 0
+            let skipped = 0
+            for (const [index, line] of lines.entries()) {
+              let row: Record<string, unknown>
+              try {
+                row = JSON.parse(line) as Record<string, unknown>
+              } catch {
+                failed++
+                steps.push({ index: index + 1, ok: false, error: 'invalid JSON' })
+                if (stopOnError) break
+                continue
+              }
+              const tool = typeof row.tool === 'string' ? row.tool : ''
+              const rawArgs = row.args
+              const stepArgs = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
+                ? rawArgs as Record<string, unknown>
+                : {}
+              const hasRedacted = Object.values(stepArgs).some((value) => value === '<redacted>')
+              if ((tool === 'ego_fill' || tool === 'ego_key') && hasRedacted) {
+                skipped++
+                steps.push({ index: index + 1, tool, ok: null, skipped: 'redacted text' })
+                continue
+              }
+              const spec = replayToolSpecs.get(tool)
+              if (!spec) {
+                failed++
+                steps.push({ index: index + 1, tool, ok: false, error: 'tool is not replayable' })
+                if (stopOnError) break
+                continue
+              }
+              const result = await runWithStaleSpaceRetry(ctx, cfg, exec, () => {
+                // The recorded snapshotId belongs to the original run. Replay
+                // itself takes new snapshots, so forward the action without the
+                // old generation guard (the tool still re-observes normally).
+                const replayArgs = { ...stepArgs }
+                delete replayArgs.snapshotId
+                return spec.buildScript(replayArgs)
+              })
+              const ok = result.ok
+              if (!ok) failed++
+              steps.push({
+                index: index + 1,
+                tool,
+                ok,
+                ...(ok ? {} : { error: result.error ?? 'failed' }),
+              })
+              if (!ok && stopOnError) break
+            }
+            return { ok: true, file, replayed: steps.length, failed, skipped, steps }
+          } finally {
+            pendingSessionId = undefined
+          }
+        })),
+      presentCall: (args: unknown) => ({ card: 'generic', title: toolCallTitle('ego_replay', args), kind: 'other', rawInput: null }),
+    } as unknown as DefineToolOpts),
+  )
+}
+
 
 // ── ego_help: built-in tool / category index ───────────────────────────────
 /** Register ego_help / ego_doctor / ego_script. */

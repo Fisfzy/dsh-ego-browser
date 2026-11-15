@@ -45,7 +45,7 @@ export const EGO_HELP_DOCS: Record<string, EgoHelpEntry> = {
   tools: {
     mode: 'inline',
     text:
-      '工具清单: ego_status, ego_space_open, ego_space_close, ego_snapshot, ego_verify, ego_navigate, ego_tabs, ego_click(+double), ego_fill, ego_js, ego_cdp, ego_screenshot(+selector), ego_page_info, ego_wait, ego_wait_for_selector, ego_wait_for_url, ego_wait_for_response, ego_wait_for_human, ego_key(+text/type), ego_hover, ego_read_element, ego_select, ego_drag, ego_scroll, ego_upload, ego_check, ego_dialog, ego_download, ego_http, ego_captcha, ego_auth_flush, ego_login_import, ego_help, ego_doctor, ego_cli, ego_script。',
+      '工具清单: ego_status, ego_space_open, ego_space_close, ego_snapshot, ego_verify, ego_navigate, ego_tabs, ego_click(+double), ego_fill, ego_js, ego_cdp, ego_screenshot(+selector), ego_page_info, ego_wait, ego_wait_for_selector, ego_wait_for_url, ego_wait_for_response, ego_wait_for_human, ego_key(+text/type), ego_hover, ego_read_element, ego_select, ego_drag, ego_scroll, ego_upload, ego_check, ego_dialog, ego_download, ego_http, ego_captcha, ego_auth_flush, ego_login_import, ego_replay, ego_help, ego_doctor, ego_cli, ego_script。',
   },
   navigate: {
     mode: 'lookup',
