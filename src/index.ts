@@ -2773,7 +2773,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         cfg.spaceTracker.selected(args.space as string | number)
       }
       opts.afterExecute?.(args, result)
-      if (opts.name === 'ego_click' || opts.name === 'ego_hover') {
+      if (opts.name === 'ego_click') {
         const value = result as { cursor?: { x?: unknown; y?: unknown }; page?: { w?: unknown; h?: unknown } } | null
         const cursor = value?.cursor
         if (cursor && typeof cursor.x === 'number' && typeof cursor.y === 'number') {
@@ -2782,7 +2782,7 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
             y: cursor.y,
             ...(typeof value?.page?.w === 'number' ? { w: value.page.w } : {}),
             ...(typeof value?.page?.h === 'number' ? { h: value.page.h } : {}),
-            kind: opts.name === 'ego_click' ? 'click' : 'hover',
+            kind: 'click',
           })
         }
       }
