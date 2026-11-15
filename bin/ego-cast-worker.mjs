@@ -5429,6 +5429,34 @@ async function activateWatchedTarget(targetId) {
 	await active.cdp.call("Target.activateTarget", { targetId }).catch(() => {});
 	await active.sessions.call(targetId, "Page.bringToFront").catch(() => {});
 }
+/** Read or move through the page's navigation history. */
+async function navigationHistory(targetId, action) {
+	if (!active) throw new Error("no live browser");
+	const history = await active.sessions.call(targetId, "Page.getNavigationHistory");
+	const entries = Array.isArray(history.entries) ? history.entries : [];
+	const currentIndex = typeof history.currentIndex === "number" ? history.currentIndex : -1;
+	if (action === "back" || action === "forward") {
+		const nextIndex = currentIndex + (action === "back" ? -1 : 1);
+		const entry = entries[nextIndex];
+		if (!entry || typeof entry.id !== "number") throw new Error(`cannot go ${action}: no history entry`);
+		await active.sessions.call(targetId, "Page.navigateToHistoryEntry", { entryId: entry.id });
+		return {
+			ok: true,
+			action,
+			currentIndex: nextIndex
+		};
+	}
+	return {
+		ok: true,
+		currentIndex,
+		canGoBack: currentIndex > 0,
+		canGoForward: currentIndex >= 0 && currentIndex < entries.length - 1,
+		entries: entries.slice(0, 50).map((entry) => ({
+			url: entry.url || "",
+			title: entry.title || ""
+		}))
+	};
+}
 async function activeTargetId() {
 	if (!active?.port) return currentStatus.targetId || null;
 	try {
@@ -5902,6 +5930,33 @@ async function main() {
 					return sendJson(res, 503, {
 						ok: false,
 						code: "navigate-failed",
+						error: error.message || String(error)
+					});
+				}
+			}
+			if (req.method === "POST" && url.pathname === "/api/history") {
+				if (!active) return sendJson(res, 409, {
+					ok: false,
+					code: "browser-disconnected",
+					error: "no live browser"
+				});
+				const body = await readJson(req);
+				const targetId = typeof body.targetId === "string" && body.targetId ? body.targetId : await activeTargetId();
+				if (!targetId) return sendJson(res, 409, {
+					ok: false,
+					error: "no active target"
+				});
+				if (!(await listTargets()).some((target) => target.targetId === targetId)) return sendJson(res, 409, {
+					ok: false,
+					code: "target-stale",
+					error: "target is no longer available"
+				});
+				try {
+					return sendJson(res, 200, await navigationHistory(targetId, body.action === "back" || body.action === "forward" ? body.action : void 0));
+				} catch (error) {
+					return sendJson(res, 503, {
+						ok: false,
+						code: "history-failed",
 						error: error.message || String(error)
 					});
 				}

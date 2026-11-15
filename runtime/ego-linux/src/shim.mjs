@@ -72,6 +72,12 @@ export async function createEgoShim({ headless = false } = {}) {
     // --- Tabs ---------------------------------------------------------------
     listTabs: tabs.listTabs,
     createTab: (url) => taskSpaces.createTabInSelectedSpace(tabs, url),
+  createWindow: (url) => {
+    // A panel user explicitly asked for a new window; let the runtime's
+    // activation guard through for this script process only.
+    process.env.EGO_LINUX_RAISE_WINDOW = "1";
+    return taskSpaces.createTabInSelectedSpace(tabs, url, { newWindow: true });
+  },
 
     // --- Observation --------------------------------------------------------
     // Reading is most of what an agent does, and none of it dispatches pointer

@@ -269,6 +269,31 @@ async function activateWatchedTarget(targetId: string): Promise<void> {
   await active.sessions.call(targetId, 'Page.bringToFront').catch(() => {})
 }
 
+/** Read or move through the page's navigation history. */
+async function navigationHistory(targetId: string, action?: 'back' | 'forward'): Promise<Record<string, unknown>> {
+  if (!active) throw new Error('no live browser')
+  const history = await active.sessions.call(targetId, 'Page.getNavigationHistory') as {
+    currentIndex?: number
+    entries?: Array<{ id?: number; url?: string; title?: string }>
+  }
+  const entries = Array.isArray(history.entries) ? history.entries : []
+  const currentIndex = typeof history.currentIndex === 'number' ? history.currentIndex : -1
+  if (action === 'back' || action === 'forward') {
+    const nextIndex = currentIndex + (action === 'back' ? -1 : 1)
+    const entry = entries[nextIndex]
+    if (!entry || typeof entry.id !== 'number') throw new Error(`cannot go ${action}: no history entry`)
+    await active.sessions.call(targetId, 'Page.navigateToHistoryEntry', { entryId: entry.id })
+    return { ok: true, action, currentIndex: nextIndex }
+  }
+  return {
+    ok: true,
+    currentIndex,
+    canGoBack: currentIndex > 0,
+    canGoForward: currentIndex >= 0 && currentIndex < entries.length - 1,
+    entries: entries.slice(0, 50).map((entry) => ({ url: entry.url || '', title: entry.title || '' })),
+  }
+}
+
 async function activeTargetId(): Promise<string | null> {
   if (!active?.port) return (currentStatus.targetId as string | null) || null
   try {
@@ -626,6 +651,22 @@ async function main(): Promise<void> {
           return sendJson(res, 200, { ok: true, targetId, ...(body.reload === true ? { reloaded: true } : { navigated: true }) })
         } catch (error) {
           return sendJson(res, 503, { ok: false, code: 'navigate-failed', error: (error as Error).message || String(error) })
+        }
+      }
+      if (req.method === 'POST' && url.pathname === '/api/history') {
+        if (!active) return sendJson(res, 409, { ok: false, code: 'browser-disconnected', error: 'no live browser' })
+        const body = await readJson(req)
+        const targetId = typeof body.targetId === 'string' && body.targetId ? body.targetId : await activeTargetId()
+        if (!targetId) return sendJson(res, 409, { ok: false, error: 'no active target' })
+        const targets = await listTargets()
+        if (!targets.some((target) => target.targetId === targetId)) {
+          return sendJson(res, 409, { ok: false, code: 'target-stale', error: 'target is no longer available' })
+        }
+        try {
+          const action = body.action === 'back' || body.action === 'forward' ? body.action : undefined
+          return sendJson(res, 200, await navigationHistory(targetId, action))
+        } catch (error) {
+          return sendJson(res, 503, { ok: false, code: 'history-failed', error: (error as Error).message || String(error) })
         }
       }
       if (req.method === 'POST' && url.pathname === '/api/close') { const { targetId } = await readJson(req); if (!active || !targetId) return sendJson(res, 400, { ok: false, error: 'targetId required' }); await active.cdp.call('Target.closeTarget', { targetId }); return sendJson(res, 200, { ok: true }) }

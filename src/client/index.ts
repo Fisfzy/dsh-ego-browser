@@ -238,6 +238,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			chromeLoginClose: 'Close',
 			noUrl: 'No URL to open',
 			closeTab: 'Close tab',
+			newWindow: 'New window',
+			back: 'Back',
+			forward: 'Forward',
+			go: 'Go',
 			newTab: '(new tab)',
 			history: 'Browsing history',
 			historyHide: 'Hide history',
@@ -320,6 +324,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			chromeLoginClose: '关闭',
 			noUrl: '无可打开的地址',
 			closeTab: '关闭标签',
+			newWindow: '新建窗口',
+			back: '后退',
+			forward: '前进',
+			go: '访问',
 			newTab: '(新标签页)',
 			history: '历史浏览轨迹',
 			historyHide: '收起历史轨迹',
@@ -1721,6 +1729,32 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
   border-radius: 50%; font-size: var(--ego-fs-meta); opacity: .5; margin-left: 1px;
 }
 .dsh-ego-side-tabclose:hover { background: var(--ego-hover); color: var(--ego-danger); opacity: 1; }
+.dsh-ego-side-newtab {
+  flex: 0 0 auto; width: 24px; height: 24px; margin: 2px 0 3px auto;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ego-text-2);
+  font-size: 19px; line-height: 20px; cursor: pointer; position: sticky; right: 0;
+}
+.dsh-ego-side-newtab:hover { background: var(--ego-hover); color: var(--ego-text); }
+.dsh-ego-side-nav {
+  display: flex; align-items: center; gap: 4px; padding: 5px 10px;
+  background: var(--ego-toolbar); border-bottom: 1px solid var(--ego-border-soft);
+  flex-shrink: 0;
+}
+.dsh-ego-side-navbtn {
+  flex: 0 0 auto; min-width: 26px; height: 28px; padding: 0 6px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+  color: var(--ego-text-2); font-size: 17px; cursor: pointer;
+}
+.dsh-ego-side-navbtn:hover:not(:disabled) { background: var(--ego-hover); color: var(--ego-text); }
+.dsh-ego-side-navbtn:disabled { opacity: .35; cursor: default; }
+.dsh-ego-side-address {
+  flex: 1 1 auto; min-width: 60px; height: 28px; padding: 0 9px;
+  border: 1px solid var(--ego-border-soft); border-radius: 7px;
+  background: var(--ego-surface); color: var(--ego-text);
+  font: inherit; font-size: var(--ego-fs-meta); outline: none;
+}
+.dsh-ego-side-address:focus { border-color: var(--ego-accent); }
+.dsh-ego-side-go { min-width: 34px; font-size: var(--ego-fs-meta); color: var(--ego-accent); }
 
 /* ---- main body ---- */
 .dsh-ego-side-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; background: var(--ego-surface); display: flex; flex-direction: column; }
@@ -2869,11 +2903,20 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			// Calling it with no args → "w is not a function" (w is the minified
 			// selector param). Pass identity selector to get the whole snapshot.
 			var state = useSnapshotRef.current(function (s) { return s })
+			var addressState = React.useState('')
+			var address = addressState[0]
+			var setAddress = addressState[1]
+			var addressEditingRef = React.useRef(false)
+			React.useEffect(function () {
+				if (addressEditingRef.current) return
+				setAddress((state.currentSpace && state.currentSpace.url) || '')
+			}, [state.currentTargetId, state.currentSpace && state.currentSpace.url])
 
 			var imgRef = React.useRef(null)
 			var videoRef = React.useRef(null)
 			var stageRef = React.useRef(null)
 			var rootRef = React.useRef(null)
+			var addressInputRef = React.useRef(null)
 			// Size-sync toggle: unlocked, the live image box drives the REAL agent
 			// browser window size (via the worker's CDP window bounds route).
 			var sizeSyncRef = React.useRef(null)
@@ -3058,12 +3101,56 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 					})
 				}).catch(function () { setSizeNotice(wt('actionFailed')) })
 			}
-			var openUrlInPanel = function () {
-				var entered = window.prompt(wt('openUrlPrompt'), (currentSpace && currentSpace.url) || 'https://')
-				if (!entered) return
-				var url = entered.trim()
+			var normalizeAddress = function (value) {
+				var url = String(value || '').trim()
+				if (url === '') return ''
 				if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url
-				panelNavigate(url, false)
+				if (!/^(https?:\/\/|about:blank$)/i.test(url)) return ''
+				return url
+			}
+			var openNewWindow = function (url) {
+				setSizeNotice('')
+				fetchEgo('/api/ego/open-window', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ url: url || 'about:blank' }),
+				}).then(function (r) {
+					return r.json().catch(function () { return null }).then(function (parsed) {
+						if (parsed && parsed.ok === true && parsed.targetId) {
+							setSizeNotice('')
+							controller._syncWatch(parsed.targetId, true)
+							controller.refresh()
+						} else {
+							setSizeNotice((parsed && parsed.error) || wt('actionFailed'))
+						}
+						return parsed
+					})
+				}).catch(function () { setSizeNotice(wt('actionFailed')) })
+			}
+			var submitAddress = function () {
+				var url = normalizeAddress(address)
+				if (url === '') { setSizeNotice(wt('noUrl')); return }
+				addressEditingRef.current = false
+				if (!currentSpace) openNewWindow(url)
+				else panelNavigate(url, false)
+			}
+			var historyAction = function (action) {
+				var targetId = currentSpace && currentSpace.targetId
+				if (!targetId) return
+				setSizeNotice('')
+				fetchEgo('/api/ego/history', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ targetId: targetId, action: action }),
+				}).then(function (r) {
+					return r.json().catch(function () { return null }).then(function (parsed) {
+						if (parsed && parsed.ok === true) { setSizeNotice(''); controller.refresh() }
+						else setSizeNotice((parsed && parsed.error) || wt('actionFailed'))
+					})
+				}).catch(function () { setSizeNotice(wt('actionFailed')) })
+			}
+			var openUrlInPanel = function () {
+				if (addressInputRef.current) addressInputRef.current.focus()
 			}
 			var maximizeWindow = function () {
 				var targetId = currentSpace && currentSpace.targetId
@@ -3373,27 +3460,67 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			}
 
 			// Tab strip
-			var tabsEl = state.spaces.length > 0
-				? h('div', { className: 'dsh-ego-side-tabs' },
-					state.spaces.map(function (s) {
-						var isActive = s.targetId === state.selectedTabId || (state.selectedTabId === null && s.targetId === state.currentTargetId)
-						return h('div', {
-							key: s.targetId,
-							className: 'dsh-ego-side-tab' + (isActive ? ' active' : ''),
-							title: s.url || '',
-							onClick: function () { controller.selectTab(s.targetId) },
-						},
-							h('span', { className: 'dsh-ego-side-tabdot' }),
-							h('span', { className: 'dsh-ego-side-tabtxt' }, s.title || s.url || wt('newTab')),
-							h('span', {
-								className: 'dsh-ego-side-tabclose',
-								title: wt('closeTab'),
-								onClick: function (e) { e.stopPropagation(); controller.closeTab(s.targetId) },
-							}, '×')
-						)
-					})
-				)
-				: null
+			var tabsEl = h('div', { className: 'dsh-ego-side-tabs' },
+				state.spaces.map(function (s) {
+					var isActive = s.targetId === state.selectedTabId || (state.selectedTabId === null && s.targetId === state.currentTargetId)
+					return h('div', {
+						key: s.targetId,
+						className: 'dsh-ego-side-tab' + (isActive ? ' active' : ''),
+						title: s.url || '',
+						onClick: function () { controller.selectTab(s.targetId) },
+					},
+						h('span', { className: 'dsh-ego-side-tabdot' }),
+						h('span', { className: 'dsh-ego-side-tabtxt' }, s.title || s.url || wt('newTab')),
+						h('span', {
+							className: 'dsh-ego-side-tabclose',
+							title: wt('closeTab'),
+							onClick: function (e) { e.stopPropagation(); controller.closeTab(s.targetId) },
+						}, '×')
+					)
+				}),
+				h('button', {
+					className: 'dsh-ego-side-newtab',
+					type: 'button',
+					title: wt('newWindow'),
+					onClick: function () { openNewWindow('about:blank') },
+				}, '+')
+			)
+
+			// Basic browser controls: history + editable address bar.
+			var navBar = h('div', { className: 'dsh-ego-side-nav' },
+				h('button', {
+					className: 'dsh-ego-side-navbtn', type: 'button', title: wt('back'),
+					disabled: !state.currentSpace && !state.currentTargetId,
+					onClick: function () { historyAction('back') },
+				}, '‹'),
+				h('button', {
+					className: 'dsh-ego-side-navbtn', type: 'button', title: wt('forward'),
+					disabled: !state.currentSpace && !state.currentTargetId,
+					onClick: function () { historyAction('forward') },
+				}, '›'),
+				h('button', {
+					className: 'dsh-ego-side-navbtn', type: 'button', title: wt('refreshHint'),
+					disabled: !state.currentSpace && !state.currentTargetId,
+					onClick: function () { panelNavigate('', true) },
+				}, icon(ICON_REFRESH)),
+				h('input', {
+					ref: addressInputRef,
+					className: 'dsh-ego-side-address',
+					type: 'text',
+					spellCheck: false,
+					autoComplete: 'off',
+					placeholder: 'about:blank',
+					value: address,
+					onFocus: function () { addressEditingRef.current = true },
+					onBlur: function () { addressEditingRef.current = false },
+					onChange: function (e) { setAddress(e.target.value) },
+					onKeyDown: function (e) { if (e.key === 'Enter') { e.preventDefault(); submitAddress() } },
+				}),
+				h('button', {
+					className: 'dsh-ego-side-navbtn dsh-ego-side-go', type: 'button', title: wt('go'),
+					onClick: submitAddress,
+				}, wt('go'))
+			)
 
 			// Main live view
 			var body
@@ -3483,6 +3610,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				header,
 				guides,
 				tabsEl,
+				navBar,
 				currentSpace
 					? h('div', { className: 'dsh-ego-side-pageinfo dsh-ego-side-pageinfo-tabs' },
 						h('span', { className: 'dsh-ego-side-livetitle', title: currentSpace.title || currentSpace.url || '' }, currentSpace.title || currentSpace.url || wt('newTab')),

@@ -2,6 +2,17 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.14.0] - 2026-11-15 — 侧栏基础浏览器
+
+### 新增
+- **标签栏 `+` 新建独立窗口**：放在标签栏最右侧，点击直接创建 `about:blank` 的独立 Chrome 窗口并激活；不做菜单，不额外询问 URL。
+- **常驻地址栏**：显示当前页面 URL，可直接编辑、Enter/Go 访问；没有页面时输入 URL 会先创建窗口再访问。
+- **前进/后退/刷新**：新增 `/api/ego/history`，worker 通过 `Page.getNavigationHistory` / `Page.navigateToHistoryEntry` 执行。
+- **用户操作激活真实 Chrome**：新建窗口/切换标签/面板导航走显式激活；模型 `ego_*` 仍保持 #99 不抢前台。
+
+### 测试
+- 新增 `tests/panel-browser-controls.test.ts`；全量 **458 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.13.1] - 2026-11-15 — 观察窗/截图稳定性修复
 
 ### 修复

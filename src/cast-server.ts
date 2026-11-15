@@ -39,6 +39,8 @@ export const EGO_RAISE_ROUTE = '/api/ego/raise'
 export const EGO_LOGIN_IMPORT_ROUTE = '/api/ego/login-import'
 export const EGO_INPUT_ROUTE = '/api/ego/input'
 export const EGO_NAVIGATE_ROUTE = '/api/ego/navigate'
+export const EGO_OPEN_WINDOW_ROUTE = '/api/ego/open-window'
+export const EGO_HISTORY_ROUTE = '/api/ego/history'
 export const EGO_WINDOW_SIZE_ROUTE = '/api/ego/window-size'
 export const EGO_WATCH_START_ROUTE = '/api/ego/watch/start'
 export const EGO_WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
@@ -389,6 +391,7 @@ export function initCastServer(
   openAgentWindow: () => Promise<{ ok: boolean; error?: string }> = async () => ({ ok: false, error: 'raise not supported by this host build' }),
   loginImport: (opts: LoginImportOptions) => Promise<LoginImportReport> = async () => ({ ok: false, error: 'login import not supported by this host build' }),
   getExecutorStatus: () => Record<string, unknown> = () => ({}),
+  openPanelWindow: (url: string) => Promise<{ ok: boolean; targetId?: string; error?: string }> = async () => ({ ok: false, error: 'new window not supported by this host build' }),
 ): void {
   const ensureWorker = makeEnsureWorker(ctx, cfg, ffmpegManager)
   const pushConfig = makePushConfig(ensureWorker, ffmpegManager)
@@ -556,6 +559,40 @@ export function initCastServer(
       const result = await proxyPost(port, '/api/navigate', body)
       if (!result) return sendJson(res, 502, { ok: false, error: 'navigate worker unavailable' })
       return sendJson(res, result.status, result.body)
+    },
+  })
+
+  // POST /api/ego/history — panel back/forward and the current history state.
+  const disposeHistory = server.register({
+    kind: 'exact',
+    path: EGO_HISTORY_ROUTE,
+    handler: async (reqRaw: unknown, resRaw: unknown) => {
+      const req = reqRaw as IncomingMessage
+      const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
+      const port = await ensureWorker()
+      if (port === null) return sendJson(res, 400, { ok: false, error: 'no live agent browser' })
+      const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
+      const result = await proxyPost(port, '/api/history', body)
+      if (!result) return sendJson(res, 502, { ok: false, error: 'history worker unavailable' })
+      return sendJson(res, result.status, result.body)
+    },
+  })
+
+  // POST /api/ego/open-window — the `+` button next to the tab strip. This is
+  // a user-initiated action, so unlike model tools it may raise a real Chrome
+  // window; the host builds it inside the selected task space.
+  const disposeOpenWindow = server.register({
+    kind: 'exact',
+    path: EGO_OPEN_WINDOW_ROUTE,
+    handler: async (reqRaw: unknown, resRaw: unknown) => {
+      const req = reqRaw as IncomingMessage
+      const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
+      const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
+      const url = typeof body.url === 'string' ? body.url.trim() : ''
+      const result = await openPanelWindow(url === '' ? 'about:blank' : url)
+      return sendJson(res, result.ok ? 200 : 400, result)
     },
   })
 
@@ -815,6 +852,8 @@ export function initCastServer(
     try { disposeStream() } catch { /* ignore */ }
     try { disposeInput() } catch { /* ignore */ }
     try { disposeNavigate() } catch { /* ignore */ }
+    try { disposeHistory() } catch { /* ignore */ }
+    try { disposeOpenWindow() } catch { /* ignore */ }
     try { disposeWindowSize() } catch { /* ignore */ }
     try { disposeExecutor() } catch { /* ignore */ }
     try { disposeLoginBridge.forEach((dispose) => dispose()) } catch { /* ignore */ }

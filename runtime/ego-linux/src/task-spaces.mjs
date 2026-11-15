@@ -716,7 +716,7 @@ export function createTaskSpacesApi(cdp) {
       };
     },
 
-    async createTabInSelectedSpace(tabs, url) {
+    async createTabInSelectedSpace(tabs, url, options = {}) {
       const state = await readState();
       const space = state.spaces.find(
         (candidate) => candidate.id === effectiveSelectedId(state),
@@ -731,7 +731,7 @@ export function createTaskSpacesApi(cdp) {
       // about:blank for a moment during every navigation, so matching on the url
       // alone would hijack a tab that is already carrying work. "Never held a
       // page" is only true of a space that has not started yet.
-      const anchor = space && !space.lastContentAt ? await blankAnchor(space) : null;
+      const anchor = space && !space.lastContentAt && !options.newWindow ? await blankAnchor(space) : null;
       if (anchor && url && url !== "about:blank") {
         const { sessionId } = await cdp.call("Target.attachToTarget", {
           targetId: anchor,
@@ -746,7 +746,7 @@ export function createTaskSpacesApi(cdp) {
       // space's jar rather than the first tab being isolated and the rest not.
       let result;
       try {
-        result = await tabs.createTab(url, space?.browserContextId);
+        result = await tabs.createTab(url, space?.browserContextId, options);
       } catch (error) {
         // Browser contexts die with the browser, but the selected space's id
         // outlives it in the state file. Chrome then rejects the create with
@@ -759,7 +759,7 @@ export function createTaskSpacesApi(cdp) {
         }
         space.browserContextId = null;
         space.restored = true;
-        result = await tabs.createTab(url);
+        result = await tabs.createTab(url, undefined, options);
       }
       if (space && result.targetId) {
         space.targetIds.push(result.targetId);

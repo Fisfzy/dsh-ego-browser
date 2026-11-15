@@ -746,8 +746,38 @@ async function openAgentWindow(ctx: EgoContext, cfg: EgoRuntimeConfig): Promise<
   }
 }
 
+/** Open a new real Chrome window for the watch panel's `+` button. */
+async function openPanelWindow(
+  ctx: EgoContext,
+  cfg: EgoRuntimeConfig,
+  url: string,
+): Promise<{ ok: boolean; targetId?: string; error?: string }> {
+  const wanted = url.trim() === '' ? 'about:blank' : url.trim()
+  if (!/^(https?:\/\/|about:blank$)/i.test(wanted)) {
+    return { ok: false, error: 'only http(s) URLs and about:blank are allowed' }
+  }
+  try {
+    const result = await runWithStaleSpaceRetry(ctx, cfg, {}, () =>
+      `${useSpace(str(cfg.defaultSpace, DEFAULT_SPACE))}` +
+      `const __created = await ego.createWindow(${j(wanted)})\n` +
+      `console.log('${SENTINEL}' + JSON.stringify({ ok: true, targetId: __created && __created.targetId ? __created.targetId : null }))\n`,
+    )
+    if (!result.ok) return { ok: false, error: result.error ?? 'createWindow failed' }
+    const payload = result.value as { targetId?: unknown } | null
+    const targetId = payload && typeof payload.targetId === 'string' ? payload.targetId : ''
+    if (targetId === '') return { ok: false, error: 'createWindow returned no targetId' }
+    return { ok: true, targetId }
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message || err) }
+  }
+}
+
+/** @internal exposed for the panel route tests */
+export { openPanelWindow }
+
 /** @internal exported for tests */
-export async function runWithStaleSpaceRetry(  ctx: EgoContext,
+export async function runWithStaleSpaceRetry(
+  ctx: EgoContext,
   cfg: EgoRuntimeConfig,
   exec: ExecLike,
   buildScript: () => string,
@@ -2298,6 +2328,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
         () => openAgentWindow(ctx, cfg),
         (opts) => importLoginCookies(opts, { subprocess: ctx.subprocess }),
         () => residentDiagnostics(cfg) as unknown as Record<string, unknown>,
+        (url) => openPanelWindow(ctx, cfg, url),
       )
     } catch (err) {
       ctx.logger?.warn?.(
