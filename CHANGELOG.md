@@ -2,6 +2,17 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.13.1] - 2026-11-15 — 观察窗/截图稳定性修复
+
+### 修复
+- **新窗口/后台 target 冻结**：capture session 启用 `Emulation.setFocusEmulationEnabled`，隐藏 target 也能产生 screencast 帧；实测后台动画页 3 秒 99 帧。
+- **侧栏切换不跟随真实 Chrome**：用户点击侧栏 tab 时传 `activate:true`，worker 直连 CDP 执行 `Target.activateTarget` + `Page.bringToFront`；模型 `ego_*` 仍保持 #99 不抢前台。
+- **capture 会话失效不恢复**：`Session with given id not found` 时清除 session、重新 attach、重试一次；client 收到 failed 时重建 watch lease。
+- **保存密码气泡卡住 screencast**：agent profile 冷启动默认关闭 Chrome 密码管理器（`credentials_enable_service=false`、`profile.password_manager_enabled=false`）；`EGO_LINUX_DISABLE_PASSWORD_MANAGER=0` 可恢复。
+
+### 测试
+- 新增 `tests/capture-recovery.test.ts`；全量 **455 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.13.0] - 2026-11-15 — 回放与观察窗幽灵光标
 
 ### 新增
