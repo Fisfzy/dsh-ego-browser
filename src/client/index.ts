@@ -1913,13 +1913,15 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
   border-radius: 50%; border: 2px solid #4da3ff; pointer-events: none;
   box-shadow: 0 0 0 4px rgba(77, 163, 255, .14);
   background: rgba(77, 163, 255, .18);
-  transition: left .12s linear, top .12s linear;
-  animation: dsh-ego-ghost-pulse .55s ease-out;
+  will-change: transform, opacity;
+  contain: layout paint;
+  animation: dsh-ego-ghost-pulse 1.6s ease-out forwards;
 }
 .dsh-ego-side-ghost.hover { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-color: #8fb9ff; }
 @keyframes dsh-ego-ghost-pulse {
-  from { transform: scale(.55); opacity: .95; }
-  to { transform: scale(1.15); opacity: .25; }
+  0% { transform: scale(.55); opacity: .95; }
+  22% { transform: scale(1); opacity: .9; }
+  100% { transform: scale(1.35); opacity: 0; }
 }
 .dsh-ego-side-liveimg-semantic { opacity: 0; }
 .dsh-ego-side-livebuf {
@@ -2435,6 +2437,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				left: left === null ? (vw ? Math.max(0, Math.min(1, payload.x / vw)) * 100 : 50) : left,
 				top: top === null ? (vh ? Math.max(0, Math.min(1, payload.y / vh)) * 100 : 50) : top,
 				kind: payload.kind === 'click' ? 'click' : 'hover',
+				seq: seq,
 			}
 			this.store.update(function (s) { s.ghost = ghost })
 			window.setTimeout(function () {
@@ -3415,7 +3418,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 						h('img', { ref: bindLiveBufB.current, key: 'livebuf-b', className: 'dsh-ego-side-liveimg dsh-ego-side-livebuf', alt: '', draggable: false, decoding: 'async' }),
 						state.ghost
 							? h('div', {
-								key: 'ghost',
+								key: 'ghost-' + state.ghost.seq,
 								className: 'dsh-ego-side-ghost' + (state.ghost.kind === 'hover' ? ' hover' : ''),
 								style: {
 									left: state.ghost.left + '%',
