@@ -97,7 +97,7 @@ const TOOL_TIMEOUT_MS = 120_000
 /** Three-line onboarding shown by ego_status; the full text lives in ego_help. */
 const STATUS_RULES_SUMMARY = [
   '先观察再动作：ego_snapshot（ref 只对本次快照有效）/ ego_tabs list。',
-  '每次只做一个会改变页面的动作，之后用 ego_page_info / ego_read_element 确认效果。',
+  '每次只做一个会改变页面的动作，之后用 ego_verify 断言预期，或 ego_page_info / ego_read_element 确认效果。',
   '超时或找不到目标时重新快照，不要原样重试；失败按返回的 retry / hint 处理。',
 ].join('\n')
 /**
@@ -107,6 +107,18 @@ const STATUS_RULES_SUMMARY = [
  * corresponds to a fresh runtime anyway).
  */
 const snapshotCache = new SnapshotCache(32)
+/**
+ * Ref-based actions that may opt into the snapshot generation guard. Passing
+ * no snapshotId preserves the historical behavior for old callers.
+ */
+const SNAPSHOT_GUARDED_ACTIONS = new Set([
+  'ego_click',
+  'ego_fill',
+  'ego_check',
+  'ego_select',
+  'ego_hover',
+  'ego_drag',
+])
 /** Whether the host accepted the native rules prompt section. */
 let rulesSectionRegistered = false
 /**
@@ -121,7 +133,7 @@ let attachmentsStore: AttachmentStoreLike | undefined
  * exactly when a repeated action would otherwise be tempting.
  */
 const ACTION_SUCCESS_HINT =
-  '动作已执行。确认效果优先用 ego_page_info / ego_read_element；需要新定位再 ego_snapshot；若预期变化未出现，不要重复同一动作。'
+  '动作已执行。预期变化优先用 ego_verify 断言；否则用 ego_page_info / ego_read_element 确认。需要新定位再 ego_snapshot；若预期变化未出现，不要重复同一动作。'
 
 export interface ActiveSpaceTracker {
   current(): string | number
@@ -1143,6 +1155,17 @@ export const spaceParam = {
 }
 
 /**
+ * Optional generation guard for ref-based actions. Passing the snapshotId from
+ * ego_snapshot makes a stale ref fail closed instead of clicking whatever now
+ * occupies the same ref number. Omit it for backward compatibility.
+ */
+export const snapshotIdParam = {
+  type: 'string',
+  description:
+    'Optional snapshotId returned by ego_snapshot. When provided, the action is rejected with STALE_REF if a newer full snapshot has since replaced that generation. Omit to keep the old behavior.',
+}
+
+/**
  * Side-channel line the prelude prints with the target it actually chose.
  * The host records it per space so the NEXT call — a brand-new process — can
  * re-pin the same tab. Chrome's own `active` flag is not enough: it resets to
@@ -1459,6 +1482,165 @@ export function normalizeNavigateReuse(value: unknown): NavigateReuse {
  * helper switches to the same-origin tab but does NOT navigate it, so a
  * same-site different path would silently stay on the old page.
  */
+export type VerifyPredicateKind = 'selector' | 'text' | 'value' | 'url' | 'count'
+
+export interface VerifyPredicate {
+  kind: VerifyPredicateKind
+  selector?: string
+  state?: 'attached' | 'visible' | 'hidden' | 'detached'
+  equals?: string
+  contains?: string
+  pattern?: string
+  min?: number
+  max?: number
+  url?: string
+}
+
+export interface VerifyScriptOptions {
+  predicates: VerifyPredicate[]
+  timeoutMs: number
+  stableSamples: number
+  pollMs: number
+  space: string | number
+}
+
+/**
+ * Runs entirely inside the page: evaluate every predicate in one round-trip.
+ * Kept as source text (not a TS function) because function.toString() would
+ * carry TypeScript annotations into the page.
+ */
+export const VERIFY_EVAL_SOURCE = `(function (predicates) {
+  function trunc(value) { return String(value == null ? '' : value).replace(/\\s+/g, ' ').trim().slice(0, 200) }
+  function visible(el) {
+    if (!el || !el.isConnected) return false
+    var style = window.getComputedStyle(el)
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+    var rect = el.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
+  function match(value, p) {
+    var text = String(value == null ? '' : value)
+    if (p.equals !== undefined && text !== String(p.equals)) return false
+    if (p.contains !== undefined && text.indexOf(String(p.contains)) < 0) return false
+    if (p.pattern !== undefined) {
+      try { if (!new RegExp(String(p.pattern)).test(text)) return false }
+      catch (e) { throw new Error('invalid pattern: ' + String(e && e.message ? e.message : e)) }
+    }
+    return true
+  }
+  function urlMatch(href, wanted) {
+    var value = String(wanted || '')
+    if (value.indexOf('*') < 0) return href.indexOf(value) >= 0
+    var pattern = value.split('*').map(function (part) {
+      var out = ''
+      var specials = String.fromCharCode(92) + '^$+?.()|[]{}'
+      for (var i = 0; i < part.length; i++) {
+        var c = part.charAt(i)
+        if (specials.indexOf(c) >= 0) out += String.fromCharCode(92)
+        out += c
+      }
+      return out
+    }).join('.*')
+    try { return new RegExp('^' + pattern + '$').test(href) } catch (e) { return href.indexOf(value) >= 0 }
+  }
+  return predicates.map(function (p, index) {
+    try {
+      if (p.kind === 'url') {
+        var href = String(location.href)
+        if (!p.url) return { index: index, ok: false, reason: 'url is required' }
+        return { index: index, ok: urlMatch(href, p.url), observed: trunc(href) }
+      }
+      var selector = String(p.selector || '')
+      if (!selector) return { index: index, ok: false, reason: 'selector is required' }
+      var elements = Array.prototype.slice.call(document.querySelectorAll(selector))
+      if (p.kind === 'count') {
+        var count = elements.length
+        var min = p.min === undefined ? 0 : Number(p.min)
+        var max = p.max === undefined ? Number.MAX_SAFE_INTEGER : Number(p.max)
+        return { index: index, ok: count >= min && count <= max, observed: String(count) }
+      }
+      var el = elements[0]
+      var state = p.state || 'visible'
+      if (state === 'detached') return { index: index, ok: !el, observed: el ? trunc(el.textContent) : '' }
+      if (!el) return { index: index, ok: false, observed: '', reason: 'no matching element' }
+      if (state === 'attached') return { index: index, ok: true, observed: trunc(el.textContent) }
+      if (state === 'hidden') return { index: index, ok: !visible(el), observed: trunc(el.textContent) }
+      if (!visible(el)) return { index: index, ok: false, observed: trunc(el.textContent), reason: 'element not visible' }
+      if (p.kind === 'value') {
+        var value = el.value !== undefined ? el.value : el.getAttribute('value')
+        return { index: index, ok: match(value, p), observed: trunc(value) }
+      }
+      if (p.kind === 'text') {
+        var text = el.innerText !== undefined ? el.innerText : el.textContent
+        return { index: index, ok: match(text, p), observed: trunc(text) }
+      }
+      return { index: index, ok: true, observed: trunc(el.textContent) }
+    } catch (e) {
+      return { index: index, ok: false, reason: String(e && e.message ? e.message : e) }
+    }
+  })
+})`;
+
+/**
+ * Build the in-runtime polling script for `ego_verify`.
+ *
+ * Any malformed predicate becomes an INVALID_ARGS result before the page is
+ * touched. Evaluate errors (including dialog-blocked pages) become
+ * verdict:'unknown'; unknown never means success.
+ */
+export function verifyScript(opts: VerifyScriptOptions): string {
+  const raw = Array.isArray(opts.predicates) ? opts.predicates : []
+  if (raw.length === 0 || raw.length > 8) {
+    return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: provide 1 to 8 predicates' }))\n`
+  }
+  const validKinds = new Set<VerifyPredicateKind>(['selector', 'text', 'value', 'url', 'count'])
+  for (const p of raw) {
+    if (!p || typeof p !== 'object' || !validKinds.has(p.kind)) {
+      return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: invalid predicate kind' }))\n`
+    }
+    if (p.kind === 'url') {
+      if (typeof p.url !== 'string' || p.url === '') {
+        return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: url predicate requires url' }))\n`
+      }
+    } else if (typeof p.selector !== 'string' || p.selector === '') {
+      return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, error: 'ego_verify: predicate requires selector' }))\n`
+    }
+  }
+  const timeoutMs = typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs)
+    ? Math.max(100, Math.min(60_000, Math.round(opts.timeoutMs)))
+    : 5_000
+  const stableSamples = typeof opts.stableSamples === 'number' && Number.isFinite(opts.stableSamples)
+    ? Math.max(1, Math.min(5, Math.round(opts.stableSamples)))
+    : 2
+  const pollMs = typeof opts.pollMs === 'number' && Number.isFinite(opts.pollMs)
+    ? Math.max(50, Math.min(2_000, Math.round(opts.pollMs)))
+    : 200
+  const evalExpr = `(${VERIFY_EVAL_SOURCE})(${JSON.stringify(raw)})`
+  return (
+    `${useSpace(opts.space)}${ensureRealTab()}` +
+    `const __start = Date.now()\n` +
+    `const __deadline = __start + ${timeoutMs}\n` +
+    `let __polls = 0, __streak = 0, __last = null, __err = null\n` +
+    `for (;;) {\n` +
+    `  __polls++\n` +
+    `  try { __last = await page.evaluate(${j(evalExpr)}); __err = null }\n` +
+    `  catch (e) { __err = String(e && e.message ? e.message : e); __last = null; break }\n` +
+    `  const __all = Array.isArray(__last) && __last.length === ${raw.length} && __last.every(x => x.ok)\n` +
+    `  __streak = __all ? __streak + 1 : 0\n` +
+    `  if (__streak >= ${stableSamples}) break\n` +
+    `  if (Date.now() >= __deadline) break\n` +
+    `  await page.waitForTimeout(${pollMs})\n` +
+    `}\n` +
+    `const __ok = Array.isArray(__last) && __last.length === ${raw.length} && __last.every(x => x.ok)\n` +
+    `const __verdict = __err ? 'unknown' : (__ok && __streak >= ${stableSamples} ? 'satisfied' : 'unsatisfied')\n` +
+    `const __reason = __err\n` +
+    `  ? (/dialog|blocking/i.test(__err) ? 'DIALOG_BLOCKING' : __err)\n` +
+    `  : (__verdict === 'unsatisfied' ? 'predicates not satisfied within timeout' : undefined)\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({ ok: true, verdict: __verdict, satisfied: __verdict === 'satisfied', results: __last || [], polls: __polls, elapsedMs: Date.now() - __start, reason: __reason }))\n`
+  )
+}
+
+
 export const navigateScript = (opts: {
   url: string
   reuse?: string
@@ -1782,10 +1964,16 @@ function observeEgoTool<T>(cfg: EgoRuntimeConfig, name: string, args: Record<str
 }
 
 function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOptions): ToolHandle {
+  const parameters = opts.parameters && typeof opts.parameters === 'object'
+    ? {
+        ...(opts.parameters as Record<string, unknown>),
+        ...(SNAPSHOT_GUARDED_ACTIONS.has(opts.name) ? { snapshotId: snapshotIdParam } : {}),
+      }
+    : opts.parameters
   return defineTool({
     name: opts.name,
     description: opts.description,
-    parameters: opts.parameters,
+    parameters,
     output: {
       schema: commonOutputSchema,
       render: opts.render ?? renderEgoToolText,
@@ -1804,6 +1992,17 @@ function defineEgoTool(ctx: EgoContext, cfg: EgoRuntimeConfig, opts: EgoToolOpti
           // calls betterSidebar.openTab(). Idempotent: the client's transition
           // guard means only the first call per session opens the Tab.
           markEgoToolCall(sessionId)
+          const requestedSnapshotId = typeof args.snapshotId === 'string' ? args.snapshotId.trim() : ''
+          if (requestedSnapshotId !== '' && SNAPSHOT_GUARDED_ACTIONS.has(opts.name)) {
+            const guardKey = `${sessionId ?? '-'}:${str(args.space, cfg.defaultSpace)}:${str(args.scope, 'full_page')}`
+            const currentSnapshotId = snapshotCache.currentId(guardKey)
+            if (currentSnapshotId !== requestedSnapshotId) {
+              return failureValue(
+                opts.name,
+                `stale snapshot: expected ${requestedSnapshotId}, current ${currentSnapshotId ?? 'none'} — call ego_snapshot again`,
+              )
+            }
+          }
           // Stale-space recovery (browser restart wiped the space table) is
           // handled inside runWithStaleSpaceRetry; the cold-start retry is one
           // level deeper.
@@ -2634,6 +2833,47 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
           tries,
         })
       },
+    }),
+  )
+  reg(
+    t({
+      name: 'ego_verify',
+      description:
+        'Assert the page reached the expected state after an action: selector/text/value/url/count predicates combined with AND. Polls until satisfied, returns verdict satisfied/unsatisfied/unknown. unknown (e.g. page blocked by a dialog) NEVER means success. Use this instead of repeating a click and hoping.',
+      parameters: {
+        space: spaceParam,
+        predicates: {
+          type: 'array',
+          required: true,
+          description: '1-8 predicates, all must pass (AND).',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { type: 'string', description: "'selector' | 'text' | 'value' | 'url' | 'count'" },
+              selector: { type: 'string', description: 'CSS selector for selector/text/value/count.' },
+              state: { type: 'string', description: "'attached' | 'visible' (default) | 'hidden' | 'detached'" },
+              equals: { type: 'string', description: 'Exact text/value match.' },
+              contains: { type: 'string', description: 'Substring match.' },
+              pattern: { type: 'string', description: 'Regular expression source.' },
+              min: { type: 'number', description: 'Minimum count (kind=count).' },
+              max: { type: 'number', description: 'Maximum count (kind=count).' },
+              url: { type: 'string', description: 'URL substring or * glob (kind=url).' },
+            },
+          },
+        },
+        timeoutMs: { type: 'number', description: 'Total timeout in ms, default 5000, max 60000.' },
+        stableSamples: { type: 'number', description: 'Consecutive satisfied samples required, 1-5, default 2.' },
+        pollMs: { type: 'number', description: 'Poll interval in ms, default 200.' },
+      },
+      buildScript: (args) =>
+        verifyScript({
+          predicates: Array.isArray(args.predicates) ? args.predicates as VerifyPredicate[] : [],
+          timeoutMs: num(args.timeoutMs, 5_000),
+          stableSamples: num(args.stableSamples, 2),
+          pollMs: num(args.pollMs, 200),
+          space: str(args.space, cfg.defaultSpace),
+        }),
     }),
   )
   reg(

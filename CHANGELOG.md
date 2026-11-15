@@ -2,6 +2,17 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.10.0] - 2026-11-15 — CUA 启发 P0：动作后置断言 + 快照代次
+
+### 新增
+- **`ego_verify`**：1–8 个 `selector` / `text` / `value` / `url` / `count` 谓词 AND 组合，支持 `timeoutMs`、`stableSamples`、`pollMs`。返回 `verdict: satisfied | unsatisfied | unknown`；`unknown`（例如页面被对话框阻塞）永不等于成功。一次 `page.evaluate` 评估全部谓词，页面内轮询，不反复 spawn。
+- **`snapshotId` + `STALE_REF`**：`ego_snapshot` 返回快照代次；`ego_click` / `ego_fill` / `ego_check` / `ego_select` / `ego_hover` / `ego_drag` 可传 `snapshotId`。旧代次在动作发送前 fail-closed：`code:STALE_REF`、`actionSent:false`、`retry:reobserve`。不传 `snapshotId` 时行为不变。
+- `ego_help` 的 tools/errors/observe/discipline 与系统规则同步更新。
+
+### 测试
+- 新增 `tests/verify-snapshot.test.ts`：谓词匹配、URL glob、非法谓词、快照代次推进/diff 保持、STALE_REF 分类。
+- 全量：**445 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.9.15] - 2026-11-14 — Windows 焦点 / 观察窗 / 弹窗与标签修复（#99–#104）
 
 ### 修复

@@ -21,6 +21,7 @@ export type EgoFailureCode =
   | 'CAPTCHA'
   | 'USER_CONTROLLING'
   | 'SPACE_STALE'
+  | 'STALE_REF'
   | 'BROWSER_DOWN'
   | 'NO_PAYLOAD'
   | 'INVALID_ARGS'
@@ -58,6 +59,7 @@ const PRE_ACTION_CODES = new Set<EgoFailureCode>([
   'INVALID_ARGS',
   'BROWSER_DOWN',
   'SPACE_STALE',
+  'STALE_REF',
   'USER_CONTROLLING',
 ])
 
@@ -76,6 +78,8 @@ const HINTS: Record<EgoFailureCode, string> = {
     '用户已接管浏览器：停下来询问用户，不要 takeOver 或重试。',
   SPACE_STALE:
     '任务空间已失效：插件会重置到空间名重试；仍失败就用 ego_space_open 重新打开。',
+  STALE_REF:
+    '快照代次已过期：先 ego_snapshot 取新快照，再用新的 ref/loc 操作；不要复用旧 ref。',
   BROWSER_DOWN:
     '浏览器不可用：跑 ego_doctor 体检；等待冷启动或重启后再试。',
   NO_PAYLOAD:
@@ -94,6 +98,7 @@ const RETRY: Record<EgoFailureCode, EgoRetry> = {
   CAPTCHA: 'never',
   USER_CONTROLLING: 'never',
   SPACE_STALE: 'retry',
+  STALE_REF: 'reobserve',
   BROWSER_DOWN: 'retry',
   NO_PAYLOAD: 'retry',
   INVALID_ARGS: 'never',
@@ -112,6 +117,8 @@ export function classifyEgoFailure(tool: string, error: string): EgoFailure {
   let code: EgoFailureCode = 'UNKNOWN'
   if (/user is controlling|user-owned|not assigned to an agent|ownership/i.test(message)) {
     code = 'USER_CONTROLLING'
+  } else if (/stale snapshot|STALE_REF/i.test(message)) {
+    code = 'STALE_REF'
   } else if (/task space not found/i.test(message)) {
     code = 'SPACE_STALE'
   } else if (

@@ -137,6 +137,8 @@ export interface SnapshotObserveResult {
   /** Full text on a non-diff call or the first (baseline) diff call. */
   text?: string
   ok: true
+  /** Generation the refs in this result belong to (also set on diffs). */
+  snapshotId?: string
   baseline?: boolean
   tries?: number
   changed?: boolean
@@ -150,18 +152,34 @@ export interface SnapshotObserveResult {
   note?: string
 }
 
+interface SnapshotEntry {
+  text: string
+  id: string
+}
+
 /** A bounded per-key cache of the last snapshot text. */
 export class SnapshotCache {
-  private readonly entries = new Map<string, string>()
+  private readonly entries = new Map<string, SnapshotEntry>()
+  private seq = 0
   constructor(private readonly maxEntries = 32) {}
 
-  get(key: string): string | undefined {
-    return this.entries.get(key)
+  private nextId(): string {
+    this.seq = (this.seq + 1) >>> 0
+    return `s${this.seq.toString(16).padStart(8, '0').slice(-8)}`
   }
 
-  set(key: string, text: string): void {
+  get(key: string): string | undefined {
+    return this.entries.get(key)?.text
+  }
+
+  /** Current ref generation for a key; undefined when no snapshot exists. */
+  currentId(key: string): string | undefined {
+    return this.entries.get(key)?.id
+  }
+
+  set(key: string, text: string, id?: string): void {
     this.entries.delete(key)
-    this.entries.set(key, text)
+    this.entries.set(key, { text, id: id ?? this.nextId() })
     while (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next()
       if (oldest.done === true) break
@@ -180,26 +198,31 @@ export class SnapshotCache {
    * `baseline: true` (mirroring ZCode's "first observation is always complete").
    */
   observe(key: string, text: string, opts: { diff: boolean; tries?: number }): SnapshotObserveResult {
-    const previous = this.entries.get(key)
     if (!opts.diff) {
-      this.set(key, text)
-      return { ok: true, text, tries: opts.tries }
+      const snapshotId = this.nextId()
+      this.set(key, text, snapshotId)
+      return { ok: true, text, tries: opts.tries, snapshotId }
     }
+    const previous = this.entries.get(key)
     if (previous === undefined) {
-      this.set(key, text)
+      const snapshotId = this.nextId()
+      this.set(key, text, snapshotId)
       return {
         ok: true,
         baseline: true,
         changed: true,
         text,
         tries: opts.tries,
+        snapshotId,
         summary: '首次快照（无上一份基线），返回完整树；下一次 diff 才能比较',
         note: diffNote(),
       }
     }
-    const diff = diffSnapshots(previous, text)
-    this.set(key, text)
-    return { ok: true, baseline: false, tries: opts.tries, ...diff, note: diffNote() }
+    const diff = diffSnapshots(previous.text, text)
+    // A diff describes the same ref generation as its baseline. Do not advance
+    // the generation here: only a full snapshot can make old refs stale.
+    this.set(key, text, previous.id)
+    return { ok: true, baseline: false, tries: opts.tries, snapshotId: previous.id, ...diff, note: diffNote() }
   }
 }
 
