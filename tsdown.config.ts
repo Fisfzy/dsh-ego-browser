@@ -27,6 +27,7 @@ const HOST_EXTERNALS = [
   '@deepseek-ai/dsh-tools',
   '@deepseek-ai/dsh-tools/invariant',
   '@deepseek-ai/dsh-settings',
+  '@deepseek-ai/dsh-typert-protocol',
   '@deepseek-ai/cordis',
   /^@deepseek-ai\/dsh-client-/,
   'react',
@@ -44,7 +45,7 @@ const CLIENT_EXTERNALS = [
 
 const host: UserConfig = {
   name: ID,
-  entry: { index: 'src/index.ts' },
+  entry: { index: 'src/index.ts', remote: 'src/remote.ts' },
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',
@@ -53,9 +54,10 @@ const host: UserConfig = {
   clean: true,
   external: HOST_EXTERNALS,
   // tsdown >= 0.23 emits .mjs for an ESM entry; package.json main/exports and
-  // the loader row both say lib/index.js, so pin it.
+  // the loader row both say lib/index.js, so pin it. `remote` is a separate
+  // lazy entry so a headless install never evaluates its optional peer import.
   outputOptions: {
-    entryFileNames: 'index.js',
+    entryFileNames: (chunk) => (chunk.name === 'remote' ? 'remote.js' : 'index.js'),
   },
 }
 

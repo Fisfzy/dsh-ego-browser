@@ -49,7 +49,6 @@ import { installBrowserPanel } from './tui/panel.ts'
 import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpaceGroups } from './worker-client.ts'
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity, publishCursor } from './cast-server.ts'
-import { installEgoRemote } from './remote.ts'
 import { EGO_HELP_DOCS, isEgoHelpVisible, renderEgoHelpList } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
@@ -2297,7 +2296,18 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
         (opts) => importLoginCookies(opts, { subprocess: ctx.subprocess }),
         () => residentDiagnostics(cfg) as unknown as Record<string, unknown>,
       )
-      if (surface !== undefined) installEgoRemote(ctx as EgoContext, surface)
+      if (surface !== undefined) {
+        // The protocol package is an optional peer: a tools-only/headless
+        // install must load this module without it. Import the Remote adapter
+        // only after webServer activation, and only then resolve the peer.
+        void import('./remote.js')
+          .then(({ installEgoRemote }) => installEgoRemote(ctx as EgoContext, surface))
+          .catch((err) => {
+            ctx.logger?.warn?.(
+              `ego-browser: remote control plane unavailable: ${(err as Error)?.message ?? err}`,
+            )
+          })
+      }
     } catch (err) {
       ctx.logger?.warn?.(
         `ego-browser: cast server init failed: ${(err as Error)?.message ?? err}`,
