@@ -10,9 +10,23 @@
 - **前进/后退/刷新**：新增 `/api/ego/history`，worker 通过 `Page.getNavigationHistory` / `Page.navigateToHistoryEntry` 执行。
 - **用户操作激活真实 Chrome**：新建窗口/切换标签/面板导航走显式激活；模型 `ego_*` 仍保持 #99 不抢前台。
 - **watch lease 不再由 client 轮询续租**：worker 在 SSE 连接打开期间本地 `touchAll()` 续期，面板稳定打开时不再每 5 秒发一次租约请求。
+- 继承 0.13.2 的 lazy Remote、relay 恢复和配对过期修复。
 
 ### 测试
-- 新增 `tests/panel-browser-controls.test.ts`、`tests/polling-efficiency.test.ts`；全量 **469 passed / 8 skipped**；typecheck/build 通过。
+- 新增 `tests/panel-browser-controls.test.ts`、`tests/polling-efficiency.test.ts`；全量 **471 passed / 8 skipped**；typecheck/build 通过。
+
+## [0.13.2] - 2026-11-16 — Remote review follow-up
+
+### 修复
+- **headless 安装不再被 optional peer 拖垮**：`lib/index.js` 不再静态 import `@deepseek-ai/dsh-typert-protocol`；Remote 适配器拆成 `lib/remote.js`，只在 webServer 激活后动态加载，缺 peer 时捕获并降级。
+- **relay 重新启用**：`egoBrowser/status` 的 `relay:true` 通过 `frameRelaySet(false)` 清除旧的 disabled 状态，面板不再永久卡在 disabled。
+- **配对过期**：`lastSeenAt` 到期时安排一次 deadline render，并在点击登录时重新检查 freshness，避免 20s 后仍按“已配对”导入 cookie。
+
+### 说明
+tsdown/rolldown 不能可靠输出标准装饰器语法，因此继续使用 `markRemote` 手工调用上游装饰器工厂；产物中不保留 `@Remote(...)` 语法。
+
+### 测试
+- 全量 **463 passed / 8 skipped**；typecheck/build 通过。
 
 ## [0.13.1] - 2026-11-16 — 观察窗稳定性 + DSH Remote 宿主通道
 
@@ -22,13 +36,10 @@
 - **capture 会话失效不恢复**：`Session with given id not found` 时清除 session、重新 attach、重试一次；client 收到 failed 时重建 watch lease。
 - **保存密码气泡卡住 screencast**：agent profile 冷启动默认关闭 Chrome 密码管理器（`credentials_enable_service=false`、`profile.password_manager_enabled=false`）；`EGO_LINUX_DISABLE_PASSWORD_MANAGER=0` 可恢复。
 - **观察窗宿主状态改走 DSH Remote**：`GET /api/ego/executor`、`GET /api/ego/login-extension/health`、`GET/POST /api/ego/watch/*` 下线，改由 `egoBrowser/status` + `egoBrowser/watch` 两个 Remote 端点承载；前端通过 `connection.rpc.call('/api', ...)` 复用宿主鉴权/信封/错误码。
-- **Remote 拆成 lazy entry**：`lib/index.js` 不再静态 import `@deepseek-ai/dsh-typert-protocol`，只有 webServer 激活后才动态加载 `lib/remote.js`；没有该 optional peer 的 headless 安装可以正常加载插件。
 - **状态刷新改为推送驱动**：面板挂载、`connection/reset`、窗口 focus、SSE `spaces` 帧（4s 节流）和用户动作触发；只有配对浮层打开期间保留 2s 自终止刷新。
-- **relay 重新启用**：host 快照的 `relay:true` 会通过 `frameRelaySet(false)` 清除旧的禁用状态，不再永久卡在 disabled。
-- **配对过期**：`lastSeenAt` 到期时本地安排一次 deadline render，并在点击登录时重新检查 freshness，避免 20s 后仍按“已配对”走 cookie 导入。
 
 ### 测试
-- 新增 `tests/capture-recovery.test.ts`、`tests/remote-endpoints.test.ts`；全量 **471 passed / 8 skipped**；typecheck/build 通过。
+- 新增 `tests/capture-recovery.test.ts`、`tests/remote-endpoints.test.ts`；typecheck/build 通过。
 
 
 ## [0.13.0] - 2026-11-15 — 回放与观察窗幽灵光标
