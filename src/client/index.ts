@@ -87,6 +87,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 		// `egoBrowser/watch` does the same for the watch lease (start / switch /
 		// stop). Both endpoints are owned by src/remote.ts on the host.
 		var EGO_REMOTE_NAMESPACE = 'egoBrowser'
+		var EGO_RPC_TIMEOUT_MS = 2000
 		var HOST_STATUS_THROTTLE_MS = 4000
 		var LOGIN_PAIR_WINDOW_MS = 20000
 		var egoConnection = null
@@ -99,11 +100,34 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 		function egoRpc(endpoint, args) {
 			var connection = egoConnection
 			if (!connection || !connection.rpc || typeof connection.rpc.call !== 'function') return Promise.resolve(null)
+			var call
 			try {
-				return connection.rpc.call('/api', EGO_REMOTE_NAMESPACE + '/' + endpoint, { args: args || {} })
+				call = connection.rpc.call('/api', EGO_REMOTE_NAMESPACE + '/' + endpoint, { args: args || {} })
 					.then(function (result) { return result && result.ok === true ? result.value : null })
 					.catch(function () { return null })
 			} catch (e) { return Promise.resolve(null) }
+			// A missing/undispatched plugin service must not leave the panel
+			// waiting forever before it can open the SSE stream or fall back to
+			// the compatibility watch route.
+			return new Promise(function (resolve) {
+				var settled = false
+				var timer = window.setTimeout(function () {
+					if (settled) return
+					settled = true
+					resolve(null)
+				}, EGO_RPC_TIMEOUT_MS)
+				call.then(function (value) {
+					if (settled) return
+					settled = true
+					window.clearTimeout(timer)
+					resolve(value)
+				}, function () {
+					if (settled) return
+					settled = true
+					window.clearTimeout(timer)
+					resolve(null)
+				})
+			})
 		}
 
 		/**
@@ -142,7 +166,19 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			if (body && Number.isFinite(body.maxWidth) && body.maxWidth > 0) request.maxWidth = body.maxWidth
 			if (body && body.activate === true) request.activate = true
 			// The wire field is the host method's parameter name (see src/remote.ts).
-			return egoRpc('watch', { egoWatchRequest: request }).then(function (value) { return value || { ok: false } })
+			return egoRpc('watch', { egoWatchRequest: request }).then(function (value) {
+				if (value) return value
+				// Compatibility fallback for hosts that do not dispatch a
+				// plugin-owned Typert Remote service. It is one lease transition,
+				// not a polling loop; when the Remote works this branch never runs.
+				return fetchEgo('/api/ego/watch-fallback', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(request),
+				}).then(function (res) {
+					return res.json().catch(function () { return { ok: false } })
+				}).catch(function () { return { ok: false } })
+			})
 		}
 
 		/**

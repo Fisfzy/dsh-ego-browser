@@ -9,6 +9,7 @@ describe("side-panel browser controls", () => {
     const server = await read("src/cast-server.ts");
     expect(server).toContain("EGO_OPEN_WINDOW_ROUTE");
     expect(server).toContain("EGO_HISTORY_ROUTE");
+    expect(server).toContain("EGO_WATCH_FALLBACK_ROUTE");
     expect(server).toContain("openPanelWindow");
     const worker = await read("src/worker/ego-cast-worker.ts");
     expect(worker).toContain("navigationHistory");
@@ -22,6 +23,7 @@ describe("side-panel browser controls", () => {
     expect(client).toContain("historyAction('back')");
     expect(client).toContain("historyAction('forward')");
     expect(client).toContain("/api/ego/open-window");
+    expect(client).toContain("/api/ego/watch-fallback");
   });
 
   it("uses browserContext + newWindow in the vendored runtime", async () => {

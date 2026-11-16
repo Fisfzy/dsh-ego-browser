@@ -41,6 +41,7 @@ export const EGO_LOGIN_IMPORT_ROUTE = '/api/ego/login-import'
 export const EGO_INPUT_ROUTE = '/api/ego/input'
 export const EGO_NAVIGATE_ROUTE = '/api/ego/navigate'
 export const EGO_OPEN_WINDOW_ROUTE = '/api/ego/open-window'
+export const EGO_WATCH_FALLBACK_ROUTE = '/api/ego/watch-fallback'
 export const EGO_HISTORY_ROUTE = '/api/ego/history'
 export const EGO_WINDOW_SIZE_ROUTE = '/api/ego/window-size'
 export const EGO_VIDEO_ROUTE = '/api/ego/video'
@@ -593,6 +594,31 @@ export function initCastServer(
     },
   })
 
+  // POST /api/ego/watch-fallback — compatibility path for hosts where the
+  // plugin's Typert Remote service is not dispatched. The panel still uses
+  // `egoBrowser/watch` first; only a null/failed Remote result falls back here.
+  // This is a lease transition, not a polling loop.
+  const disposeWatchFallback = server.register({
+    kind: 'exact',
+    path: EGO_WATCH_FALLBACK_ROUTE,
+    handler: async (reqRaw: unknown, resRaw: unknown) => {
+      const req = reqRaw as IncomingMessage
+      const res = resRaw as ServerResponse
+      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED })
+      const port = await ensureWorker()
+      if (port === null) return sendJson(res, 409, { ok: false, error: 'worker not ready' })
+      const body = await readJsonBody(req).catch(() => ({}) as Record<string, unknown>)
+      const action = body.action
+      if (action !== 'start' && action !== 'switch' && action !== 'stop') {
+        return sendJson(res, 400, { ok: false, error: 'action must be start, switch or stop' })
+      }
+      const result = await proxyPost(port, `/api/watch/${action}`, body, action === 'stop' ? 4000 : 30000)
+      return result
+        ? sendJson(res, result.status, result.body)
+        : sendJson(res, 502, { ok: false, error: 'worker request failed' })
+    },
+  })
+
   // POST /api/ego/window-size — the watch panel's size-sync toggle drives the
   // REAL agent browser window. The body carries the desired PAGE viewport in
   // CSS px; the worker adds Chrome's frame and calls Browser.setWindowBounds.
@@ -848,6 +874,7 @@ export function initCastServer(
     try { disposeNavigate() } catch { /* ignore */ }
     try { disposeHistory() } catch { /* ignore */ }
     try { disposeOpenWindow() } catch { /* ignore */ }
+    try { disposeWatchFallback() } catch { /* ignore */ }
     try { disposeWindowSize() } catch { /* ignore */ }
     try { disposeLoginBridge.forEach((dispose) => dispose()) } catch { /* ignore */ }
     try { stopLoginExtensionBridge() } catch { /* ignore */ }
