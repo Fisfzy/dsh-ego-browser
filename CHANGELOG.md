@@ -2,6 +2,15 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.14.1] - 2026-11-16 — 观察窗 watch fallback
+
+### 修复
+- **地址栏导航后侧栏停在 `idle / 未接管`**：Remote `egoBrowser/watch` 未返回时增加 2 秒超时，并回退到 `/api/ego/watch-fallback` 的 host 代理；该路径只做一次租约切换，不是轮询。
+- **Remote 调用不再无限等待**：`egoRpc` 统一加超时，避免状态或 watch 调用悬挂时侧栏不打开 SSE/不建立 capture。
+
+### 测试
+- 全量 **471 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.14.0] - 2026-11-16 — 侧栏基础浏览器
 
 ### 新增
