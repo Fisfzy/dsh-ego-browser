@@ -49,6 +49,7 @@ import { installBrowserPanel } from './tui/panel.ts'
 import { makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, readTaskSpaceGroups } from './worker-client.ts'
 import { safeLocatorSummary, toolCallTitle } from './tui/presentation.ts'
 import { initCastServer, markEgoToolCall, getLastEgoActivity, publishCursor } from './cast-server.ts'
+import { installEgoRemote } from './remote.ts'
 import { EGO_HELP_DOCS, isEgoHelpVisible, renderEgoHelpList } from './help.ts'
 import { failureValue } from './errors.ts'
 import { noteEgoToolUse, registerEgoRulesSection } from './rules.ts'
@@ -2283,7 +2284,11 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
   // on hosts without a web server (TUI / headless stay tools-only).
   ctx.inject?.(['webServer'], (wctx) => {
     try {
-      initCastServer(
+      // The watch panel's host control plane (status snapshot + watch lease)
+      // is published over the DSH Remote channel — see src/remote.ts. It is
+      // installed from THIS context, not the webServer child fiber: the host's
+      // typertGateway resolves plugin services from the root it dispatches on.
+      const surface = initCastServer(
         wctx as EgoContext,
         cfg,
         bridge,
@@ -2292,6 +2297,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
         (opts) => importLoginCookies(opts, { subprocess: ctx.subprocess }),
         () => residentDiagnostics(cfg) as unknown as Record<string, unknown>,
       )
+      if (surface !== undefined) installEgoRemote(ctx as EgoContext, surface)
     } catch (err) {
       ctx.logger?.warn?.(
         `ego-browser: cast server init failed: ${(err as Error)?.message ?? err}`,

@@ -2,6 +2,19 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.13.1] - 2026-11-16 — 观察窗宿主状态改走 DSH Remote 通道
+
+### 变更
+- **观察窗不再轮询插件自建 HTTP 路由**：`GET /api/ego/executor`（15s）、`GET /api/ego/login-extension/health`（8s）、`GET /api/ego/watch/status` 与 `POST /api/ego/watch/{start,switch,stop}` 全部下线，改由宿主 `TypertRemoteService`（`src/remote.ts`）暴露 `egoBrowser/status`（executor + 登录桥 + watch 快照）与 `egoBrowser/watch`（start/switch/stop 租约）两个 Remote 端点，前端统一走 `connection.rpc.call('/api', …)`：复用宿主既有鉴权/信封/错误码，不再自建一套。
+- **宿主快照改为推送驱动**：刷新时机 = 面板挂载、`connection/reset`、窗口 focus、SSE `spaces` 帧（4s 节流）与用户动作；配对浮层打开期间的 2s 刷新是有限、自终止的（跟随扩展自身 20s 存活窗口）。
+- **登录桥健康快照新增 `lastSeenAt`**：`paired` 由前端按 20s 窗口自行过期，不再依赖定时轮询。
+- **打包约束**：bundler 不降级 TC39 装饰器（留在产物里就是 SyntaxError），因此端点标记不使用 `@Remote` 语法，而是调用导出的装饰器工厂手工打标（`markRemote`），标记格式仍归 upstream 协议包所有。
+
+### 测试
+- 新增 `tests/remote-endpoints.test.ts`：端点标记完整、租约 wire 字段名（打包后仍为 `watch(egoWatchRequest)`）、产物无装饰器残留、前端不再引用已删路由且无宿主状态轮询定时器。
+- `tests/frame-relay.test.ts`：改为直接断言 Remote surface 的 `status()` / `watch()`（含 frame relay 关闭时的拒绝语义）。
+- 全量：**461 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.13.0] - 2026-11-15 — 回放与观察窗幽灵光标
 
 ### 新增
