@@ -5,13 +5,10 @@ const root = new URL("../", import.meta.url);
 const read = (path: string) => readFile(new URL(path, root), "utf8");
 
 describe("watch-panel polling budget", () => {
-  it("does not poll executor/login health or renew watch leases from the client", async () => {
+  it("does not renew watch leases from a client timer", async () => {
     const client = await read("src/client/index.ts");
-    expect(client).not.toContain("window.setInterval(load, 15000)");
-    expect(client).not.toContain("window.setInterval(load, 8000)");
     expect(client).not.toContain("window.setInterval(function () {\n\t\t\t\tif (self.visible && self.watchTargetId)");
-    expect(client).toContain("/api/ego/login-extension/health?peek=1");
-    expect(client).toContain("window.setInterval(load, 2000)");
+    expect(client).toContain("The worker renews watch leases while the SSE stream is open");
   });
 
   it("lets the open SSE stream renew watch leases in the worker", async () => {
@@ -22,10 +19,8 @@ describe("watch-panel polling budget", () => {
     expect(manager).toContain("touchAll(): void");
   });
 
-  it("peeks login health without starting the bridge", async () => {
-    const mod = await import("../src/login-extension.ts");
-    const before = mod.peekLoginExtensionHealth();
-    expect(before.ok).toBe(true);
-    expect(typeof before.port).toBe("number");
+  it("does not carry a host-state polling timer", async () => {
+    const client = await read("src/client/index.ts");
+    expect(client).not.toMatch(/setInterval\(load/);
   });
 });

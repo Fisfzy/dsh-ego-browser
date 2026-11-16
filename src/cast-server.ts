@@ -21,12 +21,12 @@ import {
   createLoginExtensionPairingCode,
   getLoginExtensionHealth,
   getLoginExtensionJob,
-  peekLoginExtensionHealth,
   startLoginExtensionJob,
   stopLoginExtensionBridge,
 } from './login-extension.ts'
 
 import { captureConfig, isProcessAlive, knownWorkerState, makeEnsureWorker, proxyFrom, proxyPost, type EnsureWorker } from './worker-client.ts'
+import type { EgoHostStatus, EgoRemoteSurface, EgoWatchLease } from './remote.ts'
 export { proxyPost } from './worker-client.ts'
 
 type PushConfig = (cfg: ResolvedConfig) => Promise<void>
@@ -43,10 +43,6 @@ export const EGO_NAVIGATE_ROUTE = '/api/ego/navigate'
 export const EGO_OPEN_WINDOW_ROUTE = '/api/ego/open-window'
 export const EGO_HISTORY_ROUTE = '/api/ego/history'
 export const EGO_WINDOW_SIZE_ROUTE = '/api/ego/window-size'
-export const EGO_WATCH_START_ROUTE = '/api/ego/watch/start'
-export const EGO_WATCH_SWITCH_ROUTE = '/api/ego/watch/switch'
-export const EGO_WATCH_STOP_ROUTE = '/api/ego/watch/stop'
-export const EGO_WATCH_STATUS_ROUTE = '/api/ego/watch/status'
 export const EGO_VIDEO_ROUTE = '/api/ego/video'
 export const EGO_VIDEO_STATUS_ROUTE = '/api/ego/video/status'
 
@@ -393,7 +389,7 @@ export function initCastServer(
   loginImport: (opts: LoginImportOptions) => Promise<LoginImportReport> = async () => ({ ok: false, error: 'login import not supported by this host build' }),
   getExecutorStatus: () => Record<string, unknown> = () => ({}),
   openPanelWindow: (url: string) => Promise<{ ok: boolean; targetId?: string; error?: string }> = async () => ({ ok: false, error: 'new window not supported by this host build' }),
-): void {
+): EgoRemoteSurface | undefined {
   const ensureWorker = makeEnsureWorker(ctx, cfg, ffmpegManager)
   const pushConfig = makePushConfig(ensureWorker, ffmpegManager)
   // The web shell exposes `webServer` — the only HTTP host surface the plugin
@@ -730,37 +726,6 @@ export function initCastServer(
     },
   })
 
-  const watchRoutes: (() => void)[] = [
-    [EGO_WATCH_START_ROUTE, '/api/watch/start'],
-    [EGO_WATCH_SWITCH_ROUTE, '/api/watch/switch'],
-    [EGO_WATCH_STOP_ROUTE, '/api/watch/stop'],
-  ].map(([path, workerPath]) => server.register!({
-    kind: 'exact', path,
-    handler: async (reqRaw: unknown, resRaw: unknown) => {
-      const req = reqRaw as IncomingMessage
-      const res = resRaw as ServerResponse
-      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED, state: 'disabled' })
-      const port = await ensureWorker()
-      if (port === null) return sendJson(res, 409, { ok: false, error: 'worker not ready' })
-      const timeoutMs = workerPath === '/api/watch/start' || workerPath === '/api/watch/switch' ? 30000 : 4000
-      const result = await proxyPost(port, workerPath, await readJsonBody(req).catch(() => ({})), timeoutMs)
-      return result
-        ? sendJson(res, result.status, result.body)
-        : sendJson(res, 502, { ok: false, error: 'worker request failed' })
-    },
-  }))
-  const disposeWatchStatus = server.register({
-    kind: 'exact', path: EGO_WATCH_STATUS_ROUTE,
-    handler: async (_req: unknown, resRaw: unknown) => {
-      const res = resRaw as ServerResponse
-      // The client calls this right before opening the SSE stream; the
-      // `frameRelay: false` flag is what makes it skip the connection entirely.
-      if (relayDisabled()) return refuseFrameRelay(res, { error: FRAME_RELAY_DISABLED, state: 'disabled' })
-      const port = await ensureWorker()
-      const result = port === null ? null : await proxyFrom(port, '/api/watch/status')
-      return sendJson(res, 200, { ...(result || { ok: false, state: 'idle', reason: 'worker not ready' }), frameRelay: true })
-    },
-  })
   const disposeVideoStatus = server.register({
     kind: 'exact', path: EGO_VIDEO_STATUS_ROUTE,
     handler: async (_req: unknown, resRaw: unknown) => {
@@ -784,33 +749,12 @@ export function initCastServer(
     },
   })
 
-  // GET /api/ego/executor — resident // one-shot executor diagnostics (#73).
-  // Host-level state only (no worker), so it works even before the browser is up.
-  const disposeExecutor = server.register({
-    kind: 'exact', path: '/api/ego/executor',
-    handler: async (_req: unknown, resRaw: unknown) => {
-      const res = resRaw as ServerResponse
-      let status: Record<string, unknown> = {}
-      try { status = getExecutorStatus() } catch { /* ignore */ }
-      return sendJson(res, 200, { ok: true, ...status })
-    },
-  })
-
-  // #69 v2 — one-click login-state bridge for the panel: pairing code, health
-  // and job status. The extension itself talks to the loopback server in
-  // login-extension.ts; these routes are for the in-panel UI.
+  // #69 v2 — one-click login-state bridge for the panel: pairing code and job
+  // status. The extension itself talks to the loopback server in
+  // login-extension.ts; these routes are for the in-panel UI. The bridge's
+  // HEALTH snapshot is not polled any more: it rides along on the Remote
+  // `egoBrowser/status` snapshot (src/remote.ts).
   const disposeLoginBridge = [
-    server.register({
-      kind: 'exact', path: '/api/ego/login-extension/health',
-      handler: async (reqRaw: unknown, resRaw: unknown) => {
-        const res = resRaw as ServerResponse
-        try {
-          const req = reqRaw as IncomingMessage
-          const peek = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('peek') === '1'
-          return sendJson(res, 200, peek ? peekLoginExtensionHealth() : await getLoginExtensionHealth())
-        } catch (err) { return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) }) }
-      },
-    }),
     server.register({
       kind: 'exact', path: '/api/ego/login-extension/pair-code',
       handler: async (_req: unknown, resRaw: unknown) => {
@@ -851,6 +795,52 @@ export function initCastServer(
     }),
   ]
 
+  // ── Remote control plane (src/remote.ts) ──────────────────────────────────
+  // The panel reads its host state through the host's own RPC dispatch
+  // (`connection.rpc.call('/api', 'egoBrowser/status' | 'egoBrowser/watch')`)
+  // instead of polling plugin-owned HTTP routes: one snapshot on mount and on
+  // pushed events, plus one call per lease transition. Returning the surface
+  // lets index.ts publish it from the plugin's own Context (a Service created
+  // inside this webServer child fiber would not be reachable from the gateway).
+  const surface: EgoRemoteSurface = {
+    async status(): Promise<EgoHostStatus> {
+      // Executor diagnostics are host-only, so they survive "no browser yet".
+      let executor: Record<string, unknown> = {}
+      try { executor = getExecutorStatus() } catch { /* diagnostics are optional */ }
+      let login: Record<string, unknown>
+      try { login = { ...(await getLoginExtensionHealth()) } }
+      catch (err) { login = { ok: false, paired: false, lastSeenAt: 0, error: String((err as Error)?.message || err) } }
+      let watch: Record<string, unknown>
+      if (relayDisabled()) {
+        watch = { ok: false, state: 'disabled', reason: FRAME_RELAY_DISABLED, frameRelay: false }
+      } else {
+        const port = await ensureWorker()
+        const live = port === null ? null : await proxyFrom(port, '/api/watch/status')
+        watch = { ...(live || { ok: false, state: 'idle', reason: 'worker not ready' }), frameRelay: true }
+      }
+      return { relay: !relayDisabled(), executor, watch, login }
+    },
+    async watch(lease: EgoWatchLease): Promise<Record<string, unknown>> {
+      if (relayDisabled()) {
+        return { ok: false, state: 'disabled', reason: FRAME_RELAY_DISABLED, error: FRAME_RELAY_DISABLED, frameRelay: false }
+      }
+      const port = await ensureWorker()
+      if (port === null) return { ok: false, error: 'worker not ready' }
+      const workerPath = lease.action === 'start' ? '/api/watch/start'
+        : lease.action === 'switch' ? '/api/watch/switch' : '/api/watch/stop'
+      // A release must never block the worker's teardown path.
+      const timeoutMs = lease.action === 'stop' ? 4000 : 30000
+      const body = {
+        ...(lease.clientId === undefined ? {} : { clientId: lease.clientId }),
+        ...(lease.targetId === undefined ? {} : { targetId: lease.targetId }),
+        ...(lease.maxWidth === undefined ? {} : { maxWidth: lease.maxWidth }),
+        ...(lease.activate === true ? { activate: true } : {}),
+      }
+      const result = await proxyPost(port, workerPath, body, timeoutMs)
+      return result ? { ...(result.body as Record<string, unknown>) } : { ok: false, error: 'worker request failed' }
+    },
+  }
+
   ctx.effect?.(() => () => {
     try { disposeSpaces() } catch { /* ignore */ }
     try { disposeStream() } catch { /* ignore */ }
@@ -859,7 +849,6 @@ export function initCastServer(
     try { disposeHistory() } catch { /* ignore */ }
     try { disposeOpenWindow() } catch { /* ignore */ }
     try { disposeWindowSize() } catch { /* ignore */ }
-    try { disposeExecutor() } catch { /* ignore */ }
     try { disposeLoginBridge.forEach((dispose) => dispose()) } catch { /* ignore */ }
     try { stopLoginExtensionBridge() } catch { /* ignore */ }
     try { disposeClose() } catch { /* ignore */ }
@@ -867,9 +856,9 @@ export function initCastServer(
     try { disposeRaise() } catch { /* ignore */ }
     try { disposeLoginImport() } catch { /* ignore */ }
     try { disposeHealth() } catch { /* ignore */ }
-    for (const dispose of watchRoutes) try { dispose() } catch { /* ignore */ }
-    try { disposeWatchStatus() } catch { /* ignore */ }
     try { disposeVideoStatus() } catch { /* ignore */ }
     try { disposeVideo() } catch { /* ignore */ }
   })
+
+  return surface
 }

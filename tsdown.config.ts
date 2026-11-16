@@ -52,6 +52,11 @@ const host: UserConfig = {
   dts: false,
   clean: true,
   external: HOST_EXTERNALS,
+  // tsdown >= 0.23 emits .mjs for an ESM entry; package.json main/exports and
+  // the loader row both say lib/index.js, so pin it.
+  outputOptions: {
+    entryFileNames: 'index.js',
+  },
 }
 
 const client: UserConfig = {

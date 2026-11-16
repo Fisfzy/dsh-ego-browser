@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { initCastServer, stopCastWorker, FRAME_RELAY_DISABLED } from "../src/cast-server.ts";
+import { stopLoginExtensionBridge } from "../src/login-extension.ts";
+import type { EgoRemoteSurface } from "../src/remote.ts";
 import { resolveConfig } from "../src/config.ts";
 
 // ── frame-relay master switch (settings: disableFrameRelay) ─────────────────
@@ -29,14 +31,22 @@ const CAST_DIR = STATE_DIR;
 const PREV_STATE_DIR = process.env.EGO_LINUX_STATE_DIR;
 const WORKER_SCRIPT = fileURLToPath(new URL("./fixtures/fake-cast-worker.cjs", import.meta.url));
 
+// The host snapshot starts the login bridge (it owns the panel's paired state),
+// so it must not squat the production loopback port while tests run in parallel.
+const PREV_LOGIN_PORT = process.env.EGO_LOGIN_EXTENSION_PORT;
+
 beforeAll(() => {
   mkdirSync(CAST_DIR, { recursive: true });
   process.env.EGO_LINUX_STATE_DIR = STATE_DIR;
+  process.env.EGO_LOGIN_EXTENSION_PORT = "53997";
 });
 
 afterAll(() => {
+  stopLoginExtensionBridge();
   if (PREV_STATE_DIR === undefined) delete process.env.EGO_LINUX_STATE_DIR;
   else process.env.EGO_LINUX_STATE_DIR = PREV_STATE_DIR;
+  if (PREV_LOGIN_PORT === undefined) delete process.env.EGO_LOGIN_EXTENSION_PORT;
+  else process.env.EGO_LOGIN_EXTENSION_PORT = PREV_LOGIN_PORT;
   rmSync(STATE_DIR, { recursive: true, force: true });
 });
 
@@ -137,6 +147,8 @@ interface Harness {
   spawns: string[][];
   fire: () => void;
   invoke: (path: string, req?: unknown) => Promise<ReturnType<typeof makeRes>>;
+  /** The Remote control plane the host publishes (src/remote.ts). */
+  surface: EgoRemoteSurface;
 }
 
 /**
@@ -146,7 +158,11 @@ interface Harness {
  */
 function mount(
   cfg: object,
-  opts: { openAgentWindow?: () => Promise<unknown>; loginImport?: (o: unknown) => Promise<unknown> } = {},
+  opts: {
+    openAgentWindow?: () => Promise<unknown>;
+    loginImport?: (o: unknown) => Promise<unknown>;
+    getExecutorStatus?: () => Record<string, unknown>;
+  } = {},
 ): Harness {
   const routes = new Map<string, RouteHandler>();
   const spawns: string[][] = [];
@@ -174,9 +190,19 @@ function mount(
     source: () => live,
     onChange(cb: () => void) { listeners.add(cb); return () => listeners.delete(cb); },
   };
-  initCastServer(ctx as never, live as never, bridge as never, null, opts.openAgentWindow as never, opts.loginImport as never);
+  const surface = initCastServer(
+    ctx as never,
+    live as never,
+    bridge as never,
+    null,
+    opts.openAgentWindow as never,
+    opts.loginImport as never,
+    opts.getExecutorStatus as never,
+  );
+  if (!surface) throw new Error("initCastServer did not return the Remote surface");
   return {
     spawns,
+    surface,
     fire: () => { for (const cb of [...listeners]) cb(); },
     async invoke(path: string, req: unknown = makeReq(path)) {
       const handler = routes.get(path);
@@ -197,18 +223,14 @@ const GATED_ROUTES = [
   "/api/ego/spaces",
   "/api/ego/stream",
   "/api/ego/health",
-  "/api/ego/watch/status",
   "/api/ego/video/status",
   "/api/ego/video",
 ];
-/** Worker-backed POST routes (watch leases + panel actions). */
+/** Worker-backed POST routes (panel actions). */
 const GATED_POST_ROUTES = [
   "/api/ego/input",
   "/api/ego/close",
   "/api/ego/flush",
-  "/api/ego/watch/start",
-  "/api/ego/watch/switch",
-  "/api/ego/watch/stop",
 ];
 
 describe("frame relay disabled", () => {
@@ -295,8 +317,11 @@ describe("frame relay enabled", () => {
     expect(stream.headers["content-type"]).toBe("text/event-stream");
     expect(stream.body()).toContain(":ok");
 
-    const status = parseBody(await h.invoke("/api/ego/watch/status"));
-    expect(status.frameRelay).toBe(true);
+    // The watch/capture status now rides on the Remote host snapshot.
+    const snapshot = await h.surface.status();
+    expect(snapshot.relay).toBe(true);
+    expect((snapshot.watch as Record<string, unknown>).frameRelay).toBe(true);
+    expect(snapshot.watch.state).toBe("streaming");
     // The live worker was found, so nothing was spawned.
     expect(h.spawns).toEqual([]);
   });
@@ -325,6 +350,76 @@ describe("frame relay enabled", () => {
     h.fire();
     expect(parseBody(await h.invoke("/api/ego/spaces")).ok).toBe(true);
     expect(await waitForExit(revived.proc, 2000)).toBe(false);
+  });
+});
+
+// ── Remote control plane (src/remote.ts) ───────────────────────────────────
+//
+// The panel no longer polls plugin HTTP routes. The host publishes ONE snapshot
+// (`egoBrowser/status`: executor diagnostics + login-bridge health + worker
+// watch status) and the watch lease (`egoBrowser/watch`) over the DSH Remote
+// channel; these cases pin the surface behind those two endpoints. The
+// decorator-marked gateway around it is a pass-through.
+
+describe("remote control plane", () => {
+  let worker: FakeWorker;
+
+  beforeAll(async () => {
+    worker = await startFakeWorker();
+    writeWorkerState(worker.port, worker.pid);
+  });
+
+  afterAll(() => {
+    rmSync(stateFilePath(), { force: true });
+    killQuietly(worker);
+  });
+
+  it("reports the disabled snapshot and refuses leases while the relay is off", async () => {
+    const h = mount(resolveConfig({ disableFrameRelay: true }));
+    const snapshot = await h.surface.status();
+    expect(snapshot.relay).toBe(false);
+    expect(snapshot.watch.frameRelay).toBe(false);
+    expect(snapshot.watch.reason).toBe(FRAME_RELAY_DISABLED);
+    // The login bridge is host-only state, so it still arrives with the relay off.
+    expect(typeof snapshot.login).toBe("object");
+
+    const lease = await h.surface.watch({ action: "stop" });
+    expect(lease.reason).toBe(FRAME_RELAY_DISABLED);
+    // Nothing may spawn a capture worker while the relay is off.
+    expect(h.spawns).toEqual([]);
+  });
+
+  it("answers one snapshot with the executor diagnostics, login bridge and watch state", async () => {
+    const h = mount(resolveConfig({}), {
+      getExecutorStatus: () => ({ mode: "resident", pid: 4242, ageMs: 120000 }),
+    });
+    const snapshot = await h.surface.status();
+    expect(snapshot.relay).toBe(true);
+    expect(snapshot.executor).toEqual({ mode: "resident", pid: 4242, ageMs: 120000 });
+    expect(snapshot.watch.state).toBe("streaming");
+    expect(snapshot.watch.frameRelay).toBe(true);
+    expect(snapshot.login.ok).toBe(true);
+    // The login health carries its own freshness stamp: the panel expires
+    // `paired` locally instead of polling the bridge.
+    expect(typeof snapshot.login.lastSeenAt).toBe("number");
+    expect(h.spawns).toEqual([]);
+  });
+
+  it("proxies the watch lease to the worker (start/switch/stop)", async () => {
+    const h = mount(resolveConfig({}));
+    const started = await h.surface.watch({ action: "start", clientId: "c1", targetId: "tab-1", maxWidth: 1280 });
+    expect(started.ok).toBe(true);
+    expect(started.state).toBe("streaming");
+    expect(started.targetId).toBe("tab-1");
+
+    const switched = await h.surface.watch({ action: "switch", clientId: "c1", targetId: "tab-1" });
+    expect(switched.ok).toBe(true);
+
+    const stopped = await h.surface.watch({ action: "stop", clientId: "c1" });
+    expect(stopped.ok).toBe(true);
+    expect(stopped.state).toBe("idle");
+    // A live worker is reused, never respawned.
+    expect(h.spawns).toEqual([]);
   });
 });
 

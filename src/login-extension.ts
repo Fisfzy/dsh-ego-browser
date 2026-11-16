@@ -245,7 +245,14 @@ export async function importLoginCookiesFromExtension(opts: ExtensionImportOptio
 
 export interface LoginExtensionHealth {
   ok: boolean
+  /** The extension talked to the loopback bridge within the freshness window. */
   paired: boolean
+  /**
+   * Epoch ms of the extension's last contact (0 = never). The panel reads this
+   * instead of polling: `paired` expires on its own after 20 s of silence, so a
+   * one-shot snapshot stays honest without a client timer.
+   */
+  lastSeenAt: number
   port: number
   tokenPath: string
   extensionPath: string
@@ -406,6 +413,7 @@ export async function getLoginExtensionHealth(): Promise<LoginExtensionHealth> {
     return {
       ok: true,
       paired: Date.now() - state.lastSeenAt < 20_000,
+      lastSeenAt: state.lastSeenAt,
       port: state.port,
       tokenPath: loginExtensionTokenPath(),
       extensionPath: fileURLToPath(new URL('../extension', import.meta.url)),
@@ -414,6 +422,7 @@ export async function getLoginExtensionHealth(): Promise<LoginExtensionHealth> {
     return {
       ok: false,
       paired: false,
+      lastSeenAt: 0,
       port: Number(process.env.EGO_LOGIN_EXTENSION_PORT) || LOGIN_EXTENSION_PORT,
       tokenPath: loginExtensionTokenPath(),
       extensionPath: fileURLToPath(new URL('../extension', import.meta.url)),
@@ -432,6 +441,7 @@ export function peekLoginExtensionHealth(): LoginExtensionHealth {
   return {
     ok: true,
     paired: !!state && Date.now() - state.lastSeenAt < 20_000,
+    lastSeenAt: state ? state.lastSeenAt : 0,
     port: state?.port ?? (Number(process.env.EGO_LOGIN_EXTENSION_PORT) || LOGIN_EXTENSION_PORT),
     tokenPath: loginExtensionTokenPath(),
     extensionPath: fileURLToPath(new URL('../extension', import.meta.url)),

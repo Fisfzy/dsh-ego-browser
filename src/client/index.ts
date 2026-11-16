@@ -74,6 +74,84 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			}
 		}
 
+		// ── Host control plane: DSH Remote channel, not plugin HTTP routes ──
+		//
+		// The panel's host-side facts (executor diagnostics, login-bridge health
+		// and the worker's watch/capture status) come from ONE Typert Remote
+		// service — `egoBrowser/status` — reached through `connection.rpc`, the
+		// same authenticated channel every first-party Remote call uses. No timer
+		// drives it: refreshHostStatus() runs on mount, on `connection/reset`, on
+		// window focus, and whenever the cast worker pushes a `spaces` frame, so
+		// the panel tracks the host instead of polling it.
+		//
+		// `egoBrowser/watch` does the same for the watch lease (start / switch /
+		// stop). Both endpoints are owned by src/remote.ts on the host.
+		var EGO_REMOTE_NAMESPACE = 'egoBrowser'
+		var HOST_STATUS_THROTTLE_MS = 4000
+		var LOGIN_PAIR_WINDOW_MS = 20000
+		var egoConnection = null
+		var hostStatusStore = createSnapshotStore({ executor: null, login: null, watch: null, loaded: false })
+		var useHostStatus = bindSnapshotSelector(hostStatusStore)
+		var hostStatusInFlight = null
+		var hostStatusLastAt = 0
+
+		/** Call one `egoBrowser/*` Remote endpoint; null when the channel is unavailable. */
+		function egoRpc(endpoint, args) {
+			var connection = egoConnection
+			if (!connection || !connection.rpc || typeof connection.rpc.call !== 'function') return Promise.resolve(null)
+			try {
+				return connection.rpc.call('/api', EGO_REMOTE_NAMESPACE + '/' + endpoint, { args: args || {} })
+					.then(function (result) { return result && result.ok === true ? result.value : null })
+					.catch(function () { return null })
+			} catch (e) { return Promise.resolve(null) }
+		}
+
+		/**
+		 * Refresh the host-status snapshot. Throttled unless forced: the worker's
+		 * `spaces` push arrives every ~500 ms, and one Remote call per frame would
+		 * be worse than the polling this replaces.
+		 */
+		function refreshHostStatus(force?: boolean) {
+			if (hostStatusInFlight) return hostStatusInFlight
+			if (force !== true && Date.now() - hostStatusLastAt < HOST_STATUS_THROTTLE_MS) return Promise.resolve(null)
+			hostStatusLastAt = Date.now()
+			hostStatusInFlight = egoRpc('status', {}).then(function (value) {
+				hostStatusInFlight = null
+				if (!value) return null
+				hostStatusStore.update(function (s) {
+					s.executor = value.executor || null
+					s.login = value.login || null
+					s.watch = value.watch || null
+					s.loaded = true
+				})
+				return value
+			}, function () { hostStatusInFlight = null; return null })
+			return hostStatusInFlight
+		}
+
+		/** One watch-lease transition (`start` | `switch` | `stop`). */
+		function egoWatch(action, body) {
+			var request: Record<string, unknown> = { action: action }
+			if (body && typeof body.clientId === 'string' && body.clientId !== '') request.clientId = body.clientId
+			if (body && typeof body.targetId === 'string' && body.targetId !== '') request.targetId = body.targetId
+			if (body && Number.isFinite(body.maxWidth) && body.maxWidth > 0) request.maxWidth = body.maxWidth
+			if (body && body.activate === true) request.activate = true
+			// The wire field is the host method's parameter name (see src/remote.ts).
+			return egoRpc('watch', { egoWatchRequest: request }).then(function (value) { return value || { ok: false } })
+		}
+
+		/**
+		 * The bridge reports `paired` as "the extension talked to us in the last
+		 * 20 s". Without a poller the snapshot has to carry that freshness stamp
+		 * itself, so a stale snapshot cannot claim a pairing that went quiet.
+		 */
+		function loginPaired(login) {
+			if (!login || login.paired !== true) return false
+			var seen = Number(login.lastSeenAt)
+			if (!Number.isFinite(seen) || seen <= 0) return true
+			return Date.now() - seen < LOGIN_PAIR_WINDOW_MS
+		}
+
 		// 'betterSidebar' must NOT be declared here: hosts without
 		// dsh-better-sidebar have no such service, and the module loader keeps
 		// any row that statically injects it pending forever — which blocks the
@@ -373,9 +451,9 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 		// client honest about it: while the relay is OFF the panel opens NO pull
 		// connection at all (no EventSource on /api/ego/stream, no /api/ego/video
 		// fetch) and renders an explicit disabled state instead of reconnect-looping.
-		// The value arrives from two places: /ego/api/get|set (the settings card) and
-		// the `frameRelay` flag the host attaches to /api/ego/spaces and
-		// /api/ego/watch/status (the flag the panels read right before connecting).
+		// The value arrives from three places: /ego/api/get|set (the settings card),
+		// the `frameRelay` flag the host attaches to /api/ego/spaces, and the watch
+		// state inside the `egoBrowser/status` snapshot (src/remote.ts).
 		var frameRelayDisabled = false
 		var frameRelayListeners = []
 		function frameRelaySet(disabled) {
@@ -1246,15 +1324,8 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 
 		const SPACES_ROUTE = egoRoute('/api/ego/spaces')
 		const EGO_CLOSE_ROUTE = egoRoute('/api/ego/close')
-		const WATCH_START_ROUTE = egoRoute('/api/ego/watch/start')
-		const WATCH_SWITCH_ROUTE = egoRoute('/api/ego/watch/switch')
-		const WATCH_STOP_ROUTE = egoRoute('/api/ego/watch/stop')
-		const WATCH_STATUS_ROUTE = egoRoute('/api/ego/watch/status')
 		const VIDEO_ROUTE = egoRoute('/api/ego/video')
 
-		function postJson(path, body) {
-			return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).then(function (res) { return res.json().catch(function () { return {} }) })
-		}
 
 		function createKeyboardProxy(send) {
 			var input = document.createElement('textarea')
@@ -1525,6 +1596,21 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 		var getOptionalService = function (name) {
 			try { return typeof ctx.get === 'function' ? ctx.get(name) : undefined } catch (e) { return undefined }
 		}
+		// Host status wiring: capture the Remote connection once, seed one
+		// snapshot, then refresh only on push-shaped triggers (reconnect and
+		// window focus; the panel's SSE 'spaces' handler adds the third).
+		egoConnection = getOptionalService('connection') || null
+		void refreshHostStatus(true)
+		ctx.effect(function () {
+			var off = ctx.on('connection/reset', function () { void refreshHostStatus(true) })
+			return function () { off() }
+		}, 'ego-browser: host status invalidation')
+		ctx.effect(function () {
+			if (typeof window === 'undefined') return
+			var onFocus = function () { void refreshHostStatus(true) }
+			window.addEventListener('focus', onFocus)
+			return function () { window.removeEventListener('focus', onFocus) }
+		}, 'ego-browser: host status focus refresh')
 		var betterSidebarService = getOptionalService('betterSidebar')
 		// The one live panel. Replacing it disposes the previous mount, so the
 		// fallback can be upgraded to the native sidebar when its services appear.
@@ -2249,10 +2335,12 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				self._syncWatch(target)
 			}, 700)
 		}
-		LivePreviewController.prototype._requestWatch = function (route, body) {
+		// Watch-lease transitions go through the Remote `egoBrowser/watch`
+		// endpoint (src/remote.ts) instead of three plugin HTTP routes.
+		LivePreviewController.prototype._requestWatch = function (action, body) {
 			if (this.watchRequest) return null
 			var self = this
-			this.watchRequest = postJson(route, body).finally(function () { self.watchRequest = null })
+			this.watchRequest = egoWatch(action, body).finally(function () { self.watchRequest = null })
 			return this.watchRequest
 		}
 		LivePreviewController.prototype._applyCaptureStatus = function (status) {
@@ -2284,10 +2372,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			if (this.disposed || !this.visible || !targetId) return
 			var self = this
 			if (this.watchStopTimer) { window.clearTimeout(this.watchStopTimer); this.watchStopTimer = null }
-			var route = this.watchStarted ? WATCH_SWITCH_ROUTE : WATCH_START_ROUTE
+			var action = this.watchStarted ? 'switch' : 'start'
 			if (this.watchStarted && this.watchTargetId === targetId && activate !== true) return
 			var body = { clientId: this.clientId, targetId: targetId, maxWidth: this.maxWidthHint, ...(activate === true ? { activate: true } : {}) }
-			var request = this._requestWatch(route, body)
+			var request = this._requestWatch(action, body)
 			if (!request) { this.watchRequest.finally(function () { self._syncWatch(targetId) }); return }
 			request.then(function (status) {
 				self.watchStarted = status && status.ok !== false
@@ -2305,7 +2393,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			var stop = function () {
 				self.watchStopTimer = null
 				self.watchStarted = false; self.watchTargetId = null
-				postJson(WATCH_STOP_ROUTE, { clientId: self.clientId }).catch(function () {})
+				egoWatch('stop', { clientId: self.clientId }).catch(function () {})
 			}
 			if (immediate) stop()
 			else { if (this.watchStopTimer) window.clearTimeout(this.watchStopTimer); this.watchStopTimer = window.setTimeout(stop, 1500) }
@@ -2523,16 +2611,18 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			if (busy !== this.lastSawActive) this.lastSawActive = busy
 			this._recompute()
 		}
-		// Open the pull streams UNLESS the frame relay is disabled. The host's
-		// /api/ego/watch/status is authoritative (`frameRelay:false`), so a stale
-		// client flag can never open a stream the host refuses to serve; when the
-		// relay is off this opens NO EventSource and the Tab renders the disabled
-		// state instead of reconnect-looping.
+		// Open the pull streams UNLESS the frame relay is disabled. The host
+		// snapshot (`egoBrowser/status` → `watch`) is authoritative: its
+		// `frameRelay:false` flag means the host refuses to serve a stream, so a
+		// stale client flag can never open one. When the snapshot is unavailable
+		// (no Remote channel) the stream is attempted anyway — the host route
+		// answers the refusal itself.
 		LivePreviewController.prototype.openStream = function () {
 			if (this.disposed || !this.visible || frameRelayDisabled) return
 			var self = this
-			fetch(WATCH_STATUS_ROUTE, { cache: 'no-store' }).then(function (res) { return res.ok ? res.json() : null }).then(function (status) {
+			refreshHostStatus(true).then(function (snapshot) {
 				if (self.disposed || !self.visible || frameRelayDisabled) return
+				var status = snapshot && snapshot.watch
 				if (frameRelayOff(status)) { self.closeStream(); self._destroyVideo(); self._recompute(); return }
 				self._applyCaptureStatus(status)
 				self._connectStream()
@@ -2567,6 +2657,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 						// worker broadcasts this every keepalive tick (~500ms)
 						// and on tab churn, replacing the old polling loop.
 						self._processSpaces(list)
+						// Same push, second purpose: the host snapshot (executor +
+						// login bridge) is re-read on worker activity instead of on
+						// a client timer (throttled inside refreshHostStatus).
+						void refreshHostStatus()
 					}
 				} catch (e) {}
 			})
@@ -2927,80 +3021,40 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			var sizeSyncOn = sizeSyncState[0]
 			var setSizeSyncOn = sizeSyncState[1]
 
-			// #73: executor diagnostics from the host (resident/one-shot, pid,
-			// age, last rebuild reason). Polled slowly; failures are silent.
-			var residentState = React.useState(null)
-			var residentInfo = residentState[0]
-			var setResidentInfo = residentState[1]
-			React.useEffect(function () {
-				if (!visible) return
-				var disposed = false
-				fetchEgo('/api/ego/executor', { cache: 'no-store' })
-					.then(function (r) { return r.ok ? r.json() : null })
-					.then(function (json) { if (!disposed && json && json.ok) setResidentInfo(json) })
-					.catch(function () {})
-				return function () { disposed = true }
-			}, [visible])
+			// #73 + #69: ONE host snapshot, no polling. `hostStatus` carries the
+			// executor diagnostics (#73), the login-bridge health (#69) and the
+			// worker's watch status; refreshHostStatus() is driven by pushes —
+			// panel actions, SSE `spaces` frames, reconnect and window focus.
+			var hostStatus = useHostStatus(function (s) { return s }, null)
+			var residentInfo = hostStatus.executor
+			var login = hostStatus.login
 
-			// #69 (A) v2: one-click Chrome login-state bridge. The health poll also
-			// starts the host bridge and returns the pairing port / extension path.
-			var chromeLoginState = React.useState({ phase: 'loading', paired: false, busy: false, message: '', code: '', expiresAt: 0, port: 53820, extensionPath: '', tokenPath: '' })
-			var chromeLogin = chromeLoginState[0]
-			var setChromeLogin = chromeLoginState[1]
+			// The bridge's own state rides on that snapshot; only the action
+			// feedback (busy / message / pair code) is local UI state.
+			var chromeUiState = React.useState({ busy: false, message: '', code: '', expiresAt: 0 })
+			var chromeUi = chromeUiState[0]
+			var setChromeUi = chromeUiState[1]
 			var pairOpenState = React.useState(false)
 			var pairOpen = pairOpenState[0]
 			var setPairOpen = pairOpenState[1]
-			React.useEffect(function () {
-				if (!visible) return
-				var disposed = false
-				// Peek only: opening the panel must not start the login bridge
-				// server. The bridge starts when the user clicks Connect.
-				fetchEgo('/api/ego/login-extension/health?peek=1', { cache: 'no-store' })
-					.then(function (r) { return r.ok ? r.json() : null })
-					.then(function (json) {
-						if (disposed || !json) return
-						setChromeLogin(function (prev) {
-							return {
-								...prev,
-								phase: json.ok ? 'ready' : 'error',
-								paired: !!json.paired,
-								port: json.port || prev.port,
-								extensionPath: json.extensionPath || prev.extensionPath,
-								tokenPath: json.tokenPath || prev.tokenPath,
-							}
-						})
-					})
-					.catch(function () {})
-				return function () { disposed = true }
-			}, [visible])
-
-			// Only the open pairing dialog needs live health updates.
+			var chromeLogin = {
+				phase: login ? (login.ok ? 'ready' : 'error') : 'loading',
+				paired: loginPaired(login),
+				busy: chromeUi.busy,
+				message: chromeUi.message,
+				code: chromeUi.code,
+				expiresAt: chromeUi.expiresAt,
+				port: (login && login.port) || 53820,
+				extensionPath: (login && login.extensionPath) || '',
+				tokenPath: (login && login.tokenPath) || '',
+			}
+			// An OPEN pairing popover means the user is pairing right now, so a
+			// short bounded refresh is legitimate here: it tracks the extension's
+			// own 20 s liveness window and stops the moment the popover closes.
 			React.useEffect(function () {
 				if (!pairOpen) return
-				var disposed = false
-				var timer = null
-				var load = function () {
-					fetchEgo('/api/ego/login-extension/health', { cache: 'no-store' })
-						.then(function (r) { return r.ok ? r.json() : null })
-						.then(function (json) {
-							if (disposed || !json) return
-							setChromeLogin(function (prev) {
-								return {
-									...prev,
-									phase: json.ok ? 'ready' : 'error',
-									paired: !!json.paired,
-									port: json.port || prev.port,
-									extensionPath: json.extensionPath || prev.extensionPath,
-									tokenPath: json.tokenPath || prev.tokenPath,
-								}
-							})
-							if (json.paired && timer) { window.clearInterval(timer); timer = null }
-						})
-						.catch(function () {})
-				}
-				load()
-				timer = window.setInterval(load, 2000)
-				return function () { disposed = true; if (timer) window.clearInterval(timer) }
+				var timer = window.setInterval(function () { void refreshHostStatus(true) }, 2000)
+				return function () { window.clearInterval(timer) }
 			}, [pairOpen])
 
 			var loginDomainFromUrl = function (url) {
@@ -3019,21 +3073,22 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 						.then(function (json) {
 							if (json && json.ok) {
 								setPairOpen(true)
-								setChromeLogin(function (prev) { return { ...prev, code: json.code || '', expiresAt: json.expiresAt || 0, port: json.port || prev.port, message: '' } })
+								setChromeUi(function (prev) { return { ...prev, code: json.code || '', expiresAt: json.expiresAt || 0, message: '' } })
+								void refreshHostStatus(true)
 							} else {
-								setChromeLogin(function (prev) { return { ...prev, message: (json && json.error) || '无法启动 Chrome 登录桥接' } })
+								setChromeUi(function (prev) { return { ...prev, message: (json && json.error) || '无法启动 Chrome 登录桥接' } })
 							}
 						})
-						.catch(function (err) { setChromeLogin(function (prev) { return { ...prev, message: String((err && err.message) || err) } }) })
+						.catch(function (err) { setChromeUi(function (prev) { return { ...prev, message: String((err && err.message) || err) } }) })
 					return
 				}
 				var url = state.currentSpace && state.currentSpace.url
 				var domain = loginDomainFromUrl(url)
 				if (!domain) {
-					setChromeLogin(function (prev) { return { ...prev, message: wt('chromeLoginNoPage') } })
+					setChromeUi(function (prev) { return { ...prev, message: wt('chromeLoginNoPage') } })
 					return
 				}
-				setChromeLogin(function (prev) { return { ...prev, busy: true, message: wt('chromeLoginWaiting') } })
+				setChromeUi(function (prev) { return { ...prev, busy: true, message: wt('chromeLoginWaiting') } })
 				fetchEgo('/api/ego/login-extension/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ domains: [domain] }) })
 					.then(function (r) { return r.json() })
 					.then(function (json) {
@@ -3046,7 +3101,11 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 								.then(function (status) {
 									if (status && status.state === 'done' && status.report) {
 										var report = status.report
-										setChromeLogin(function (prev) {
+										// The import wrote cookies into the agent browser's
+										// profile: refresh the host snapshot so the panel
+										// reflects it without another user action.
+										void refreshHostStatus(true)
+										setChromeUi(function (prev) {
 											return {
 												...prev,
 												busy: false,
@@ -3056,7 +3115,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 											}
 										})
 									} else if (Date.now() - started > 125000) {
-										setChromeLogin(function (prev) { return { ...prev, busy: false, message: wt('chromeLoginTimeout') } })
+										setChromeUi(function (prev) { return { ...prev, busy: false, message: wt('chromeLoginTimeout') } })
 									} else {
 										window.setTimeout(tick, 800)
 									}
@@ -3065,7 +3124,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 						}
 						window.setTimeout(tick, 500)
 					})
-					.catch(function (err) { setChromeLogin(function (prev) { return { ...prev, busy: false, message: String((err && err.message) || err) } }) })
+					.catch(function (err) { setChromeUi(function (prev) { return { ...prev, busy: false, message: String((err && err.message) || err) } }) })
 			}
 
 			// Aspect-ratio presets: one-shot resizes, independent of the drag

@@ -16,6 +16,7 @@
 ego-browser/
   package.json          # 版本号、build=语法校验、exports
   lib/index.js          # [后端] 插件入口 + 30+ ego_* 工具注册（权威）
+  src/remote.ts         # [后端] Remote 服务 egoBrowser/status + egoBrowser/watch（前端走 connection.rpc，禁止轮询）
   lib/cast-server.js    # [后端] host 路由：把前端 /api/ego/* 转发到观察窗 worker
   lib/ffmpeg-installation.js # [后端] FFmpeg 检测、下载、校验与托管缓存
   lib/ffmpeg-manifest.js # 固定平台资源、版本、SHA-256 与 GitHub 镜像改写
@@ -72,7 +73,8 @@ ego-browser/
 
 维护时要同步注意：
 - 数据源：`/api/ego/stream` 提供元数据、CDP JPEG 与 capture status；`/api/ego/video` 提供 FFmpeg 二进制 fMP4
-- 生命周期：浮窗/side Tab 通过 `/api/ego/watch/*` 获取租约；组件逻辑隐藏或 dispose 时释放，`document.hidden` 不释放，以避免后台切换重建 WGC/FFmpeg
+- 宿主状态：executor 诊断 / 登录桥健康 / worker watch 状态统一来自宿主 Remote 服务 `egoBrowser/status`（`src/remote.ts`，经 `connection.rpc` 调用）；**不得**再用前端定时器轮询插件路由。刷新时机 = 面板挂载 / `connection/reset` / 窗口 focus / SSE `spaces` 帧（4s 节流）/ 用户动作
+- 生命周期：浮窗/side Tab 通过 Remote 端点 `egoBrowser/watch`（action = start/switch/stop）获取/释放租约；组件逻辑隐藏或 dispose 时释放，`document.hidden` 不释放，以避免后台切换重建 WGC/FFmpeg
 - renderer：CDP 用 `<img>` + rAF 最新帧；FFmpeg 用 generation-aware `MediaSource` + `<video>`
 - 坐标交互：`makeDraggable`（球/窗口各自拖动）、`browserXY`（坐标逆映射）
 - 键盘交互：画面点击聚焦透明 textarea；beforeinput/composition 发送 `Input.insertText`，控制键/快捷键发送 keyDown/keyUp。禁止 document 全局键盘监听

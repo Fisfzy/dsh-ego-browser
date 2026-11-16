@@ -2,28 +2,31 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
-## [0.14.0] - 2026-11-15 — 侧栏基础浏览器
+## [0.14.0] - 2026-11-16 — 侧栏基础浏览器
 
 ### 新增
 - **标签栏 `+` 新建独立窗口**：放在标签栏最右侧，点击直接创建 `about:blank` 的独立 Chrome 窗口并激活；不做菜单，不额外询问 URL。
 - **常驻地址栏**：显示当前页面 URL，可直接编辑、Enter/Go 访问；没有页面时输入 URL 会先创建窗口再访问。
 - **前进/后退/刷新**：新增 `/api/ego/history`，worker 通过 `Page.getNavigationHistory` / `Page.navigateToHistoryEntry` 执行。
 - **用户操作激活真实 Chrome**：新建窗口/切换标签/面板导航走显式激活；模型 `ego_*` 仍保持 #99 不抢前台。
-- **轮询优化**：去掉 panel 的 5s watch 续租、8s 登录健康轮询、15s executor 轮询；watch lease 由已打开的 SSE 流在 worker 内续期，登录健康只在配对弹窗打开时短轮询，executor 在 panel 可见时只拉一次。
+- **watch lease 不再由 client 轮询续租**：worker 在 SSE 连接打开期间本地 `touchAll()` 续期，面板稳定打开时不再每 5 秒发一次租约请求。
 
 ### 测试
-- 新增 `tests/panel-browser-controls.test.ts`、`tests/polling-efficiency.test.ts`；全量 **461 passed / 8 skipped**；typecheck/build 通过。
+- 新增 `tests/panel-browser-controls.test.ts`、`tests/polling-efficiency.test.ts`；全量 **469 passed / 8 skipped**；typecheck/build 通过。
 
-## [0.13.1] - 2026-11-15 — 观察窗/截图稳定性修复
+## [0.13.1] - 2026-11-16 — 观察窗稳定性 + DSH Remote 宿主通道
 
-### 修复
+### 修复 / 变更
 - **新窗口/后台 target 冻结**：capture session 启用 `Emulation.setFocusEmulationEnabled`，隐藏 target 也能产生 screencast 帧；实测后台动画页 3 秒 99 帧。
 - **侧栏切换不跟随真实 Chrome**：用户点击侧栏 tab 时传 `activate:true`，worker 直连 CDP 执行 `Target.activateTarget` + `Page.bringToFront`；模型 `ego_*` 仍保持 #99 不抢前台。
 - **capture 会话失效不恢复**：`Session with given id not found` 时清除 session、重新 attach、重试一次；client 收到 failed 时重建 watch lease。
 - **保存密码气泡卡住 screencast**：agent profile 冷启动默认关闭 Chrome 密码管理器（`credentials_enable_service=false`、`profile.password_manager_enabled=false`）；`EGO_LINUX_DISABLE_PASSWORD_MANAGER=0` 可恢复。
+- **观察窗宿主状态改走 DSH Remote**：`GET /api/ego/executor`、`GET /api/ego/login-extension/health`、`GET/POST /api/ego/watch/*` 下线，改由 `egoBrowser/status` + `egoBrowser/watch` 两个 Remote 端点承载；前端通过 `connection.rpc.call('/api', ...)` 复用宿主鉴权/信封/错误码。
+- **状态刷新改为推送驱动**：面板挂载、`connection/reset`、窗口 focus、SSE `spaces` 帧（4s 节流）和用户动作触发；只有配对浮层打开期间保留 2s 自终止刷新。
 
 ### 测试
-- 新增 `tests/capture-recovery.test.ts`；全量 **455 passed / 8 skipped**；typecheck/build 通过。
+- 新增 `tests/capture-recovery.test.ts`、`tests/remote-endpoints.test.ts`；全量 **469 passed / 8 skipped**；typecheck/build 通过。
+
 
 ## [0.13.0] - 2026-11-15 — 回放与观察窗幽灵光标
 

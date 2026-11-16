@@ -53,6 +53,7 @@
     "@deepseek-ai/dsh-client-ui-slots": ">=0.1.2-rc.1",
     "@deepseek-ai/dsh-settings": ">=0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.2-rc.1",
     "react": "^18.2.0",
     "schemastery": "^3.18.0"
   },
@@ -75,6 +76,9 @@
     "@deepseek-ai/dsh-tools": {
       "optional": true
     },
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    },
     "react": {
       "optional": true
     },
@@ -83,11 +87,13 @@
     }
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1",
     "@types/node": "^22.20.1",
     "@types/react": "~18.3.31",
     "@types/ws": "^8.5.10",
     "jsdom": "^26.0.0",
-    "tsdown": "^0.15.0",
+    "tsdown": "^0.23.7",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
     "ws": "^8.18.0"
