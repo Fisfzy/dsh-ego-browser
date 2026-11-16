@@ -4,17 +4,17 @@ import { createServer } from "node:http";
 import { constants, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile as execFile$1, execFileSync, spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { promisify } from "node:util";
-//#region \0rolldown/runtime.js
+// \0rolldown/runtime.js
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __commonJSMin = (cb, mod) => () => (mod || (cb((mod = { exports: {} }).exports, mod), cb = null), mod.exports);
+var __commonJSMin = (cb, mod) => () => (mod || (cb((mod = { exports: {} }).exports, mod, mod.exports), cb = null), mod.exports);
 var __copyProps = (to, from, except, desc) => {
 	if (from && typeof from === "object" || typeof from === "function") for (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) {
 		key = keys[i];
@@ -30,8 +30,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 	enumerable: true
 }) : target, mod));
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/constants.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/constants.js
 var require_constants = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const BINARY_TYPES = [
 		"nodebuffer",
@@ -53,8 +52,7 @@ var require_constants = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		NOOP: () => {}
 	};
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/buffer-util.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/buffer-util.js
 var require_buffer_util = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const { EMPTY_BUFFER } = require_constants();
 	const FastBuffer = Buffer[Symbol.species];
@@ -153,8 +151,7 @@ var require_buffer_util = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		};
 	} catch (e) {}
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/limiter.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/limiter.js
 var require_limiter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const kDone = Symbol("kDone");
 	const kRun = Symbol("kRun");
@@ -174,7 +171,7 @@ var require_limiter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				this.pending--;
 				this[kRun]();
 			};
-			this.concurrency = concurrency || Infinity;
+			this.concurrency = concurrency || 1e400;
 			this.jobs = [];
 			this.pending = 0;
 		}
@@ -204,8 +201,7 @@ var require_limiter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	};
 	module.exports = Limiter;
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/permessage-deflate.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const zlib = __require("zlib");
 	const bufferUtil = require_buffer_util();
@@ -540,8 +536,7 @@ var require_permessage_deflate = /* @__PURE__ */ __commonJSMin(((exports, module
 		this[kCallback](err);
 	}
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/validation.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/validation.js
 var require_validation = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const { isUtf8 } = __require("buffer");
 	const { hasBlob } = require_constants();
@@ -736,8 +731,7 @@ var require_validation = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		};
 	} catch (e) {}
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/receiver.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/receiver.js
 var require_receiver = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const { Writable } = __require("stream");
 	const PerMessageDeflate = require_permessage_deflate();
@@ -1199,10 +1193,9 @@ var require_receiver = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	};
 	module.exports = Receiver;
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/sender.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/sender.js
 var require_sender = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	const { Duplex: Duplex$3 } = __require("stream");
+	const { Duplex } = __require("stream");
 	const { randomFillSync } = __require("crypto");
 	const { types: { isUint8Array } } = __require("util");
 	const PerMessageDeflate = require_permessage_deflate();
@@ -1697,8 +1690,7 @@ var require_sender = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		sender.onerror(err);
 	}
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/event-target.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/event-target.js
 var require_event_target = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const { kForOnEventAttribute, kListener } = require_constants();
 	const kCode = Symbol("kCode");
@@ -1928,8 +1920,7 @@ var require_event_target = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		else listener.call(thisArg, event);
 	}
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/extension.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/extension.js
 var require_extension = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const { tokenChars } = require_validation();
 	/**
@@ -2074,17 +2065,16 @@ var require_extension = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		parse
 	};
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/websocket.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/websocket.js
 var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	const EventEmitter$1 = __require("events");
+	const EventEmitter = __require("events");
 	const https = __require("https");
-	const http$1 = __require("http");
+	const http = __require("http");
 	const net = __require("net");
 	const tls = __require("tls");
-	const { randomBytes, createHash: createHash$1 } = __require("crypto");
-	const { Duplex: Duplex$2, Readable } = __require("stream");
-	const { URL: URL$1 } = __require("url");
+	const { randomBytes, createHash } = __require("crypto");
+	const { Duplex, Readable } = __require("stream");
+	const { URL } = __require("url");
 	const PerMessageDeflate = require_permessage_deflate();
 	const Receiver = require_receiver();
 	const Sender = require_sender();
@@ -2107,7 +2097,7 @@ var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	*
 	* @extends EventEmitter
 	*/
-	var WebSocket = class WebSocket extends EventEmitter$1 {
+	var WebSocket = class WebSocket extends EventEmitter {
 		/**
 		* Create a new `WebSocket`.
 		*
@@ -2627,9 +2617,9 @@ var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		websocket._closeTimeout = opts.closeTimeout;
 		if (!protocolVersions.includes(opts.protocolVersion)) throw new RangeError(`Unsupported protocol version: ${opts.protocolVersion} (supported versions: ${protocolVersions.join(", ")})`);
 		let parsedUrl;
-		if (address instanceof URL$1) parsedUrl = address;
+		if (address instanceof URL) parsedUrl = address;
 		else try {
-			parsedUrl = new URL$1(address);
+			parsedUrl = new URL(address);
 		} catch {
 			throw new SyntaxError(`Invalid URL: ${address}`);
 		}
@@ -2652,7 +2642,7 @@ var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 		const defaultPort = isSecure ? 443 : 80;
 		const key = randomBytes(16).toString("base64");
-		const request = isSecure ? https.request : http$1.request;
+		const request = isSecure ? https.request : http.request;
 		const protocolSet = /* @__PURE__ */ new Set();
 		let perMessageDeflate;
 		opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
@@ -2737,7 +2727,7 @@ var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				req.abort();
 				let addr;
 				try {
-					addr = new URL$1(location, address);
+					addr = new URL(location, address);
 				} catch (e) {
 					emitErrorAndClose(websocket, /* @__PURE__ */ new SyntaxError(`Invalid URL: ${location}`));
 					return;
@@ -2754,7 +2744,7 @@ var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				abortHandshake(websocket, socket, "Invalid Upgrade header");
 				return;
 			}
-			const digest = createHash$1("sha1").update(key + GUID).digest("base64");
+			const digest = createHash("sha1").update(key + GUID).digest("base64");
 			if (res.headers["sec-websocket-accept"] !== digest) {
 				abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
 				return;
@@ -3067,11 +3057,10 @@ var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/stream.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/stream.js
 var require_stream = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	require_websocket();
-	const { Duplex: Duplex$1 } = __require("stream");
+	const { Duplex } = __require("stream");
 	/**
 	* Emits the `'close'` event on a stream.
 	*
@@ -3110,7 +3099,7 @@ var require_stream = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	*/
 	function createWebSocketStream(ws, options) {
 		let terminateOnDestroy = true;
-		const duplex = new Duplex$1({
+		const duplex = new Duplex({
 			...options,
 			autoDestroy: false,
 			emitClose: false,
@@ -3183,8 +3172,7 @@ var require_stream = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	}
 	module.exports = createWebSocketStream;
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/subprotocol.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/subprotocol.js
 var require_subprotocol = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const { tokenChars } = require_validation();
 	/**
@@ -3222,8 +3210,7 @@ var require_subprotocol = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	}
 	module.exports = { parse };
 }));
-//#endregion
-//#region node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/websocket-server.js
+// node_modules/.pnpm/ws@8.21.3/node_modules/ws/lib/websocket-server.js
 var require_websocket_server = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	const EventEmitter = __require("events");
 	const http = __require("http");
@@ -3617,8 +3604,7 @@ require_sender();
 require_subprotocol();
 var import_websocket = /* @__PURE__ */ __toESM(require_websocket(), 1);
 require_websocket_server();
-//#endregion
-//#region src/worker/cdp-client.ts
+// src/worker/cdp-client.ts
 var CdpClient = class {
 	ws;
 	nextId;
@@ -3700,8 +3686,7 @@ var CdpClient = class {
 		};
 	}
 };
-//#endregion
-//#region src/worker/capture-cdp.ts
+// src/worker/capture-cdp.ts
 var TargetSessions = class {
 	cdp;
 	sessions;
@@ -4078,8 +4063,7 @@ var CdpCaptureBackend = class {
 		}, interval);
 	}
 };
-//#endregion
-//#region src/worker/capture-manager.ts
+// src/worker/capture-manager.ts
 var CaptureManager = class {
 	backendFactories;
 	getConfig;
@@ -4337,8 +4321,7 @@ var CaptureManager = class {
 		await this.stop("disposed");
 	}
 };
-//#endregion
-//#region src/worker/snapshot.ts
+// src/worker/snapshot.ts
 /** A single viewport PNG on the existing control session; never starts a watch. */
 async function captureSnapshot(sessions, targetId, maxWidth) {
 	const viewport = (await sessions.call(targetId, "Runtime.evaluate", {
@@ -4362,8 +4345,7 @@ async function captureSnapshot(sessions, targetId, maxWidth) {
 	if (!image.data) throw new Error("snapshot unavailable");
 	return Buffer.from(image.data, "base64");
 }
-//#endregion
-//#region src/worker/mp4-fragments.ts
+// src/worker/mp4-fragments.ts
 const MAX_BOX_BYTES = 67108864;
 var Mp4FragmentParser = class {
 	onInit;
@@ -4422,9 +4404,8 @@ var Mp4FragmentParser = class {
 		if (type !== "free" && type !== "sidx") throw new Error(`unexpected MP4 media box ${type}`);
 	}
 };
-//#endregion
-//#region src/worker/capture-platform.ts
-const execFile$1 = promisify(execFile);
+// src/worker/capture-platform.ts
+const execFile = promisify(execFile$1);
 function buildCaptureInput({ platform = process.platform, env = process.env, source, fps, maxWidth, encoder }) {
 	if (platform === "win32") {
 		if (source.sourceType !== "window-hwnd" || !source.hwnd) {
@@ -4565,7 +4546,7 @@ function selectWindowCandidate(windows, bounds, targetTitle = "") {
 	}
 	return ranked[0].window;
 }
-async function enumerateWindowsForPid(browserPid, run = execFile$1) {
+async function enumerateWindowsForPid(browserPid, run = execFile) {
 	if (!Number.isInteger(browserPid) || browserPid <= 0) return [];
 	const script = `
 Add-Type -TypeDefinition @'
@@ -4709,8 +4690,7 @@ async function resolveCaptureSource({ sessions, targetId, browserPid, platform =
 		scaleFactor: dpr
 	};
 }
-//#endregion
-//#region src/worker/capture-ffmpeg.ts
+// src/worker/capture-ffmpeg.ts
 const defaultSpawn = spawn;
 function runProbe(path, argv, spawn, timeoutMs, captureOutput = false) {
 	return new Promise((resolve) => {
@@ -5135,8 +5115,7 @@ function computeWindowBounds(viewport, chromeFrame = {
 		windowState: "normal"
 	};
 }
-//#endregion
-//#region src/worker/ego-cast-worker.ts
+// src/worker/ego-cast-worker.ts
 const SENTINEL = "@@DSH_RESULT@@";
 const HOME = homedir() || process.env.HOME || process.env.USERPROFILE || "/root";
 const IS_WIN = platform() === "win32";
@@ -5998,7 +5977,6 @@ main().catch((error) => {
 	console.error("ego-cast-worker failed:", error.stack || error.message);
 	process.exit(1);
 });
-//#endregion
 export {};
 
 //# sourceMappingURL=ego-cast-worker.mjs.map
