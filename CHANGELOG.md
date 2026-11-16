@@ -22,10 +22,13 @@
 - **capture 会话失效不恢复**：`Session with given id not found` 时清除 session、重新 attach、重试一次；client 收到 failed 时重建 watch lease。
 - **保存密码气泡卡住 screencast**：agent profile 冷启动默认关闭 Chrome 密码管理器（`credentials_enable_service=false`、`profile.password_manager_enabled=false`）；`EGO_LINUX_DISABLE_PASSWORD_MANAGER=0` 可恢复。
 - **观察窗宿主状态改走 DSH Remote**：`GET /api/ego/executor`、`GET /api/ego/login-extension/health`、`GET/POST /api/ego/watch/*` 下线，改由 `egoBrowser/status` + `egoBrowser/watch` 两个 Remote 端点承载；前端通过 `connection.rpc.call('/api', ...)` 复用宿主鉴权/信封/错误码。
+- **Remote 拆成 lazy entry**：`lib/index.js` 不再静态 import `@deepseek-ai/dsh-typert-protocol`，只有 webServer 激活后才动态加载 `lib/remote.js`；没有该 optional peer 的 headless 安装可以正常加载插件。
 - **状态刷新改为推送驱动**：面板挂载、`connection/reset`、窗口 focus、SSE `spaces` 帧（4s 节流）和用户动作触发；只有配对浮层打开期间保留 2s 自终止刷新。
+- **relay 重新启用**：host 快照的 `relay:true` 会通过 `frameRelaySet(false)` 清除旧的禁用状态，不再永久卡在 disabled。
+- **配对过期**：`lastSeenAt` 到期时本地安排一次 deadline render，并在点击登录时重新检查 freshness，避免 20s 后仍按“已配对”走 cookie 导入。
 
 ### 测试
-- 新增 `tests/capture-recovery.test.ts`、`tests/remote-endpoints.test.ts`；全量 **469 passed / 8 skipped**；typecheck/build 通过。
+- 新增 `tests/capture-recovery.test.ts`、`tests/remote-endpoints.test.ts`；全量 **471 passed / 8 skipped**；typecheck/build 通过。
 
 
 ## [0.13.0] - 2026-11-15 — 回放与观察窗幽灵光标

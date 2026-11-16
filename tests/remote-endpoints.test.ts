@@ -29,19 +29,36 @@ describe("remote endpoints", () => {
     const markers = remoteMethods(Object.create(EgoRemoteGateway.prototype) as object);
     // Both endpoints are unary: a stream marker would need the mux carrier.
     expect(markers.every((marker) => marker.mode === undefined)).toBe(true);
-    const bundlePath = fileURLToPath(new URL("../lib/index.js", import.meta.url));
-    if (!existsSync(bundlePath)) return;
-    const bundle = readFileSync(bundlePath, "utf8");
-    // No decorator syntax may survive the bundle (it is a SyntaxError at load)
-    // and the parameter must not have been renamed by the bundler.
-    expect(bundle).not.toMatch(/^\s*@Remote\(/m);
-    expect(bundle).toContain("watch(egoWatchRequest) {");
+    const bundles = ["../lib/index.js", "../lib/remote.js"]
+      .map((file) => fileURLToPath(new URL(file, import.meta.url)))
+      .filter((file) => existsSync(file));
+    for (const bundlePath of bundles) {
+      const bundle = readFileSync(bundlePath, "utf8");
+      // No decorator syntax may survive the bundle (it is a SyntaxError at load).
+      expect(bundle).not.toMatch(/^\s*@Remote\(/m);
+    }
+    // The lazy Remote entry (not the eager index bundle) owns the method.
+    const remotePath = fileURLToPath(new URL("../lib/remote.js", import.meta.url));
+    if (existsSync(remotePath)) {
+      expect(readFileSync(remotePath, "utf8")).toContain("watch(egoWatchRequest) {");
+    }
+  });
+
+  it("keeps the optional protocol peer out of the eager host bundle", () => {
+    const indexBundle = fileURLToPath(new URL("../lib/index.js", import.meta.url));
+    if (!existsSync(indexBundle)) return;
+    const index = readFileSync(indexBundle, "utf8");
+    expect(index).not.toContain('from "@deepseek-ai/dsh-typert-protocol"');
+    expect(index).toContain('import("./remote.js")');
+    expect(existsSync(fileURLToPath(new URL("../lib/remote.js", import.meta.url)))).toBe(true);
   });
 
   it("validates lease actions and omits absent fields", () => {
     expect(normalizeWatchRequest({ action: "stop", clientId: "c1" })).toEqual({ action: "stop", clientId: "c1" });
     expect(normalizeWatchRequest({ action: "switch", targetId: "tab-1", maxWidth: 1280 }))
       .toEqual({ action: "switch", targetId: "tab-1", maxWidth: 1280 });
+    expect(normalizeWatchRequest({ action: "switch", targetId: "tab-1", activate: true }))
+      .toEqual({ action: "switch", targetId: "tab-1", activate: true });
     // JSON has no undefined: an absent or empty field must never cross the wire.
     expect(normalizeWatchRequest({ action: "start", clientId: "", maxWidth: 0 })).toEqual({ action: "start" });
     expect(() => normalizeWatchRequest({ action: "poll" })).toThrow(/watch action/);
@@ -69,5 +86,11 @@ describe("panel host channel", () => {
   it("carries no polling timer for host state", () => {
     // The removed loops were `setInterval(load, 15000 | 8000)`.
     expect(client).not.toMatch(/setInterval\(load/);
+  });
+
+  it("applies relay snapshots in both directions and expires pairing locally", () => {
+    expect(client).toContain("frameRelaySet(value.relay !== true)");
+    expect(client).toContain("if (!loginPaired(login))");
+    expect(client).toContain("setLoginExpiryVersion");
   });
 });

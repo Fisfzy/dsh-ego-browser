@@ -124,6 +124,11 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 					s.watch = value.watch || null
 					s.loaded = true
 				})
+				// The host is authoritative for relay state. A focus/reset
+				// snapshot must be able to RE-ENABLE a relay that was disabled
+				// earlier, so apply both edges through the listeners instead of
+				// only latching "off" on a disabled watch payload.
+				if (typeof value.relay === 'boolean') frameRelaySet(value.relay !== true)
 				return value
 			}, function () { hostStatusInFlight = null; return null })
 			return hostStatusInFlight
@@ -3028,6 +3033,22 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			var hostStatus = useHostStatus(function (s) { return s }, null)
 			var residentInfo = hostStatus.executor
 			var login = hostStatus.login
+			var loginExpiryState = React.useState(0)
+			var loginExpiryVersion = loginExpiryState[0]
+			var setLoginExpiryVersion = loginExpiryState[1]
+			// `loginPaired()` is time-derived, but a quiet panel receives no
+			// spaces pushes, so nothing would re-render on expiry. Schedule one
+			// local deadline render (and refresh the host snapshot) per pairing.
+			React.useEffect(function () {
+				if (!loginPaired(login)) return
+				var seen = Number(login && login.lastSeenAt)
+				var deadline = Number.isFinite(seen) && seen > 0 ? seen + LOGIN_PAIR_WINDOW_MS : Date.now() + LOGIN_PAIR_WINDOW_MS
+				var timer = window.setTimeout(function () {
+					setLoginExpiryVersion(function (v) { return v + 1 })
+					void refreshHostStatus(true)
+				}, Math.max(0, deadline - Date.now()) + 25)
+				return function () { window.clearTimeout(timer) }
+			}, [login && login.lastSeenAt, login && login.paired, loginExpiryVersion])
 
 			// The bridge's own state rides on that snapshot; only the action
 			// feedback (busy / message / pair code) is local UI state.
@@ -3067,7 +3088,9 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			}
 			var startChromeLogin = function () {
 				if (chromeLogin.busy) return
-				if (!chromeLogin.paired) {
+				// Re-check freshness at click time: the rendered `paired` flag can
+				// be older than the bridge's 20s liveness deadline.
+				if (!loginPaired(login)) {
 					fetchEgo('/api/ego/login-extension/pair-code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
 						.then(function (r) { return r.json() })
 						.then(function (json) {
