@@ -18,6 +18,10 @@ const server = http.createServer((req, res) => {
   if (path === '/api/health') return json(res, { ok: true })
   if (path === '/api/spaces') return json(res, { ok: true, spaces: [{ targetId: 'tab-1' }] })
   if (path === '/api/watch/status') return json(res, { ok: true, state: 'streaming' })
+  // The watch lease lives in the Remote control plane now (egoBrowser/watch),
+  // but the worker still owns it: the host proxies these three paths.
+  if (path === '/api/watch/start' || path === '/api/watch/switch') return json(res, { ok: true, state: 'streaming', targetId: 'tab-1' })
+  if (path === '/api/watch/stop') return json(res, { ok: true, state: 'idle' })
   if (path === '/api/config') return json(res, { ok: true })
   if (path === '/api/stream') {
     res.writeHead(200, { 'content-type': 'text/event-stream' })
