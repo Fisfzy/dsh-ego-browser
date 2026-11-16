@@ -436,18 +436,6 @@ export async function getLoginExtensionHealth(): Promise<LoginExtensionHealth> {
  * uses this for its first render, so simply opening the sidebar no longer starts
  * a bridge/server just to answer a health poll.
  */
-export function peekLoginExtensionHealth(): LoginExtensionHealth {
-  const state = bridge
-  return {
-    ok: true,
-    paired: !!state && Date.now() - state.lastSeenAt < 20_000,
-    lastSeenAt: state ? state.lastSeenAt : 0,
-    port: state?.port ?? (Number(process.env.EGO_LOGIN_EXTENSION_PORT) || LOGIN_EXTENSION_PORT),
-    tokenPath: loginExtensionTokenPath(),
-    extensionPath: fileURLToPath(new URL('../extension', import.meta.url)),
-  }
-}
-
 export async function createLoginExtensionPairingCode(): Promise<LoginExtensionPairing> {
   try {
     const state = await ensureBridge()
