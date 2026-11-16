@@ -21,6 +21,7 @@ import {
   createLoginExtensionPairingCode,
   getLoginExtensionHealth,
   getLoginExtensionJob,
+  peekLoginExtensionHealth,
   startLoginExtensionJob,
   stopLoginExtensionBridge,
 } from './login-extension.ts'
@@ -801,10 +802,13 @@ export function initCastServer(
   const disposeLoginBridge = [
     server.register({
       kind: 'exact', path: '/api/ego/login-extension/health',
-      handler: async (_req: unknown, resRaw: unknown) => {
+      handler: async (reqRaw: unknown, resRaw: unknown) => {
         const res = resRaw as ServerResponse
-        try { return sendJson(res, 200, await getLoginExtensionHealth()) }
-        catch (err) { return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) }) }
+        try {
+          const req = reqRaw as IncomingMessage
+          const peek = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('peek') === '1'
+          return sendJson(res, 200, peek ? peekLoginExtensionHealth() : await getLoginExtensionHealth())
+        } catch (err) { return sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) }) }
       },
     }),
     server.register({

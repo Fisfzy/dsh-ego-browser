@@ -4338,6 +4338,16 @@ var CaptureManager = class {
 			watchers: this.leases.size
 		};
 	}
+	/**
+	* Extend every active watch lease. The long-lived SSE stream calls this
+	* periodically, so the panel no longer has to POST /api/watch/start every
+	* 5 seconds just to keep the capture alive.
+	*/
+	touchAll() {
+		if (this.leases.size === 0) return;
+		const expiresAt = this.now() + this.leaseTtlMs;
+		for (const lease of this.leases.values()) lease.expiresAt = expiresAt;
+	}
 	#setStatus(status) {
 		this.statusValue = {
 			...this.statusValue,
@@ -5390,6 +5400,9 @@ const manager = new CaptureManager({
 		}
 	}
 });
+setInterval(() => {
+	if (sseClients.size > 0) manager.touchAll();
+}, 3e4).unref?.();
 async function readBrowserState() {
 	try {
 		return JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(BROWSER_STATE_FILE, "utf8")));

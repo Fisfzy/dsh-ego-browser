@@ -9,9 +9,10 @@
 - **常驻地址栏**：显示当前页面 URL，可直接编辑、Enter/Go 访问；没有页面时输入 URL 会先创建窗口再访问。
 - **前进/后退/刷新**：新增 `/api/ego/history`，worker 通过 `Page.getNavigationHistory` / `Page.navigateToHistoryEntry` 执行。
 - **用户操作激活真实 Chrome**：新建窗口/切换标签/面板导航走显式激活；模型 `ego_*` 仍保持 #99 不抢前台。
+- **轮询优化**：去掉 panel 的 5s watch 续租、8s 登录健康轮询、15s executor 轮询；watch lease 由已打开的 SSE 流在 worker 内续期，登录健康只在配对弹窗打开时短轮询，executor 在 panel 可见时只拉一次。
 
 ### 测试
-- 新增 `tests/panel-browser-controls.test.ts`；全量 **458 passed / 8 skipped**；typecheck/build 通过。
+- 新增 `tests/panel-browser-controls.test.ts`、`tests/polling-efficiency.test.ts`；全量 **461 passed / 8 skipped**；typecheck/build 通过。
 
 ## [0.13.1] - 2026-11-15 — 观察窗/截图稳定性修复
 

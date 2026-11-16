@@ -2297,13 +2297,11 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				self._applyCaptureStatus(status)
 				if (!self.visible) self._stopWatch(true)
 			}).catch(function () {})
-			if (!this.watchRenewTimer) this.watchRenewTimer = window.setInterval(function () {
-				if (self.visible && self.watchTargetId) { var renewal = self._requestWatch(WATCH_START_ROUTE, { clientId: self.clientId, targetId: self.watchTargetId, maxWidth: self.maxWidthHint }); if (renewal) renewal.then(function (status) { self._applyCaptureStatus(status) }).catch(function () {}) }
-			}, 5000)
+			// The worker renews watch leases while the SSE stream is open; no
+			// per-panel 5s polling timer is needed here.
 		}
 		LivePreviewController.prototype._stopWatch = function (immediate) {
 			var self = this
-			if (this.watchRenewTimer) { window.clearInterval(this.watchRenewTimer); this.watchRenewTimer = null }
 			var stop = function () {
 				self.watchStopTimer = null
 				self.watchStarted = false; self.watchTargetId = null
@@ -2935,17 +2933,14 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			var residentInfo = residentState[0]
 			var setResidentInfo = residentState[1]
 			React.useEffect(function () {
+				if (!visible) return
 				var disposed = false
-				var load = function () {
-					fetchEgo('/api/ego/executor', { cache: 'no-store' })
-						.then(function (r) { return r.ok ? r.json() : null })
-						.then(function (json) { if (!disposed && json && json.ok) setResidentInfo(json) })
-						.catch(function () {})
-				}
-				load()
-				var timer = window.setInterval(load, 15000)
-				return function () { disposed = true; window.clearInterval(timer) }
-			}, [])
+				fetchEgo('/api/ego/executor', { cache: 'no-store' })
+					.then(function (r) { return r.ok ? r.json() : null })
+					.then(function (json) { if (!disposed && json && json.ok) setResidentInfo(json) })
+					.catch(function () {})
+				return function () { disposed = true }
+			}, [visible])
 
 			// #69 (A) v2: one-click Chrome login-state bridge. The health poll also
 			// starts the host bridge and returns the pairing port / extension path.
@@ -2956,7 +2951,34 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			var pairOpen = pairOpenState[0]
 			var setPairOpen = pairOpenState[1]
 			React.useEffect(function () {
+				if (!visible) return
 				var disposed = false
+				// Peek only: opening the panel must not start the login bridge
+				// server. The bridge starts when the user clicks Connect.
+				fetchEgo('/api/ego/login-extension/health?peek=1', { cache: 'no-store' })
+					.then(function (r) { return r.ok ? r.json() : null })
+					.then(function (json) {
+						if (disposed || !json) return
+						setChromeLogin(function (prev) {
+							return {
+								...prev,
+								phase: json.ok ? 'ready' : 'error',
+								paired: !!json.paired,
+								port: json.port || prev.port,
+								extensionPath: json.extensionPath || prev.extensionPath,
+								tokenPath: json.tokenPath || prev.tokenPath,
+							}
+						})
+					})
+					.catch(function () {})
+				return function () { disposed = true }
+			}, [visible])
+
+			// Only the open pairing dialog needs live health updates.
+			React.useEffect(function () {
+				if (!pairOpen) return
+				var disposed = false
+				var timer = null
 				var load = function () {
 					fetchEgo('/api/ego/login-extension/health', { cache: 'no-store' })
 						.then(function (r) { return r.ok ? r.json() : null })
@@ -2968,17 +2990,18 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 									phase: json.ok ? 'ready' : 'error',
 									paired: !!json.paired,
 									port: json.port || prev.port,
-													extensionPath: json.extensionPath || prev.extensionPath,
+									extensionPath: json.extensionPath || prev.extensionPath,
 									tokenPath: json.tokenPath || prev.tokenPath,
 								}
 							})
+							if (json.paired && timer) { window.clearInterval(timer); timer = null }
 						})
 						.catch(function () {})
 				}
 				load()
-				var timer = window.setInterval(load, 8000)
-				return function () { disposed = true; window.clearInterval(timer) }
-			}, [])
+				timer = window.setInterval(load, 2000)
+				return function () { disposed = true; if (timer) window.clearInterval(timer) }
+			}, [pairOpen])
 
 			var loginDomainFromUrl = function (url) {
 				try {

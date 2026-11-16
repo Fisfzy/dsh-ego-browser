@@ -236,6 +236,14 @@ const manager = new CaptureManager({
   },
 })
 
+// The panel's SSE connection owns the watch lease while it is open. Renewing
+// from this single worker timer replaces one POST per panel per 5 seconds.
+const watchLeaseKeepAlive = setInterval(() => {
+  if (sseClients.size > 0) manager.touchAll()
+}, 30_000)
+watchLeaseKeepAlive.unref?.()
+
+
 async function readBrowserState(): Promise<{ port?: number } | null> {
   try { return JSON.parse(await import('node:fs/promises').then((fs) => fs.readFile(BROWSER_STATE_FILE, 'utf8'))) as { port?: number } }
   catch { return null }

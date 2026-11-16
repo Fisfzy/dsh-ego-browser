@@ -220,6 +220,17 @@ export class CaptureManager {
     return { ...this.statusValue, watchers: this.leases.size }
   }
 
+  /**
+   * Extend every active watch lease. The long-lived SSE stream calls this
+   * periodically, so the panel no longer has to POST /api/watch/start every
+   * 5 seconds just to keep the capture alive.
+   */
+  touchAll(): void {
+    if (this.leases.size === 0) return
+    const expiresAt = this.now() + this.leaseTtlMs
+    for (const lease of this.leases.values()) lease.expiresAt = expiresAt
+  }
+
   #setStatus(status: Record<string, unknown>): void {
     this.statusValue = { ...this.statusValue, ...status }
     this.onStatus(this.status())
