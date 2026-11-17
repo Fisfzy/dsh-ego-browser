@@ -1777,6 +1777,78 @@ export const navigateScript = (opts: {
  * Touch with a selector uses the element center and is meant for main-document
  * elements; for iframe content pass viewport x/y coordinates.
  */
+export const scrollScript = (opts: {
+  selector?: string
+  deltaX?: number
+  deltaY?: number
+  space: string | number
+}): string => {
+  const sel = opts.selector ?? ''
+  const hasDelta =
+    typeof opts.deltaX === 'number' || typeof opts.deltaY === 'number'
+  if (sel === '' && !hasDelta) {
+    return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, reason: 'ego_scroll: provide deltaX/deltaY or a selector' }))\n`
+  }
+  const dx = opts.deltaX ?? 0
+  const dy = opts.deltaY ?? 300
+  const action =
+    sel !== ''
+      ? `await page.locator(${j(sel)}).scrollIntoViewIfNeeded()\n`
+      : `await page.mouse.wheel(${num(dx, 0)}, ${num(dy, 300)})\n`
+  // Report the offset before AND after the action, and whether it changed.
+  //
+  // Reading only the post-action offset (the previous behaviour) had two
+  // problems:
+  //
+  //   1. The value could still be the pre-scroll one. `page.mouse.wheel` goes
+  //      through `Input.dispatchMouseEvent`, which resolves once the event is
+  //      dispatched — not once the compositor has applied the scroll. A read
+  //      taken right after could therefore trail the real offset by one call,
+  //      so callers saw scrollY jump only on the *next* invocation.
+  //   2. A no-op was indistinguishable from a scroll. At the scroll limit (or
+  //      when a handler calls preventDefault) nothing moves, yet the tool still
+  //      answered `ok: true` with no signal that the page had not moved.
+  //
+  // So: poll until two consecutive reads agree (bounded), then report
+  // before/after, a `moved` flag and the applied delta. `settled:false` means
+  // the offset was still changing when the poll budget ran out, so the caller
+  // knows the numbers may not be final. `atEnd` is a hint that the page did not
+  // move in the requested direction, which is expected at a scroll boundary.
+  const pollBudgetMs = 400
+  return (
+    `${useSpace(str(opts.space, ''))}${ensureRealTab()}` +
+    `const __s0 = await page.info()\n` +
+    action +
+    `const __deadline = Date.now() + ${pollBudgetMs}\n` +
+    `let __prev = await page.info()\n` +
+    `let __settled = false\n` +
+    `while (Date.now() < __deadline) {\n` +
+    `  await new Promise((r) => setTimeout(r, 50))\n` +
+    `  const __cur = await page.info()\n` +
+    `  if ((__cur.sx ?? null) === (__prev.sx ?? null) && (__cur.sy ?? null) === (__prev.sy ?? null)) {\n` +
+    `    __settled = true\n` +
+    `    __prev = __cur\n` +
+    `    break\n` +
+    `  }\n` +
+    `  __prev = __cur\n` +
+    `}\n` +
+    `const __sx0 = __s0.sx ?? null, __sy0 = __s0.sy ?? null\n` +
+    `const __sx1 = __prev.sx ?? null, __sy1 = __prev.sy ?? null\n` +
+    `const __moved = __sx0 !== __sx1 || __sy0 !== __sy1\n` +
+    `console.log('${SENTINEL}' + JSON.stringify({\n` +
+    `  ok: true,\n` +
+    `  scrollX: __sx1, scrollY: __sy1,\n` +
+    `  before: { scrollX: __sx0, scrollY: __sy0 },\n` +
+    `  after: { scrollX: __sx1, scrollY: __sy1 },\n` +
+    `  moved: __moved,\n` +
+    `  settled: __settled,\n` +
+    `  atEnd: !__moved,\n` +
+    `  deltaX: __sx0 === null || __sx1 === null ? null : __sx1 - __sx0,\n` +
+    `  deltaY: __sy0 === null || __sy1 === null ? null : __sy1 - __sy0,\n` +
+    `}))\n`
+  )
+}
+
 export const clickScript = (opts: {
   selector?: string
   label?: string
@@ -3747,24 +3819,13 @@ function registerActionTools(ctx: EgoContext, cfg: EgoRuntimeConfig, reg: (tool:
         },
         space: spaceParam,
       },
-      buildScript: (args) => {
-        const hasSelector = str(args.selector, '') !== ''
-        const hasDelta = Number.isFinite(args.deltaX) || Number.isFinite(args.deltaY)
-        if (!hasSelector && !hasDelta)
-          return `console.log('${SENTINEL}' + JSON.stringify({ ok: false, reason: 'ego_scroll: provide deltaX/deltaY or a selector' }))\n`
-        const action = hasSelector
-          ? `await page.locator(${j(str(args.selector, ''))}).scrollIntoViewIfNeeded()\n`
-          : `await page.mouse.wheel(${num(args.deltaX, 0)}, ${num(
-              args.deltaY,
-              300,
-            )})\n`
-        return (
-          `${useSpace(str(args.space, cfg.defaultSpace))}${ensureRealTab()}` +
-          action +
-          `const __p = await page.info()\n` +
-          `console.log('${SENTINEL}' + JSON.stringify({ ok: true, scrollX: __p.sx ?? null, scrollY: __p.sy ?? null }))\n`
-        )
-      },
+      buildScript: (args) =>
+        scrollScript({
+          selector: str(args.selector, ''),
+          deltaX: Number.isFinite(args.deltaX) ? (args.deltaX as number) : undefined,
+          deltaY: Number.isFinite(args.deltaY) ? (args.deltaY as number) : undefined,
+          space: str(args.space, cfg.defaultSpace),
+        }),
     }),
   )
   reg(
