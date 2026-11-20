@@ -2,6 +2,17 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.14.2] - 2026-11-20 — spaces 快返回 + ego_scroll 正确性
+
+### 修复
+- **无浏览器时 `/api/ego/spaces` 不再拉起 worker**（#107/#108）：没有 live worker/browser 时直接返回空列表，避免用户未开 agent 浏览器时反复 spawn worker。
+- **`ensureWorker()` 不再死等**（#108）：worker 启动后立即退出时，等待循环在进程结束的 100ms 内中止，而不是等满 8 秒。
+- **`ego_scroll` 返回稳定后的偏移**（#109/#110）：滚动前读取一次，滚动后轮询到坐标稳定（上限 400ms），返回 `before` / `after` / `moved` / `settled` / `atEnd` / `deltaX` / `deltaY`；`scrollX` / `scrollY` 保持最终位置语义。
+- 合并后重新生成 `lib/index.js`，确保 npm 包包含 scroll 修复。
+
+### 测试
+- 全量 **480 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.14.1] - 2026-11-16 — 观察窗 watch fallback
 
 ### 修复
