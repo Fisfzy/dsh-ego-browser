@@ -3,7 +3,7 @@
   "name": "ego-browser",
   "packageName": "dsh-ego-browser",
   "description": "Agent 浏览器：结构化浏览器自动化工具(30+ ego_*) + 实时 watch 面板(SSE screencast/鼠标直控/下载捕获/登录引导)，内置 ego-lite Chrome CDP 宿主。",
-  "repositoryUrl": "https://github.com/Fisfzy/dsh-ego-browser",
+  "repositoryUrl": "https://github.com/omdsh-dev/dsh-ego-browser",
   "defaultBranch": "master",
   "manifestPath": "package.json",
   "updatePolicy": "user-reviewed",
@@ -24,7 +24,7 @@
       "status": "verified",
       "method": "fixed-commit-clone",
       "checkedAt": "2026-09-06T16:30:00+08:00",
-      "evidenceUrl": "https://github.com/Fisfzy/dsh-ego-browser/commit/e4694389951dff3d74b89e1de9ec1f885c548aac",
+      "evidenceUrl": "https://github.com/omdsh-dev/dsh-ego-browser/commit/e4694389951dff3d74b89e1de9ec1f885c548aac",
       "dshRelease": "0.1.2-rc.1",
       "systems": [
         "win32-x64"
@@ -38,7 +38,7 @@
       "status": "verified",
       "method": "disposable-profile-install",
       "checkedAt": "2026-09-06T16:35:00+08:00",
-      "evidenceUrl": "https://github.com/Fisfzy/dsh-ego-browser/commit/e4694389951dff3d74b89e1de9ec1f885c548aac",
+      "evidenceUrl": "https://github.com/omdsh-dev/dsh-ego-browser/commit/e4694389951dff3d74b89e1de9ec1f885c548aac",
       "dshRelease": "0.1.2-rc.1",
       "systems": [
         "win32-x64"
@@ -52,7 +52,7 @@
       "status": "verified",
       "method": "end-to-end-tool-call",
       "checkedAt": "2026-09-06T16:40:00+08:00",
-      "evidenceUrl": "https://github.com/Fisfzy/dsh-ego-browser/commit/e4694389951dff3d74b89e1de9ec1f885c548aac",
+      "evidenceUrl": "https://github.com/omdsh-dev/dsh-ego-browser/commit/e4694389951dff3d74b89e1de9ec1f885c548aac",
       "dshRelease": "0.1.2-rc.1",
       "systems": [
         "win32-x64"
@@ -66,7 +66,7 @@
       "status": "verified",
       "method": "code-and-live-probe",
       "checkedAt": "2026-09-06T16:45:00+08:00",
-      "evidenceUrl": "https://github.com/Fisfzy/dsh-ego-browser/security",
+      "evidenceUrl": "https://github.com/omdsh-dev/dsh-ego-browser/security",
       "dshRelease": "0.1.2-rc.1",
       "systems": [
         "win32-x64"

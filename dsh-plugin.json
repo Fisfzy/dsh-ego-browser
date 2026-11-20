@@ -312,7 +312,7 @@
   "subscriptions": [],
   "license": "MIT",
   "source": {
-    "repository": "https://github.com/Fisfzy/dsh-ego-browser"
+    "repository": "https://github.com/omdsh-dev/dsh-ego-browser"
   },
   "compat": {
     "hosts": [

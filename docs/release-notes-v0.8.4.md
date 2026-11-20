@@ -32,5 +32,5 @@
 **安装**：
 
 ```sh
-dsh plugin --profile <name> add github:Fisfzy/dsh-ego-browser#v0.8.4
+dsh plugin --profile <name> add github:omdsh-dev/dsh-ego-browser#v0.8.4
 ```
