@@ -25,7 +25,7 @@ import {
   stopLoginExtensionBridge,
 } from './login-extension.ts'
 
-import { captureConfig, isProcessAlive, knownWorkerState, makeEnsureWorker, proxyFrom, proxyPost, type EnsureWorker } from './worker-client.ts'
+import { captureConfig, isProcessAlive, knownWorkerState, makeEnsureWorker, proxyFrom, proxyPost, readBrowserState, type EnsureWorker } from './worker-client.ts'
 import type { EgoHostStatus, EgoRemoteSurface, EgoWatchLease } from './remote.ts'
 export { proxyPost } from './worker-client.ts'
 
@@ -487,6 +487,11 @@ export function initCastServer(
       // Keep the tab-list shape (and the auto-open counter) in the refusal so
       // the client's baseline probe still works while the relay is off.
       if (relayDisabled()) return refuseFrameRelay(res, { spaces: [], toolCallCount })
+      const workerState = await knownWorkerState()
+      const hasLiveWorker = workerState.pid !== null && isProcessAlive(workerState.pid)
+      if (!hasLiveWorker && !(await readBrowserState()).running) {
+        return sendJson(res, 200, { ok: false, spaces: [], toolCallCount, reason: 'no live agent browser', frameRelay: true })
+      }
       const port = await ensureWorker()
       if (port === null) {
         return sendJson(res, 200, { ok: false, spaces: [], toolCallCount, reason: 'no live agent browser', frameRelay: true })

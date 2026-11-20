@@ -161,6 +161,7 @@ export function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegMan
       // extra round-trip POST. The worker reads process.argv[2].
       await ffmpegManager?.check({ configuredPath: cfg.ffmpegPath, requestedEncoder: cfg.ffmpegEncoder }).catch(() => null)
       const initCfg = JSON.stringify(captureConfig(cfg, ffmpegManager))
+      let workerExited = false
       const handle = ctx.subprocess.spawn({
         argv: [process.execPath, WORKER_BIN, initCfg],
         // cwd is required by the dsh-subprocess provider on DSH >= 0.1.5 —
@@ -182,14 +183,15 @@ export function makeEnsureWorker(ctx: EgoContext, cfg: ResolvedConfig, ffmpegMan
         },
         graceMs: 12_000,
       })
-      handle.done.catch(() => null)
+      handle.done.finally(() => { workerExited = true }).catch(() => null)
       const deadline = Date.now() + 8000
-      while (Date.now() < deadline) {
+      while (!workerExited && Date.now() < deadline) {
         const ready = await launchedWorkerPort()
         if (ready !== null) {
           backoffMs = 8000
           return ready
         }
+        if (workerExited) break
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
       backoffMs = Math.min(backoffMs * 2, 60_000)
