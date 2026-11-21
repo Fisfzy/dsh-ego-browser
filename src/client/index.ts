@@ -322,6 +322,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			pinned: 'Pinned',
 			realtime: 'Live',
 			noScreenshot: '(no screenshot — about:blank or browser not rendering)',
+			captureUnavailable: 'Live view is not available',
+			captureHint: 'The agent browser window may be minimized or closed. ego_* tools still work.',
+			captureRestore: 'Restore window',
+			captureRetry: 'Reconnect',
 			noActivePages: 'No active browser pages',
 			noActiveHint: 'Pages will appear here as the agent browses with ego_*',
 			openExternal: 'Open real page',
@@ -408,6 +412,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			pinned: '已固定查看',
 			realtime: '正在实时浏览',
 			noScreenshot: '（暂无截图 — about:blank 或浏览器未渲染）',
+			captureUnavailable: '实时画面暂不可用',
+			captureHint: 'agent 浏览器窗口可能已最小化或关闭；ego_* 工具仍然可用。',
+			captureRestore: '恢复窗口',
+			captureRetry: '重新连接',
 			noActivePages: '暂无活跃浏览器页',
 			noActiveHint: '当 agent 开始用 ego_* 操作网页时，这里会实时显示',
 			openExternal: '⧉ 打开真实页',
@@ -1981,6 +1989,16 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 }
 .dsh-ego-side-preset-item:hover { background: var(--ego-hover); }
 .dsh-ego-side-stage { position: relative; display: flex; align-items: center; justify-content: center; flex: 1; min-height: 0; overflow: hidden; }
+.dsh-ego-side-capture-error {
+  position: absolute; inset: 12px; z-index: 20;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 16px; text-align: center;
+  background: color-mix(in srgb, var(--ego-surface) 92%, transparent);
+  border: 1px solid var(--ego-border); border-radius: var(--ego-radius-l);
+}
+.dsh-ego-side-capture-title { font-size: var(--ego-fs-body); font-weight: 600; color: var(--ego-text); }
+.dsh-ego-side-capture-msg { max-width: 36em; font-size: var(--ego-fs-meta); color: var(--ego-text-2); line-height: 1.5; word-break: break-word; }
+.dsh-ego-side-capture-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 .dsh-ego-side-resize { position: absolute; z-index: 10; background: transparent; }
 .dsh-ego-side-resize-right { top: 0; bottom: 0; right: 0; width: 12px; cursor: col-resize; }
 .dsh-ego-side-resize-bottom { left: 0; right: 0; bottom: 0; height: 12px; cursor: row-resize; }
@@ -3271,6 +3289,11 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				if (!/^(https?:\/\/|about:blank$)/i.test(url)) return ''
 				return url
 			}
+			var raiseAgentWindow = function () {
+				return fetchEgo('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+					.then(function (r) { return r.json().catch(function () { return null }) })
+					.catch(function () { return null })
+			}
 			var openNewWindow = function (url) {
 				setSizeNotice('')
 				fetchEgo('/api/ego/open-window', {
@@ -3696,6 +3719,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 					)
 				)
 			} else {
+				var captureError = state.streamState === 'failed'
 				var liveImg = state.backend === 'ffmpeg'
 					? h('video', {
 						ref: bindLiveVideo, key: 'livevideo-' + state.streamGeneration, className: 'dsh-ego-side-liveimg', muted: true, autoPlay: true, playsInline: true,
@@ -3747,7 +3771,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 							h('div', { className: 'dsh-ego-side-actionline' },
 								h('div', { className: 'dsh-ego-side-btngroup' },
 									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('openExternal'), onClick: function () { var url = currentSpace.url; if (url && !url.startsWith('about:') && !url.startsWith('chrome://')) window.open(url, '_blank', 'noopener') } }, icon(ICON_OPEN_EXTERNAL), wt('openExternal')),
-									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('raiseWindowHint'), onClick: function () { fetchEgo('/api/ego/raise', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function (r) { return r.json().catch(function () { return null }) }).catch(function () { return null }) } }, icon(ICON_POPOUT), wt('raiseWindow')),
+									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('raiseWindowHint'), onClick: raiseAgentWindow }, icon(ICON_POPOUT), wt('raiseWindow')),
 									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('refreshHint'), disabled: !currentSpace, onClick: function () { panelNavigate('', true) } }, icon(ICON_REFRESH), wt('refreshPage')),
 									h('button', { className: 'dsh-ego-side-back', type: 'button', title: wt('openUrlHint'), disabled: !currentSpace, onClick: openUrlInPanel }, icon(ICON_LINK), wt('openUrl'))
 								),
@@ -3761,6 +3785,28 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 						),
 						h('div', { className: 'dsh-ego-side-stage' + (sizeSyncOn ? ' dsh-ego-size-unlocked' : ''), ref: stageRef },
 							liveImg,
+							captureError
+								? h('div', { className: 'dsh-ego-side-capture-error', role: 'status' },
+									h('div', { className: 'dsh-ego-side-capture-title' }, wt('captureUnavailable')),
+									h('div', { className: 'dsh-ego-side-capture-msg' }, state.streamMessage || wt('captureHint')),
+									h('div', { className: 'dsh-ego-side-capture-actions' },
+										h('button', {
+											className: 'dsh-ego-side-back', type: 'button', onClick: function () {
+												void raiseAgentWindow().then(function () {
+													controller.refresh()
+													if (currentSpace) controller._syncWatch(currentSpace.targetId, true)
+												})
+											},
+										}, wt('captureRestore')),
+										h('button', {
+											className: 'dsh-ego-side-back', type: 'button', onClick: function () {
+												if (currentSpace) panelNavigate(currentSpace.url || '', false)
+												controller.refresh()
+											},
+										}, wt('captureRetry'))
+									)
+								)
+								: null,
 							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-right', title: wt('resizeHint'), onPointerDown: beginResize('x') }),
 							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-bottom', title: wt('resizeHint'), onPointerDown: beginResize('y') }),
 							h('div', { className: 'dsh-ego-side-resize dsh-ego-side-resize-corner', title: wt('resizeHint'), onPointerDown: beginResize('xy') })
