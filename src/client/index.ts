@@ -209,6 +209,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			isolateSpacesHint: 'Disabled: use persistent disk profile, logins stay across restarts. Enabled: memory-only sandbox per task.',
 			isolateSpacesOff: 'Disabled (persistent profile, keep logins)',
 			isolateSpacesOn: 'Enabled (isolated memory sandbox)',
+			toolProfile: 'Tool profile',
+			toolProfileHint: 'Full registers every ego_* tool. Lite registers a compact core set to reduce context; use ego_script for the rest.',
+			toolProfileFull: 'Full (all tools)',
+			toolProfileLite: 'Lite (core tools only)',
 		idleTimeoutMin: 'Idle auto-stop (minutes)',
 		idleTimeoutMinHint: 'Stop the backing browser after N minutes without an ego_* call (0 = off). It cold-starts on the next call (~2-4s). Watching the panel does not count as activity.',
 		disableFrameRelay: 'Disable live frame relay',
@@ -259,6 +263,10 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 			isolateSpacesHint: '默认关闭：使用磁盘持久化 Profile，任务中登录的账号跨电脑重启永久保留；开启后使用内存临时沙盒隔离，任务结束不落盘。',
 			isolateSpacesOff: '关闭（持久化登录态，跨电脑重启不丢失）',
 			isolateSpacesOn: '开启（严格沙盒隔离，任务结束不落盘）',
+			toolProfile: '工具精简模式',
+			toolProfileHint: 'Full 注册全部 ego_* 工具；Lite 只注册核心工具集以减少上下文，其余能力可走 ego_script。',
+			toolProfileFull: '完整（全部工具）',
+			toolProfileLite: '精简（仅核心工具）',
 		idleTimeoutMin: '空闲自动回收（分钟）',
 		idleTimeoutMinHint: 'N 分钟没有任何 ego_* 调用后自动关闭后台浏览器进程（0 = 关闭）。下次调用自动冷启动（约 2-4 秒）。观看观察窗不算活动。',
 		disableFrameRelay: '禁用画面回传',
@@ -640,7 +648,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				status: 'idle',        // 'idle' | 'loading' | 'ready'
 				available: false,      // true after a successful /ego/api/get
 				writable: false,       // false when settings service is absent
-				draft: { isolateSpaces: false, disableFrameRelay: false, residentExecutor: false, residentIdleMin: '30', idleTimeoutMin: '0', chromePath: '', useMockKeychain: false, captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '1280', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '' },
+				draft: { isolateSpaces: false, toolProfile: 'full', disableFrameRelay: false, residentExecutor: false, residentIdleMin: '30', idleTimeoutMin: '0', chromePath: '', useMockKeychain: false, captureBackend: 'auto', streamProfile: 'balanced', cdpFps: '20', cdpQuality: '55', cdpMaxWidth: '1280', cdpBackstopIntervalMs: '3000', ffmpegFps: '20', ffmpegMaxWidth: '1280', ffmpegBitrateKbps: '4000', ffmpegEncoder: 'auto', ffmpegPath: '', githubMirror: '', egoCliArgs: '', chromeArgs: '' },
 				ffmpegStatus: { state: 'checking', canDownload: false, canSelectFfmpeg: false },
 				dirty: false,
 				applyState: { kind: 'idle' }, // 'idle' | 'saving' | 'saved' | 'error'
@@ -690,6 +698,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 					s.writable = true
 			s.draft = {
 				isolateSpaces: config.isolateSpaces === true || config.isolateSpaces === 'true' || config.isolateSpaces === 1 || config.isolateSpaces === '1',
+				toolProfile: config.toolProfile === 'lite' ? 'lite' : 'full',
 				idleTimeoutMin: String(config.idleTimeoutMin ?? 0),
 				disableFrameRelay: config.disableFrameRelay === true || config.disableFrameRelay === 'true' || config.disableFrameRelay === 1 || config.disableFrameRelay === '1',
 				residentExecutor: config.residentExecutor === true || config.residentExecutor === 'true' || config.residentExecutor === 1 || config.residentExecutor === '1',
@@ -822,6 +831,7 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 				s.applyState = { kind: 'saved' }
 			s.draft = {
 				isolateSpaces: config.isolateSpaces === true || config.isolateSpaces === 'true' || config.isolateSpaces === 1 || config.isolateSpaces === '1',
+				toolProfile: config.toolProfile === 'lite' ? 'lite' : 'full',
 				idleTimeoutMin: String(config.idleTimeoutMin ?? 0),
 				disableFrameRelay: config.disableFrameRelay === true || config.disableFrameRelay === 'true' || config.disableFrameRelay === 1 || config.disableFrameRelay === '1',
 				residentExecutor: config.residentExecutor === true || config.residentExecutor === 'true' || config.residentExecutor === 1 || config.residentExecutor === '1',
@@ -1063,6 +1073,18 @@ const fetchEgo = function (path: string, init?: RequestInit) { return fetch(egoR
 							],
 							disabled: busy,
 							onEdit: function (v) { controller.edit('isolateSpaces', v === 'true') },
+						}),
+						h(SettingsField, {
+							id: 'plugin-config-ego-browser-toolprofile',
+							label: t('toolProfile'),
+							hint: t('toolProfileHint'),
+							value: state.draft.toolProfile || 'full',
+							options: [
+								{ value: 'full', label: t('toolProfileFull') },
+								{ value: 'lite', label: t('toolProfileLite') },
+							],
+							disabled: busy,
+							onEdit: function (v) { controller.edit('toolProfile', v) },
 						}),
 						h(SettingsField, {
 							id: 'plugin-config-ego-browser-disableframerelay',

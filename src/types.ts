@@ -143,6 +143,8 @@ export interface ResolvedConfig {
   isolateSpaces: boolean
   /** True = each DSH session gets its own task space; false = one shared space. */
   sessionScopedSpaces: boolean
+  /** Tool surface: full (default) or a compact lite profile. */
+  toolProfile: 'full' | 'lite'
   /** Minutes without an ego_* call before the backing browser is auto-stopped. 0 = off. */
   idleTimeoutMin: number
   /** True = the live frame relay (ego-cast worker + cast routes) is turned off entirely. */

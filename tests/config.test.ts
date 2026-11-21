@@ -8,6 +8,7 @@ describe("dual capture config", () => {
       cdpFps: 20, cdpQuality: 55, cdpMaxWidth: 1280, cdpBackstopIntervalMs: 3000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, sessionScopedSpaces: true, idleTimeoutMin: 0, disableFrameRelay: false,
+      toolProfile: "full",
       residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false, rulesPrompt: true,
       viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
       useMockKeychain: false, trajectory: false, recordText: false,
@@ -20,11 +21,18 @@ describe("dual capture config", () => {
       cdpFps: 30, cdpQuality: 70, cdpMaxWidth: 1200, cdpBackstopIntervalMs: 5000,
       ffmpegFps: 20, ffmpegMaxWidth: 1280, ffmpegBitrateKbps: 4000, ffmpegEncoder: "auto", ffmpegPath: "", githubMirror: "",
       egoCliArgs: "", chromeArgs: "", isolateSpaces: false, sessionScopedSpaces: true, idleTimeoutMin: 0, disableFrameRelay: false,
+      toolProfile: "full",
       residentExecutor: false, residentIdleMin: 30, tuiAutoOpenPanel: false, rulesPrompt: true,
       viewportWidth: 0, viewportHeight: 0, deviceScaleFactor: 0,
       useMockKeychain: false, trajectory: false, recordText: false,
     });
     expect(resolveConfig({ cdpFps: 15, castFpsCap: 30 }).cdpFps).toBe(15);
+  });
+
+  it("defaults the tool profile to full and accepts lite", () => {
+    expect(resolveConfig({}).toolProfile).toBe("full");
+    expect(resolveConfig({ toolProfile: "lite" }).toolProfile).toBe("lite");
+    expect(resolveConfig({ toolProfile: "bogus" as any }).toolProfile).toBe("full");
   });
 
   it("parses useMockKeychain as an opt-in boolean (#93)", () => {

@@ -2,7 +2,7 @@
   "$schema": "https://dsh.community/schemas/dsh-plugin-0.15.json",
   "id": "dsh-ego-browser",
   "name": "ego-browser",
-  "version": "0.14.2",
+  "version": "0.15.0",
   "manifestVersion": "0.15",
   "facets": {
     "host": {
@@ -57,6 +57,32 @@
               "hintTitles": {
                 "en": "Use a temporary isolated profile; off keeps the persistent login profile.",
                 "zh": "使用临时隔离空间；关闭时使用持久化登录配置。"
+              }
+            },
+            {
+              "path": [
+                "toolProfile"
+              ],
+              "label": "Tool profile",
+              "kind": "select",
+              "hint": "Full registers all ego_* tools; Lite registers a compact core set to reduce context.",
+              "options": [
+                {
+                  "value": "full",
+                  "label": "Full"
+                },
+                {
+                  "value": "lite",
+                  "label": "Lite"
+                }
+              ],
+              "titles": {
+                "en": "Tool profile",
+                "zh": "工具精简模式"
+              },
+              "hintTitles": {
+                "en": "Full registers all ego_* tools; Lite registers a compact core set to reduce context.",
+                "zh": "Full 注册全部 ego_* 工具；Lite 只注册核心工具集，减少上下文占用。"
               }
             },
             {
