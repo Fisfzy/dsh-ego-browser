@@ -2,6 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.15.0] - 2026-11-21 — 工具精简模式
+
+### 新增
+- **`toolProfile: full | lite`**：默认 `full`，保持全部 35 个工具；`lite` 只注册核心工具集，降低工具 schema 的上下文占用。
+- lite 核心集：`ego_status`、`ego_help`、`ego_doctor`、`ego_navigate`、`ego_page_info`、`ego_snapshot`、`ego_read_element`、`ego_click`、`ego_fill`、`ego_key`、`ego_scroll`、`ego_verify`、`ego_wait`、`ego_wait_for_human`、`ego_tabs`、`ego_space_open`、`ego_space_close`、`ego_script`、`ego_replay`、`ego_screenshot`。
+- 未注册的工具仍可通过 `ego_script` 访问底层运行时；切换 profile 需要重新挂载插件。
+- 设置页和 TUI settings section 均加入 Tool profile 选择。
+
+### 说明
+这是静态注册时裁剪，不是运行时动态加载；真正的“按需加载工具”仍需要 DSH 工具注册层支持，后续单独设计。
+
+### 测试
+- 新增 lite profile 注册测试与 config 默认值测试；全量 **482 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.14.2] - 2026-11-20 — spaces 快返回 + ego_scroll 正确性
 
 ### 修复

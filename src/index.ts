@@ -114,6 +114,33 @@ const snapshotCache = new SnapshotCache(32)
  */
 const replayToolSpecs = new Map<string, EgoToolOptions>()
 /**
+ * Compact `toolProfile=lite` surface. Kept deliberately small: browsing,
+ * observation, core input, waits/verification and the script escape hatch.
+ * Everything else stays available by switching the profile back to `full`.
+ */
+export const LITE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'ego_status',
+  'ego_help',
+  'ego_doctor',
+  'ego_navigate',
+  'ego_page_info',
+  'ego_snapshot',
+  'ego_read_element',
+  'ego_click',
+  'ego_fill',
+  'ego_key',
+  'ego_scroll',
+  'ego_verify',
+  'ego_wait',
+  'ego_wait_for_human',
+  'ego_tabs',
+  'ego_space_open',
+  'ego_space_close',
+  'ego_script',
+  'ego_replay',
+  'ego_screenshot',
+])
+/**
  * Ref-based actions that may opt into the snapshot generation guard. Passing
  * no snapshotId preserves the historical behavior for old callers.
  */
@@ -842,6 +869,8 @@ interface EgoRuntimeConfig {
   targetTracker: TargetTracker
   /** True = each DSH session gets its own task space. */
   readonly sessionScopedSpaces: boolean
+  /** Registered tool surface: full (default) or lite. */
+  readonly toolProfile: 'full' | 'lite'
   readonly defaultSpace: string | number
   maxOutputBytes: number
   graceMs: number
@@ -2220,6 +2249,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',
     'castFpsCap', 'screencastQuality', 'screencastMaxWidth', 'backstopIntervalMs',
     'idleTimeoutMin',
+    'toolProfile',
     'disableFrameRelay',
     'tuiAutoOpenPanel',
     'residentExecutor',
@@ -2299,6 +2329,7 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     get deviceScaleFactor() { return resolveConfig(bridge.source() as RawConfig).deviceScaleFactor },
     get isolateSpaces() { return resolveConfig(bridge.source() as RawConfig).isolateSpaces },
     get sessionScopedSpaces() { return resolveConfig(bridge.source() as RawConfig).sessionScopedSpaces },
+  get toolProfile() { return resolveConfig(bridge.source() as RawConfig).toolProfile },
     get idleTimeoutMin() { return resolveConfig(bridge.source() as RawConfig).idleTimeoutMin },
     // Live getter: cast-server reads this on EVERY /api/ego/* request, so the
     // settings card toggle takes effect without a host restart.
@@ -2345,6 +2376,10 @@ export function apply(ctx: EgoContext, config: RawConfig = {}): void {
     }
   }
   const reg = (tool: ToolHandle): void => {
+    // `toolProfile=lite` is a registration-time subset. Keep it in this one
+    // wrapper so every existing register* function and replay spec remains
+    // unchanged; switching back to full takes effect on the next plugin mount.
+    if (cfg.toolProfile === 'lite' && !LITE_TOOL_NAMES.has(tool.name)) return
     // One wrapper for every ego_* tool: record that this process/session has
     // used the browser (the native rules prompt turns on after this), then add
     // the observation wrapper for the standalone tools that skip the browser
