@@ -9,6 +9,7 @@
 - lite 核心集：`ego_status`、`ego_help`、`ego_doctor`、`ego_navigate`、`ego_page_info`、`ego_snapshot`、`ego_read_element`、`ego_click`、`ego_fill`、`ego_key`、`ego_scroll`、`ego_verify`、`ego_wait`、`ego_wait_for_human`、`ego_tabs`、`ego_space_open`、`ego_space_close`、`ego_script`、`ego_replay`、`ego_screenshot`。
 - 未注册的工具仍可通过 `ego_script` 访问底层运行时；切换 profile 需要重新挂载插件。
 - 设置页和 TUI settings section 均加入 Tool profile 选择。
+- **capture 失败态**（#112/#114）：窗口最小化/关闭导致 capture failed 时，面板显示错误状态卡和「恢复窗口 / 重新连接」按钮，不再整块空白。
 
 ### 说明
 这是静态注册时裁剪，不是运行时动态加载；真正的“按需加载工具”仍需要 DSH 工具注册层支持，后续单独设计。

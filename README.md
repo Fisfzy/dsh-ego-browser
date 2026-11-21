@@ -137,7 +137,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.15.0
 
 ## ✨ 近期亮点
 
-- **v0.15.0**：**工具精简模式**——新增 `toolProfile: full | lite`；lite 只注册核心浏览/观察/输入/等待/验证工具，默认 full 保持兼容，设置页可切换（需重新挂载插件）。
+- **v0.15.0**：**工具精简模式**——新增 `toolProfile: full | lite`；lite 只注册核心浏览/观察/输入/等待/验证工具，默认 full 保持兼容，设置页可切换（需重新挂载插件）。同时补 capture 失败态：窗口最小化/关闭时显示恢复/重连入口，不再空白。
 - **v0.14.2**：**spaces 快返回 + ego_scroll 正确性**——无浏览器时 `/api/ego/spaces` 不再拉起 worker，worker 退出时 `ensureWorker()` 立即中止；`ego_scroll` 返回滚动前后偏移与 `moved/settled`，不再报旧 `scrollY`。
 - **v0.14.1**：**观察窗可用性兜底**——Remote watch 不返回时 2 秒超时并回退到 host watch 路由；修复地址栏导航后侧栏停在 `idle / 未接管` 的问题。
 - **v0.14.0**：**侧栏基础浏览器**——标签栏最右侧 `+` 直接新建独立 Chrome 窗口；新增常驻地址栏、前进/后退/刷新；地址栏可直接访问，用户操作会激活真实 Chrome，模型 `ego_*` 仍保持不抢前台。
