@@ -20,6 +20,7 @@ function reader(text: string) { return { readFrom: () => ({ text, nextOffset: te
 function bench(options: {
   idle?: boolean
   services?: boolean
+  config?: Record<string, unknown>
   attachments?: { saveImage(input: { data: Uint8Array; mediaType: string }): Promise<unknown> }
 } = {}) {
   const tools = new Map<string, RegisteredTool>(), cleanup: (() => void)[] = []
@@ -46,7 +47,7 @@ function bench(options: {
       } })
     },
   }
-  apply(ctx as unknown as EgoContext, { chromePath: '/fake/chrome', idleTimeoutMin: options.idle ? 0.5 : 0 })
+  apply(ctx as unknown as EgoContext, { chromePath: '/fake/chrome', idleTimeoutMin: options.idle ? 0.5 : 0, ...(options.config || {}) })
   const exec = { signal: new AbortController().signal, callId: 'test', name: '', arguments: {} } as ToolExec
   return { tools, spawn, setField, show,
     call: (name: string, args: Record<string, unknown> = {}) => tools.get(name)!.execute(args, exec),
@@ -55,6 +56,18 @@ function bench(options: {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.mocked(readFile).mockReset() })
 
 describe('registered browser tools with TUI observers', () => {
+  it('registers only the compact core set for toolProfile=lite', () => {
+    const b = bench({ config: { toolProfile: 'lite' } })
+    for (const name of ['ego_status', 'ego_help', 'ego_navigate', 'ego_snapshot', 'ego_click', 'ego_fill', 'ego_script', 'ego_tabs']) {
+      expect(b.tools.has(name), name).toBe(true)
+    }
+    for (const name of ['ego_http', 'ego_download', 'ego_auth_flush', 'ego_login_import', 'ego_cdp']) {
+      expect(b.tools.has(name), name).toBe(false)
+    }
+    expect(b.tools.size).toBeLessThan(25)
+    b.dispose()
+  })
+
   it('registers ego_tabs and builds list/switch/open/close scripts', async () => {
     const b = bench()
     expect(b.tools.has('ego_tabs')).toBe(true)
