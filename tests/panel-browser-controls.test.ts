@@ -20,6 +20,8 @@ describe("side-panel browser controls", () => {
     const client = await read("src/client/index.ts");
     expect(client).toContain("dsh-ego-side-newtab");
     expect(client).toContain("dsh-ego-side-address");
+    expect(client).toContain("dsh-ego-side-capture-error");
+    expect(client).toContain("captureRestore");
     expect(client).toContain("historyAction('back')");
     expect(client).toContain("historyAction('forward')");
     expect(client).toContain("/api/ego/open-window");
