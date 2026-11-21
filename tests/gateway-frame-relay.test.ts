@@ -27,12 +27,16 @@ function makeRes() {
   return Object.assign(res, { body: () => JSON.parse(chunks.join("") || "{}") as Record<string, unknown> });
 }
 
-function makeReq(body: unknown) {
+function makeReq(body: unknown, options: { auth?: boolean; url?: string } = {}) {
   const text = JSON.stringify(body);
   return {
     method: "POST",
-    url: "/ego/api/set",
-    headers: { "content-type": "application/json", host: "127.0.0.1:3080" },
+    url: options.url ?? "/ego/api/set",
+    headers: {
+      "content-type": "application/json",
+      host: "127.0.0.1:3080",
+      ...(options.auth === false ? {} : { cookie: "dsh-auth-test=1" }),
+    },
     async *[Symbol.asyncIterator]() { yield Buffer.from(text, "utf8"); },
   };
 }
@@ -59,13 +63,45 @@ function mountGateway(initial: Record<string, unknown>) {
   registerEgoBrowserGateway(ctx as never, bridge as never, null);
   return {
     cfg, captured,
-    async set(patch: Record<string, unknown>) {
+    async set(patch: Record<string, unknown>, options: { auth?: boolean } = {}) {
       const res = makeRes();
-      await handler!(makeReq({ patch }), res);
+      await handler!(makeReq({ patch }, options), res);
+      return res;
+    },
+    async invoke(method: "get" | "set", body: unknown, options: { auth?: boolean } = {}) {
+      const res = makeRes();
+      await handler!(makeReq(body, { ...options, url: `/ego/api/${method}` }), res);
       return res;
     },
   };
 }
+
+describe("ego-browser settings gateway — auth and local-only keys", () => {
+  it("rejects unauthenticated get and set requests", async () => {
+    const g = mountGateway({});
+    const get = await g.invoke("get", {}, { auth: false });
+    expect(get.statusCode).toBe(401);
+    expect((get.body() as { error?: { code?: string } }).error?.code).toBe("unauthorized");
+    const set = await g.set({ idleTimeoutMin: 30 }, { auth: false });
+    expect(set.statusCode).toBe(401);
+    expect(g.captured).toEqual([]);
+  });
+
+  it("rejects executable/launch keys from the HTTP settings surface", async () => {
+    const g = mountGateway({});
+    for (const patch of [
+      { chromePath: "/tmp/evil" },
+      { ffmpegPath: "/tmp/evil" },
+      { chromeArgs: "--load-extension=/tmp/evil" },
+      { egoCliArgs: "--sdk-path=/tmp/evil" },
+    ]) {
+      const res = await g.set(patch);
+      expect(res.statusCode).toBe(403);
+      expect((res.body() as { error?: { code?: string } }).error?.code).toBe("local-config-only");
+    }
+    expect(g.captured).toEqual([]);
+  });
+});
 
 describe("ego-browser settings gateway — disableFrameRelay", () => {
   it("persists the switch through /ego/api/set", async () => {

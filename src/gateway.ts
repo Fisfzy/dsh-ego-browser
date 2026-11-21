@@ -41,6 +41,24 @@ const ALLOWED_KEYS = new Set<string>([
   'ffmpegEncoder', 'ffmpegPath', 'githubMirror', 'egoCliArgs', 'chromeArgs',
 ])
 
+/**
+ * Executable/launch settings stay local-config-only. `chromePath`,
+ * `ffmpegPath`, and the extra args can select a program or inject launch
+ * flags; allowing them through the browser-accessible settings gateway turns
+ * a settings write into code execution. They remain readable via `get` (the
+ * GUI needs to display them) but cannot be changed over HTTP.
+ */
+const LOCAL_ONLY_SETTING_KEYS = new Set<string>([
+  'chromePath',
+  'ffmpegPath',
+  'chromeArgs',
+  'egoCliArgs',
+])
+
+/** Same trust fence used by the cast-server `/api/ego/*` routes. */
+const hasDshAuthCookie = (req: IncomingMessage): boolean =>
+  /(?:^|;\s*)dsh-auth-[^=]+=/.test(String(req.headers.cookie ?? ''))
+
 interface EnvelopeOk<T> { ok: true; value: T }
 interface EnvelopeError { ok: false; error: { code: string; message: string } }
 type Envelope<T> = EnvelopeOk<T> | EnvelopeError
@@ -88,6 +106,13 @@ export function registerEgoBrowserGateway(
       handler: async (reqRaw: unknown, resRaw: unknown) => {
         const req = reqRaw as IncomingMessage
         const res = resRaw as ServerResponse
+        // The gateway is registered directly on the host web server and is
+        // therefore outside the host's `/api` auth fence. Require the same
+        // DSH-issued auth cookie before reading or changing any setting.
+        if (!hasDshAuthCookie(req)) {
+          writeJson(res, 401, envelopeError('unauthorized', 'DSH authentication is required'))
+          return
+        }
         if (req.method !== 'POST') {
           writeJson(res, 405, envelopeError('method-not-allowed', 'POST only'))
           return
@@ -144,7 +169,9 @@ export function registerEgoBrowserGateway(
         } catch (error) {
           const e = error as CodedErrorLike
           const message = e instanceof Error ? e.message : String(error)
-          const status = e?.code === 'ffmpeg-unavailable' ? 409 : e?.code === 'ffmpeg-mirror-invalid' ? 400 : 500
+          const status = e?.code === 'ffmpeg-unavailable' ? 409
+            : e?.code === 'local-config-only' ? 403
+              : e?.code === 'ffmpeg-mirror-invalid' ? 400 : 500
           writeJson(res, status, envelopeError(e?.code || 'internal', message))
         }
       },
@@ -162,6 +189,17 @@ async function handleSet(
   bridge: SettingsBridge,
   ffmpegManager: FfmpegInstallationManager | null,
 ): Promise<SetResult> {
+  const rawPatch = body && typeof body === 'object' ? (body as { patch?: unknown }).patch : undefined
+  const localOnly = rawPatch && typeof rawPatch === 'object'
+    ? Object.keys(rawPatch as Record<string, unknown>).filter((key) => LOCAL_ONLY_SETTING_KEYS.has(key))
+    : []
+  if (localOnly.length > 0) {
+    const error = new Error(
+      `ego-browser: ${localOnly.join(', ')} can only be changed in local profile configuration, not over HTTP`,
+    ) as CodedErrorLike
+    error.code = 'local-config-only'
+    throw error
+  }
   const patch = extractPatch(body)
   if (Object.keys(patch).length === 0) {
     return { config: resolveConfig(bridge.source() as RawConfig), ffmpegStatus: ffmpegManager?.status() || null }

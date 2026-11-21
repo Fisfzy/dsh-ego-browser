@@ -14,7 +14,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license MIT"></a>
 </p>
 
-> **仓库**：`github.com/omdsh-dev/dsh-ego-browser`｜当前版本 **v0.15.0**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
+> **仓库**：`github.com/omdsh-dev/dsh-ego-browser`｜当前版本 **v0.15.1**｜版本历史见 [CHANGELOG.md](CHANGELOG.md)｜详情页：[dshfind](https://dshfind.com/zh/plugins/Fisfzy/ego-browser)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/omdsh-dev/dsh-ego-browser/master/docs/assets/panel-live-view.png"
@@ -33,7 +33,7 @@
 | **dsh-TUI**（可选） | — | 提供 `tuiSettingsSections` / `tuiStatus` / `tuiToast` / `tuiPanels` 的版本 | 按服务能力启用设置页、底栏状态、通知、纯文字侧栏面板；缺席时静默跳过，无额外 I/O |
 | **Node.js** | `22` | — | harness 环境自带 |
 
-**DSH 全版本适配说明**：v0.15.0 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
+**DSH 全版本适配说明**：v0.15.1 已在 DSH `0.1.2-rc.1` 至 `0.1.7`（含 0.2.0-rc.x / 0.2.1-rc.2 桌面端的 0.1.7 settings 路径 + 原生右侧边栏）上验证；核心 API（`defineTool`、`ctx.tools.register`、`ctx.subprocess.spawn`、`ctx.webServer.register`、`ctx.inject`、`ModuleLoader` CJS factory、`cordis.patch.yml`）在 v0.1.0-rc.7 → v0.2.1 无破坏性变更。0.1.2-alpha.x 系列按声明可装但未实测。
 
 **dsh-better-sidebar 适配说明**：ego-browser 通过 `ctx.betterSidebar` 服务（try-catch 防御性获取）注册侧边栏 Tab 并监听外部链接。关键 API 引入版本：
 
@@ -72,7 +72,7 @@ cookie 值不出现在任何日志与输出中；导入是单次快照。配合�
 
 ```sh
 # 安装（任选一种；桌面端也可以走 插件 → 添加插件）
-dsh plugin --profile desktop add dsh-ego-browser@0.15.0
+dsh plugin --profile desktop add dsh-ego-browser@0.15.1
 ```
 
 1. 在 DSH 会话里说一句让 agent 用浏览器的话，例如：
@@ -137,6 +137,7 @@ dsh plugin --profile desktop add dsh-ego-browser@0.15.0
 
 ## ✨ 近期亮点
 
+- **v0.15.1**：**安全修复**——`/ego/api/*` 现在要求 DSH auth cookie；`chromePath`/`ffmpegPath`/`chromeArgs`/`egoCliArgs` 仅允许本地 profile 配置，不再允许 HTTP 写入。
 - **v0.15.0**：**工具精简模式**——新增 `toolProfile: full | lite`；lite 只注册核心浏览/观察/输入/等待/验证工具，默认 full 保持兼容，设置页可切换（需重新挂载插件）。同时补 capture 失败态：窗口最小化/关闭时显示恢复/重连入口，不再空白。
 - **v0.14.2**：**spaces 快返回 + ego_scroll 正确性**——无浏览器时 `/api/ego/spaces` 不再拉起 worker，worker 退出时 `ensureWorker()` 立即中止；`ego_scroll` 返回滚动前后偏移与 `moved/settled`，不再报旧 `scrollY`。
 - **v0.14.1**：**观察窗可用性兜底**——Remote watch 不返回时 2 秒超时并回退到 host watch 路由；修复地址栏导航后侧栏停在 `idle / 未接管` 的问题。
@@ -268,7 +269,7 @@ Chrome came up on port 6668 but exposed no WebSocket URL within 20000ms
 **方式 B：命令行（npm，推荐）**：
 
 ```sh
-dsh plugin --profile <profile> add dsh-ego-browser@0.15.0
+dsh plugin --profile <profile> add dsh-ego-browser@0.15.1
 dsh plugin --profile <profile> list                 # 应看到 dsh-ego-browser
 # 升级
 dsh plugin --profile <profile> add dsh-ego-browser@latest
@@ -278,7 +279,7 @@ dsh plugin --profile <profile> add dsh-ego-browser@latest
 
 ```sh
 dsh plugin --profile <profile> add https://github.com/omdsh-dev/dsh-ego-browser.git
-dsh plugin --profile <profile> add ./dsh-ego-browser-0.15.0.tgz
+dsh plugin --profile <profile> add ./dsh-ego-browser-0.15.1.tgz
 ```
 
 > **从旧版本升级（DSH Desktop 2.0.5+）**：本插件包名是 **`dsh-ego-browser`**（非 `@dsh-external/ego-browser`）。DSH Desktop 2.0.5 起增加了「profile 依赖名 == 包实际 name」的一致性校验，若 profile 仍用旧名 `@dsh-external/ego-browser` 引用，启动会挂进恢复模式（`profile package identity is invalid for @dsh-external/ego-browser`）。升级到 2.0.5 后请把 profile 的 `package.json` 依赖键 **和** `dsh.profile.bundles` 条目**两处**都改为 `dsh-ego-browser`：
@@ -307,7 +308,7 @@ dsh plugin --profile <profile> add ./dsh-ego-browser-0.15.0.tgz
 
 ```sh
 pkg install chromium            # Termux x11 仓库；约 159 MB deb / 644 MB 安装后
-dsh plugin --profile <profile> add dsh-ego-browser@0.15.0
+dsh plugin --profile <profile> add dsh-ego-browser@0.15.1
 ```
 
 - `chromium-browser` 已在 `COMMON_CHROME_BINS` 中，`ego_doctor` 会自动探测 `/data/data/com.termux/files/usr/bin/chromium-browser`，**无需**设置 `chromePath`

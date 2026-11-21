@@ -2,6 +2,16 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.15.1] - 2026-11-21 — 安全修复：设置网关鉴权
+
+### 修复
+- **`/ego/api/*` 纳入 DSH 鉴权**：设置网关现在要求与 `/api/ego/*` 相同的 `dsh-auth-*` cookie；无凭据请求返回 401。
+- **执行相关设置仅限本地配置**：`chromePath`、`ffmpegPath`、`chromeArgs`、`egoCliArgs` 不再允许通过 HTTP 设置网关写入（返回 `local-config-only` / 403）；仍可通过 profile 配置文件设置。
+- 新增 `SECURITY.md` 并启用 GitHub Private Vulnerability Reporting。
+
+### 测试
+- 新增未鉴权 get/set 拒绝、执行配置 HTTP 写入拒绝的回归测试；全量 **484 passed / 8 skipped**；typecheck/build 通过。
+
 ## [0.15.0] - 2026-11-21 — 工具精简模式
 
 ### 新增
